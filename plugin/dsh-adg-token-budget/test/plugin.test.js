@@ -2,9 +2,15 @@
  * Unit tests for dsh-adg-token-budget.
  *
  * The suite drives the plugin through a hand-built mock Cordis context so the
- * whole listener path — filtering, the two stages, the cancel, the state
- * hygiene — is exercised without a harness. No dependency beyond `node:test`:
- * `npm test` must work in a checkout that has no `node_modules` at all.
+ * whole listener path — filtering, the step checkpoints, the calibration switch,
+ * the state hygiene — is exercised without a harness. No dependency beyond
+ * `node:test`: `npm test` must work in a checkout that has no `node_modules` at
+ * all.
+ *
+ * The token soft stage and the hard cancel were removed from the plugin, so this
+ * suite also pins the removal from the outside: the retired options are ignored
+ * rather than honoured, `sessionProjections` is never consulted,
+ * `agent.cancel` is never called, and no retired stage line can reach the log.
  *
  * @module dsh-adg-token-budget/test
  */
@@ -16,20 +22,16 @@ import { join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test, { beforeEach } from 'node:test'
 
+import * as budgetModule from '../src/budget.js'
 import {
-  HARD,
-  PASS,
-  SOFT,
-  cumulativeUsageOf,
-  decide,
   delegationDepthOf,
   dueStepTier,
   isDelegatedChild,
   presetIsGoverned,
 } from '../src/budget.js'
 import { DEFAULT_CONFIG, MAX_STEP_TEXT_CHARS, MAX_STEP_TIERS, normalizeConfig } from '../src/config.js'
+import * as pluginModule from '../src/plugin.js'
 import {
-  NUDGE_TEXT,
   STEP_CHOICE_BODY,
   STEP_LAST_TAIL,
   activationLine,
@@ -46,6 +48,15 @@ import {
 // of the tests before it.
 beforeEach(() => {
   resetRegistrationStateForTests()
+})
+
+/** The retired token-budget options. A row that still carries them must load. */
+const RETIRED_CONFIG = Object.freeze({
+  budgetTokens: 3_000_000,
+  softRatio: 0.7,
+  cacheReadWeight: 1,
+  softNudge: true,
+  hardDryRun: true,
 })
 
 // ---------------------------------------------------------------------------
@@ -78,15 +89,10 @@ function decisionLines(path) {
     .filter((line) => line !== '' && !line.includes('activation:'))
 }
 
-/**
- * The three fields that make up the per-session guard state.
- *
- * The live entry also caches the resolved `sessionProjections` handle once it
- * exists, so comparing the entry itself would compare a live service too.
- */
+/** The two fields that make up the per-session checkpoint state. */
 function entryFields(entry) {
   if (entry === undefined) return undefined
-  return { steps: entry.steps, nudged: entry.nudged, firedTiers: entry.firedTiers }
+  return { steps: entry.steps, firedTiers: entry.firedTiers }
 }
 
 /**
@@ -153,11 +159,12 @@ function listenerOf(ctx, event) {
 const ABSENT = Symbol('absent')
 
 /**
- * A fake agent whose header/options the plugin actually reads.
+ * A fake agent whose header/options the plugin actually reads, and which records
+ * every `cancel` the plugin asks for. The plugin must never ask for one.
  *
  * @param overrides - the fields to set; omitted fields stay absent.
  */
-function fakeAgent({ id = 'child-1', preset = ABSENT, headerDepth, subagentDepth = ABSENT, cancel } = {}) {
+function fakeAgent({ id = 'child-1', preset = ABSENT, headerDepth, subagentDepth = ABSENT } = {}) {
   const header = { id, cwd: 'D:\\work\\demo' }
   if (preset !== ABSENT) header.agentPreset = preset
   if (headerDepth !== undefined) header.delegationDepth = headerDepth
@@ -168,7 +175,6 @@ function fakeAgent({ id = 'child-1', preset = ABSENT, headerDepth, subagentDepth
     session: { header },
     cancel(cause, options) {
       calls.cancel.push({ cause, options })
-      if (typeof cancel === 'function') cancel(cause, options)
     },
     calls,
   }
@@ -177,26 +183,6 @@ function fakeAgent({ id = 'child-1', preset = ABSENT, headerDepth, subagentDepth
 /** A delegated child of the governed `adg` preset. */
 function fakeAdgChild(overrides = {}) {
   return fakeAgent({ preset: 'adg', ...overrides })
-}
-
-/** A `sessionProjections` stand-in resolving one tokenUsage state. */
-function fakeProjections(totalsOrStateOrThrow) {
-  return {
-    stateOf(session, key) {
-      assert.equal(key, 'tokenUsage')
-      assert.ok(session !== undefined, 'stateOf must be called with the agent session')
-      if (totalsOrStateOrThrow instanceof Error) throw totalsOrStateOrThrow
-      if (typeof totalsOrStateOrThrow === 'function') return totalsOrStateOrThrow()
-      if (totalsOrStateOrThrow === undefined || totalsOrStateOrThrow === null) return totalsOrStateOrThrow
-      if (totalsOrStateOrThrow.totals === undefined) return { totals: totalsOrStateOrThrow }
-      return totalsOrStateOrThrow
-    },
-  }
-}
-
-/** Totals that fold to a known cumulative figure. */
-function totalsOf(uncachedInputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0) {
-  return { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
 }
 
 /** Activate the plugin against a fresh fake context and return the fixtures. */
@@ -270,273 +256,182 @@ function dispose(ctx) {
 // ---------------------------------------------------------------------------
 
 test('delegationDepthOf takes the deeper of the header and the runtime options', () => {
-  assert.equal(delegationDepthOf({ session: { header: {} }, options: {} }), 0)
-  assert.equal(delegationDepthOf({ session: { header: { delegationDepth: 2 } }, options: {} }), 2)
-  assert.equal(delegationDepthOf({ session: { header: {} }, options: { subagentDepth: 3 } }), 3)
-  // A resumed child has fresh options but a persisted header: the header wins.
   assert.equal(delegationDepthOf({ session: { header: { delegationDepth: 2 } }, options: { subagentDepth: 1 } }), 2)
-  // Out-of-contract values are ignored instead of thrown: a bad header must not
-  // be able to abort a live turn.
-  assert.equal(delegationDepthOf({ session: { header: { delegationDepth: -1 } }, options: {} }), 0)
-  assert.equal(delegationDepthOf({ session: { header: {} }, options: { subagentDepth: 1.5 } }), 0)
+  assert.equal(delegationDepthOf({ session: { header: { delegationDepth: 1 } }, options: { subagentDepth: 3 } }), 3)
+  assert.equal(delegationDepthOf({ session: { header: {} }, options: {} }), 0)
   assert.equal(delegationDepthOf(undefined), 0)
   assert.equal(delegationDepthOf(null), 0)
-  assert.equal(delegationDepthOf({}), 0)
 })
 
 test('an out-of-contract header delegationDepth is no depth at all', () => {
-  // The header is the authoritative, monotone signal, so it goes through
-  // `Number.isSafeInteger(value) && value >= 0`. Everything else is "no depth":
-  // not a coercion (`'1'` is not 1), not a truncation (`1.5` is not 1), not a
-  // clamp (`-1` is not 0), and never a thrown error — a malformed header must
-  // not be able to abort a live turn. `2**53` is the boundary case that a bare
-  // `Number.isInteger` check would wave through.
-  for (const headerDepth of ['1', -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, true, null]) {
-    const label = `header depth ${String(headerDepth)}`
-    assert.equal(delegationDepthOf({ session: { header: { delegationDepth: headerDepth } }, options: {} }), 0, label)
-    assert.equal(isDelegatedChild(fakeAgent({ headerDepth })), false, label)
-    // A valid runtime depth still deepens the count, exactly as upstream does.
-    assert.equal(delegationDepthOf(fakeAgent({ headerDepth, subagentDepth: 1 })), 1, label)
+  // Unlike the upstream helper this one never throws: a malformed header must
+  // not be able to abort a live step.
+  for (const value of ['1', -1, 1.5, Number.NaN, Infinity, null, {}, []]) {
+    assert.equal(delegationDepthOf({ session: { header: { delegationDepth: value } }, options: {} }), 0, `depth ${String(value)}`)
   }
-})
-
-test('a child whose header depth is out of contract is not governed by the budget', async () => {
-  // The helper-level assertions above are not enough: this pins the guard
-  // through the whole listener, where losing it would cancel a live child.
-  const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: fakeProjections(totalsOf(9_999_999)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  for (const headerDepth of ['1', -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, true, null]) {
-    const label = `header depth ${String(headerDepth)}`
-    const agent = fakeAdgChild({ headerDepth })
-    const next = trackedNext()
-    assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] }, label)
-    assert.equal(next.calls, 1, label)
-    assert.equal(agent.calls.cancel.length, 0, label)
-  }
+  assert.equal(delegationDepthOf({ session: { header: { delegationDepth: 2 } }, options: { subagentDepth: 'x' } }), 2)
 })
 
 test('isDelegatedChild is exactly depth > 0', () => {
-  assert.equal(isDelegatedChild(fakeAgent({ headerDepth: 0 })), false)
-  assert.equal(isDelegatedChild(fakeAgent({ headerDepth: 1 })), true)
-  assert.equal(isDelegatedChild(fakeAgent({ subagentDepth: 1 })), true)
-  assert.equal(isDelegatedChild(fakeAgent({ headerDepth: 2, subagentDepth: 0 })), true)
+  assert.equal(isDelegatedChild(fakeAdgChild({ headerDepth: 1 })), true)
+  assert.equal(isDelegatedChild(fakeAgent({ preset: 'adg' })), false)
+  assert.equal(isDelegatedChild(undefined), false)
 })
 
 test('presetIsGoverned fails open when the header carries no preset', () => {
-  const presets = ['adg']
-  assert.equal(presetIsGoverned(fakeAgent({ preset: 'adg' }), presets), true)
-  assert.equal(presetIsGoverned(fakeAgent({ preset: 'standard' }), presets), false)
-  assert.equal(presetIsGoverned(fakeAgent({ preset: undefined }), presets), false)
-  assert.equal(presetIsGoverned(fakeAgent({}), presets), false)
-  assert.equal(presetIsGoverned(fakeAgent({ preset: 'ADG' }), presets), false)
-  assert.equal(presetIsGoverned(fakeAgent({ preset: 'adg' }), []), false)
-  assert.equal(presetIsGoverned(undefined, presets), false)
+  assert.equal(presetIsGoverned(fakeAgent({ preset: 'adg' }), ['adg']), true)
+  assert.equal(presetIsGoverned(fakeAgent({ preset: 'standard' }), ['adg']), false)
+  // An absent preset is NOT governed: guessing there would let the plugin touch
+  // sessions it was never pointed at.
+  assert.equal(presetIsGoverned(fakeAgent({}), ['adg']), false)
+  assert.equal(presetIsGoverned(fakeAgent({ preset: 7 }), ['adg']), false)
+  assert.equal(presetIsGoverned(undefined, ['adg']), false)
 })
-
-test('cumulativeUsageOf applies the cache-read weight and ignores junk counters', () => {
-  const totals = totalsOf(100, 50, 1000, 20)
-  assert.equal(cumulativeUsageOf({ totals }, 1), 100 + 50 + 1000 + 20)
-  assert.equal(cumulativeUsageOf({ totals }, 0.5), 100 + 50 + 500 + 20)
-  assert.equal(cumulativeUsageOf({ totals }, 0), 100 + 50 + 0 + 20)
-  // A missing or non-numeric counter counts as zero rather than NaN, which
-  // would make every comparison false and silently disable the budget.
-  assert.equal(cumulativeUsageOf({ totals: { uncachedInputTokens: 10, outputTokens: 'x' } }, 1), 10)
-  assert.equal(cumulativeUsageOf({ totals: { uncachedInputTokens: Number.NaN } }, 1), 0)
-  // A hostile weight falls back to 1 rather than poisoning the total.
-  assert.equal(cumulativeUsageOf({ totals }, Number.NaN), 100 + 50 + 1000 + 20)
-  assert.equal(cumulativeUsageOf(undefined, 1), undefined)
-  assert.equal(cumulativeUsageOf({}, 1), undefined)
-  assert.equal(cumulativeUsageOf({ totals: null }, 1), undefined)
-})
-
-test('decide classifies against both inclusive thresholds, hard first', () => {
-  const gate = (usage, budgetTokens = 1000, softRatio = 0.7) => decide({ usage, budgetTokens, softRatio })
-  assert.equal(gate(0), PASS)
-  assert.equal(gate(699), PASS)
-  assert.equal(gate(700), SOFT)
-  assert.equal(gate(999), SOFT)
-  assert.equal(gate(1000), HARD)
-  assert.equal(gate(5000), HARD)
-  // softRatio 1 disables the soft stage: nothing below the budget is nudged,
-  // and the budget itself still stops.
-  assert.equal(gate(999, 1000, 1), PASS)
-  assert.equal(gate(1000, 1000, 1), HARD)
-  // softRatio 0 nudges on the first step, and the hard threshold still wins.
-  assert.equal(gate(0, 1000, 0), SOFT)
-  assert.equal(gate(1000, 1000, 0), HARD)
-  // A negative budget is a misconfiguration, not a hair trigger: pass.
-  assert.equal(gate(10, -5, 0.7), PASS)
-  // Non-finite inputs can only pass through.
-  assert.equal(gate(Number.NaN), PASS)
-  assert.equal(decide({ usage: 10, budgetTokens: Number.POSITIVE_INFINITY, softRatio: 0.5 }), PASS)
-  assert.equal(decide({ usage: 10, budgetTokens: 100, softRatio: Number.NaN }), PASS)
-  assert.equal(decide(undefined), PASS)
-})
-
-// ---------------------------------------------------------------------------
-// src/budget.js — the step checkpoints (pure)
-// ---------------------------------------------------------------------------
 
 test('dueStepTier reports the lowest tier that is due and unfired', () => {
-  const gate = { tiers: [12, 24, 40], stepCount: 1 }
-  assert.equal(dueStepTier(gate), undefined)
-  assert.equal(dueStepTier({ ...gate, stepCount: 11 }), undefined)
-  // Inclusive: entering step 12 fires the tier configured as 12.
-  assert.equal(dueStepTier({ ...gate, stepCount: 12 }), 0)
-  assert.equal(dueStepTier({ ...gate, stepCount: 23, firedTiers: [0] }), undefined)
-  assert.equal(dueStepTier({ ...gate, stepCount: 24, firedTiers: [0] }), 1)
-  assert.equal(dueStepTier({ ...gate, stepCount: 40, firedTiers: [0, 1] }), 2)
-  assert.equal(dueStepTier({ ...gate, stepCount: 99, firedTiers: [0, 1, 2] }), undefined)
-  // Several due at once still resolve one call at a time, lowest first.
-  assert.equal(dueStepTier({ tiers: [1, 2, 3], stepCount: 3 }), 0)
-  assert.equal(dueStepTier({ tiers: [1, 2, 3], stepCount: 3, firedTiers: [0] }), 1)
+  const tiers = [4, 8, 12]
+  assert.equal(dueStepTier({ tiers, stepCount: 3 }), undefined)
+  assert.equal(dueStepTier({ tiers, stepCount: 4 }), 0)
+  assert.equal(dueStepTier({ tiers, stepCount: 7 }), 0, 'the lowest unfired tier stays due until it is consumed')
+  assert.equal(dueStepTier({ tiers, stepCount: 7, firedTiers: [0] }), undefined, 'tier 8 is not due at step 7')
+  assert.equal(dueStepTier({ tiers, stepCount: 8, firedTiers: [0] }), 1)
+  // Several tiers due at once: one per call, lowest first, so a caller that
+  // evaluates once per step still fires every tier in order.
+  assert.equal(dueStepTier({ tiers, stepCount: 20, firedTiers: [0] }), 1)
+  assert.equal(dueStepTier({ tiers, stepCount: 20, firedTiers: [0, 1] }), 2)
+  assert.equal(dueStepTier({ tiers, stepCount: 20, firedTiers: [0, 1, 2] }), undefined)
 })
 
 test('dueStepTier refuses out-of-contract input instead of throwing', () => {
-  const junk = [
-    undefined,
-    null,
-    {},
-    { tiers: 'x', stepCount: 5 },
-    { tiers: [1], stepCount: '5' },
-    { tiers: [1], stepCount: Number.NaN },
-    { tiers: [1], stepCount: Number.POSITIVE_INFINITY },
-  ]
-  for (const gate of junk) assert.equal(dueStepTier(gate), undefined, JSON.stringify(gate))
-  // A malformed entry inside an otherwise usable list is skipped, not fatal.
-  assert.equal(dueStepTier({ tiers: ['x', 3], stepCount: 3 }), 1)
-  // A non-positive tier can never be due.
-  assert.equal(dueStepTier({ tiers: [0, -1, 3], stepCount: 1 }), undefined)
-  // A non-array firedTiers list counts as "nothing has fired".
-  assert.equal(dueStepTier({ tiers: [3], stepCount: 3, firedTiers: 'x' }), 0)
-  assert.equal(dueStepTier({ tiers: [3], stepCount: 3, firedTiers: [0, 0] }), undefined)
+  // This runs inside a live step, so junk input must yield "no nudge".
+  assert.equal(dueStepTier(undefined), undefined)
+  assert.equal(dueStepTier({ tiers: 'x', stepCount: 5 }), undefined)
+  assert.equal(dueStepTier({ tiers: [1], stepCount: '5' }), undefined)
+  assert.equal(dueStepTier({ tiers: [1], stepCount: Number.NaN }), undefined)
+  assert.equal(dueStepTier({ tiers: [0, -1, 'x', Number.NaN], stepCount: 9 }), undefined)
+  assert.equal(dueStepTier({ tiers: [2], stepCount: 3, firedTiers: 'x' }), 0)
+})
+
+test('the token-budget helpers are gone from budget.js', () => {
+  // The removal is part of the contract: `decide`, `cumulativeUsageOf` and the
+  // PASS/SOFT/HARD verdicts existed only for the two token stages.
+  assert.deepEqual(Object.keys(budgetModule).sort(), [
+    'delegationDepthOf',
+    'dueStepTier',
+    'isDelegatedChild',
+    'presetIsGoverned',
+  ])
 })
 
 // ---------------------------------------------------------------------------
-// src/config.js
+// src/config.js — normalization
 // ---------------------------------------------------------------------------
 
-test('normalizeConfig fills every key from defaults for unusable input', () => {
-  for (const raw of [undefined, null, {}, 'garbage', 42, [], { softRatio: 'x' }]) {
-    const config = normalizeConfig(raw)
-    assert.deepEqual(config.presets, ['adg'])
-    assert.equal(config.enabled, true)
-    assert.equal(config.budgetTokens, DEFAULT_CONFIG.budgetTokens)
-    assert.equal(config.softRatio, DEFAULT_CONFIG.softRatio)
-    assert.equal(config.cacheReadWeight, DEFAULT_CONFIG.cacheReadWeight)
-    assert.equal(config.softNudge, true)
-    assert.equal(config.stepNudge, true)
-    assert.deepEqual(config.stepTiers, DEFAULT_CONFIG.stepTiers)
-    assert.equal(config.dryRun, false)
-    assert.equal(config.hardDryRun, false)
-    assert.equal(config.stepText, null)
-    assert.equal(config.logFile, null)
+test('normalizeConfig fills exactly the surviving keys from defaults for unusable input', () => {
+  for (const raw of [undefined, null, 'garbage', 42, [], () => {}, { enabled: true }]) {
+    assert.deepEqual(
+      normalizeConfig(raw),
+      {
+        enabled: true,
+        presets: ['adg'],
+        stepNudge: true,
+        stepTiers: [...DEFAULT_CONFIG.stepTiers],
+        stepText: null,
+        dryRun: false,
+        logFile: null,
+      },
+      `raw ${JSON.stringify(raw)}`,
+    )
   }
-  // A non-positive budget is a typo, not a hair trigger: it falls back to the
-  // default rather than stopping every child on its first step.
-  assert.equal(normalizeConfig({ budgetTokens: -1 }).budgetTokens, DEFAULT_CONFIG.budgetTokens)
-  assert.equal(normalizeConfig({ budgetTokens: 0 }).budgetTokens, DEFAULT_CONFIG.budgetTokens)
+})
+
+test('normalizeConfig ignores the retired token-budget keys', () => {
+  // Live compositions still carry them, and a row must keep loading: the keys
+  // are simply not part of the resolved object any more, so nothing downstream
+  // can read a budget that is no longer enforced.
+  const config = normalizeConfig({ ...RETIRED_CONFIG, stepTiers: [3] })
+  assert.deepEqual(config, {
+    enabled: true,
+    presets: ['adg'],
+    stepNudge: true,
+    stepTiers: [3],
+    stepText: null,
+    dryRun: false,
+    logFile: null,
+  })
+  for (const key of Object.keys(RETIRED_CONFIG)) {
+    assert.equal(Object.hasOwn(config, key), false, `${key} must not survive normalization`)
+  }
 })
 
 test('normalizeConfig accepts a bare preset string and de-duplicates', () => {
   assert.deepEqual(normalizeConfig({ presets: 'adg' }).presets, ['adg'])
-  assert.deepEqual(normalizeConfig({ presets: [' adg ', 'adg', 'other'] }).presets, ['adg', 'other'])
+  assert.deepEqual(normalizeConfig({ presets: ['adg', 'adg', ' ptc '] }).presets, ['adg', 'ptc'])
+  // Nothing usable falls back to the default rather than disarming the plugin.
   assert.deepEqual(normalizeConfig({ presets: [] }).presets, ['adg'])
-  assert.deepEqual(normalizeConfig({ presets: [1, null] }).presets, ['adg'])
+  assert.deepEqual(normalizeConfig({ presets: [7, ''] }).presets, ['adg'])
 })
 
-test('normalizeConfig clamps out-of-range numbers', () => {
-  assert.equal(normalizeConfig({ budgetTokens: 2.6 }).budgetTokens, 3)
-  assert.equal(normalizeConfig({ budgetTokens: 1.4 }).budgetTokens, 1)
-  assert.equal(normalizeConfig({ softRatio: 5 }).softRatio, 1)
-  assert.equal(normalizeConfig({ softRatio: -5 }).softRatio, 0)
-  assert.equal(normalizeConfig({ cacheReadWeight: -3 }).cacheReadWeight, 0)
-  assert.equal(normalizeConfig({ cacheReadWeight: 1e9 }).cacheReadWeight, 100)
-  // A weight is a multiplier, not a count: a fractional discount survives.
-  assert.equal(normalizeConfig({ cacheReadWeight: 0.5 }).cacheReadWeight, 0.5)
-  assert.equal(normalizeConfig({ budgetTokens: Number.NaN }).budgetTokens, DEFAULT_CONFIG.budgetTokens)
-  assert.equal(normalizeConfig({ softRatio: 'x' }).softRatio, DEFAULT_CONFIG.softRatio)
-  assert.equal(normalizeConfig({ logFile: '' }).logFile, null)
-  assert.equal(normalizeConfig({ logFile: 'D:\\x.log' }).logFile, 'D:\\x.log')
-  assert.equal(normalizeConfig({ enabled: 'yes' }).enabled, true)
-  assert.equal(normalizeConfig({ enabled: false }).enabled, false)
-  assert.equal(normalizeConfig({ softNudge: false }).softNudge, false)
-  assert.equal(normalizeConfig({ dryRun: true }).dryRun, true)
-  // Only a real boolean arms the calibration switch; a truthy string does not.
-  assert.equal(normalizeConfig({ dryRun: 'yes' }).dryRun, false)
-  assert.equal(normalizeConfig({ dryRun: 1 }).dryRun, false)
-})
-
-test('normalizeConfig reads the step checkpoints and the hard-stage switch', () => {
-  const defaults = normalizeConfig({})
-  assert.equal(defaults.stepNudge, true)
-  assert.deepEqual(defaults.stepTiers, DEFAULT_CONFIG.stepTiers)
-  assert.equal(defaults.hardDryRun, false)
-
-  // A bare number reads as a one-tier list, the way `presets: adg` reads as a
-  // one-name list.
-  assert.deepEqual(normalizeConfig({ stepTiers: 5 }).stepTiers, [5])
-  // Sorted ascending and de-duplicated: the helper scans the list in order and
-  // reports the first tier that is due.
-  assert.deepEqual(normalizeConfig({ stepTiers: [24, 12, 24.4, 12] }).stepTiers, [12, 24])
-  assert.deepEqual(normalizeConfig({ stepTiers: [2.6, 3.4] }).stepTiers, [3])
-  // Only a real boolean arms either switch.
-  assert.equal(normalizeConfig({ stepNudge: 'yes' }).stepNudge, true)
+test('normalizeConfig reads the step switches and only booleans count', () => {
   assert.equal(normalizeConfig({ stepNudge: false }).stepNudge, false)
-  assert.equal(normalizeConfig({ hardDryRun: true }).hardDryRun, true)
-  assert.equal(normalizeConfig({ hardDryRun: 1 }).hardDryRun, false)
+  assert.equal(normalizeConfig({ stepNudge: 'no' }).stepNudge, true)
+  assert.equal(normalizeConfig({ dryRun: true }).dryRun, true)
+  assert.equal(normalizeConfig({ dryRun: 1 }).dryRun, false)
+  assert.equal(normalizeConfig({ enabled: false }).enabled, false)
+  assert.equal(normalizeConfig({ enabled: 'yes' }).enabled, true)
 })
 
-test('the default ladder is early and dense, and reaches into the tail', () => {
-  const tiers = DEFAULT_CONFIG.stepTiers
-  // Early: a quarter of the measured children finish by step 14, so the first
-  // checkpoint has to be well before that to be a question rather than a
-  // post-mortem.
-  assert.equal(tiers[0], 4)
-  assert.ok(tiers.indexOf(24) !== -1 || tiers.some((tier) => tier <= 24))
-  // Dense where the children actually are: at least four checkpoints by step 24.
-  assert.ok(tiers.filter((tier) => tier <= 24).length >= 4)
-  // ... and still checking the tail, where the multi-million-token children are:
-  // the measured maximum is 329 steps.
-  assert.ok(tiers[tiers.length - 1] >= 280)
-  // Ascending and unique, which the decision helper depends on.
-  for (let index = 1; index < tiers.length; index += 1) assert.ok(tiers[index] > tiers[index - 1])
-  // A checkpoint every step would be noise and cost; the gaps have to stay
-  // meaningful even in the dense head of the ladder.
-  for (let index = 1; index < tiers.length; index += 1) assert.ok(tiers[index] - tiers[index - 1] >= 4)
+test('the default ladder is early and dense, and within the tier cap', () => {
+  const tiers = [...DEFAULT_CONFIG.stepTiers]
+  assert.deepEqual(tiers, [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280])
+  assert.ok(tiers.length <= MAX_STEP_TIERS)
+  assert.deepEqual([...tiers].sort((left, right) => left - right), tiers, 'ascending')
+  assert.equal(new Set(tiers).size, tiers.length, 'no duplicates')
+  // Early gaps stay small through step 24, which is where the measured mass is;
+  // the tail widens so a runaway keeps getting checked without a reminder every
+  // single step.
+  for (let index = 1; index < 5; index += 1) {
+    assert.ok(tiers[index] - tiers[index - 1] <= 6, `gap ${index} is ${tiers[index] - tiers[index - 1]}`)
+  }
+  assert.ok(tiers[tiers.length - 1] - tiers[tiers.length - 2] > 6)
 })
 
 test('normalizeConfig reads a custom step body and refuses to be left wordless', () => {
-  assert.equal(normalizeConfig({}).stepText, null)
   assert.equal(normalizeConfig({ stepText: '  自定义  ' }).stepText, '自定义')
-  assert.equal(normalizeConfig({ stepText: '' }).stepText, null)
+  // Blank, absent or non-string falls back to the built-in body: a mistyped key
+  // must not leave the checkpoint silent.
   assert.equal(normalizeConfig({ stepText: '   ' }).stepText, null)
   assert.equal(normalizeConfig({ stepText: 7 }).stepText, null)
-  assert.equal(normalizeConfig({ stepText: null }).stepText, null)
-  // Too long is truncated rather than rejected: it still says what it says.
+  assert.equal(normalizeConfig({ stepText: {} }).stepText, null)
+  // Merely too long is truncated rather than rejected.
   const long = normalizeConfig({ stepText: 'x'.repeat(MAX_STEP_TEXT_CHARS + 500) }).stepText
   assert.equal(long.length, MAX_STEP_TEXT_CHARS)
 })
 
 test('unusable step tiers fall back to the defaults, not to "off"', () => {
-  const junk = [undefined, null, [], 'x', [0], [-1], [Number.NaN], [Number.POSITIVE_INFINITY], ['12'], [{}], [null]]
-  for (const stepTiers of junk) {
-    assert.deepEqual(normalizeConfig({ stepTiers }).stepTiers, DEFAULT_CONFIG.stepTiers, JSON.stringify(stepTiers))
+  for (const stepTiers of [[], 'x', [0, -1], [Number.NaN], [null], {}, '   ']) {
+    assert.deepEqual(normalizeConfig({ stepTiers }).stepTiers, [...DEFAULT_CONFIG.stepTiers], `stepTiers ${JSON.stringify(stepTiers)}`)
   }
-  // Turning them off is `stepNudge: false` — a deliberate switch, not a typo the
-  // plugin has to guess at.
-  assert.deepEqual(normalizeConfig({ stepNudge: false }).stepTiers, DEFAULT_CONFIG.stepTiers)
+  // A bare number is a one-tier list, the way `presets: adg` is a one-name list.
+  assert.deepEqual(normalizeConfig({ stepTiers: 12 }).stepTiers, [12])
+  assert.deepEqual(normalizeConfig({ stepTiers: 12.4 }).stepTiers, [12])
+  // Junk entries are dropped rather than clamped to something nobody wrote, and
+  // the survivors are de-duplicated and sorted ascending.
+  assert.deepEqual(normalizeConfig({ stepTiers: [9, 'x', 3, 3, 0, -2, 5.6] }).stepTiers, [3, 6, 9])
 })
 
 test('normalizeConfig bounds how many tiers it will honour', () => {
-  const many = Array.from({ length: MAX_STEP_TIERS + 8 }, (_, index) => index + 1)
+  const many = Array.from({ length: MAX_STEP_TIERS + 20 }, (_, index) => index + 1)
   const tiers = normalizeConfig({ stepTiers: many }).stepTiers
   assert.equal(tiers.length, MAX_STEP_TIERS)
-  assert.equal(tiers[0], 1)
-  assert.equal(tiers[MAX_STEP_TIERS - 1], MAX_STEP_TIERS)
-  // The default list is itself within the bound, so the cap cannot be hiding a
-  // default the plugin would never fire.
-  assert.ok(DEFAULT_CONFIG.stepTiers.length <= MAX_STEP_TIERS)
+  assert.deepEqual(tiers, many.slice(0, MAX_STEP_TIERS))
+})
+
+test('normalizeConfig keeps an unusable logFile out of the way', () => {
+  assert.equal(normalizeConfig({ logFile: 'C:\\logs\\x.log' }).logFile, 'C:\\logs\\x.log')
+  assert.equal(normalizeConfig({ logFile: '   ' }).logFile, null)
+  assert.equal(normalizeConfig({ logFile: 42 }).logFile, null)
+  assert.equal(normalizeConfig({ logFile: { path: 'x' } }).logFile, null)
 })
 
 // ---------------------------------------------------------------------------
@@ -598,17 +493,13 @@ test('the running profile from ctx.baseUrl is the first createUserMessage anchor
 
 test('createNudgeFactory always yields a usable factory', () => {
   const factory = createNudgeFactory()
-  const message = factory.create(NUDGE_TEXT)
+  const message = factory.create('hello')
   assert.equal(typeof factory.strategy, 'string')
   assert.equal(message.role, 'user')
   assert.deepEqual(message.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
   assert.equal(message.content.length, 1)
   assert.equal(message.content[0].type, 'text')
-  assert.equal(message.content[0].text, NUDGE_TEXT)
-  // The nudge must actually carry the three required instructions.
-  assert.match(NUDGE_TEXT, /\u9884\u7b97/u)
-  assert.match(NUDGE_TEXT, /\u505c\u6b62/u)
-  assert.match(NUDGE_TEXT, /\u672a\u9a8c\u8bc1/u)
+  assert.equal(message.content[0].text, 'hello')
 })
 
 // ---------------------------------------------------------------------------
@@ -624,17 +515,22 @@ test('apply never throws, for any config or context, and registers nothing witho
     42,
     [],
     () => {},
-    { budgetTokens: -1 },
-    { softRatio: 'x' },
+    { enabled: 'yes' },
     { presets: 'adg' },
     { presets: 5 },
-    { enabled: 'yes' },
-    { cacheReadWeight: Number.NaN },
+    { stepNudge: 'x' },
+    { stepTiers: 'x' },
+    { stepTiers: [] },
+    { stepText: 42 },
+    { dryRun: 'x' },
     { logFile: 42 },
     { logFile: '' },
     { logFile: 'relative.log' },
-    { enabled: true, presets: null, budgetTokens: 'x', softRatio: [], cacheReadWeight: {}, softNudge: 'x', logFile: [] },
+    { enabled: true, presets: null, stepNudge: {}, stepTiers: [], stepText: [], dryRun: [], logFile: [] },
     { nested: { enabled: false } },
+    // A row carrying the retired keys must load like any other.
+    RETIRED_CONFIG,
+    { ...RETIRED_CONFIG, stepTiers: [1], enabled: true },
   ]
   for (const config of hostile) {
     assert.doesNotThrow(() => apply(createFakeContext(), config), `config ${JSON.stringify(config)} threw`)
@@ -649,57 +545,28 @@ test('apply never throws, for any config or context, and registers nothing witho
   }
 })
 
-test('apply still works when ctx.get always returns undefined (no services at all)', async () => {
-  const ctx = createFakeContext({})
-  apply(ctx, {})
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext()
-  const decision = await handler({ agent }, next)
-  assert.deepEqual(decision, { kind: 'enter', messages: [] })
-  assert.equal(next.calls, 1)
-  assert.equal(agent.calls.cancel.length, 0)
-})
-
 test('enabled: false registers nothing at all', () => {
   const ctx = activate({ enabled: false })
   assert.equal(ctx.listeners.size, 0)
   assert.equal(ctx.effects.length, 0)
 })
 
-// ---------------------------------------------------------------------------
-// src/plugin.js — apply() idempotency (a double registration doubles every
-// decision: two nudges on the soft path, two cancels on the hard path)
-// ---------------------------------------------------------------------------
-
 test('applying the same context twice registers exactly one hook', () => {
-  const ctx = createFakeContext({ sessionProjections: fakeProjections(totalsOf(800)) })
-  apply(ctx, { budgetTokens: 1000, softRatio: 0.7 })
-  assert.equal(listenersFor(ctx, 'agent/pre-step').length, 1)
+  const ctx = createFakeContext()
+  apply(ctx, {})
+  apply(ctx, {})
+  assert.equal(listenersFor(ctx, 'agent/pre-step').length, 1, 'a duplicate apply must not double the reminders')
   assert.equal(listenersFor(ctx, 'subagent/end').length, 1)
-  assert.equal(ctx.effects.length, 1)
-
-  apply(ctx, { budgetTokens: 1000, softRatio: 0.7 })
-
-  assert.equal(listenersFor(ctx, 'agent/pre-step').length, 1, 'the duplicate apply must not register a second listener')
-  assert.equal(listenersFor(ctx, 'subagent/end').length, 1)
-  assert.equal(ctx.effects.length, 1)
-  // The same-context case is the WeakSet guard, so it must say so and must NOT
-  // be reported as a double mount.
-  assert.ok(
-    ctx.warnings.some((line) => line.includes('already applied the plugin')),
-    ctx.warnings.join(' | '),
-  )
-  assert.equal(ctx.warnings.filter((line) => line.includes('mounted twice')).length, 0, ctx.warnings.join(' | '))
+  assert.ok(ctx.warnings.some((line) => line.includes('already applied')))
 })
 
 test('a re-apply after disposal registers again (the hot-reload path)', () => {
-  const ctx = createFakeContext({ sessionProjections: fakeProjections(totalsOf(800)) })
-  apply(ctx, { budgetTokens: 1000, softRatio: 0.7 })
+  const ctx = createFakeContext()
+  apply(ctx, {})
   dispose(ctx)
   assert.equal(ctx.warnings.length, 0, ctx.warnings.join(' | '))
 
-  apply(ctx, { budgetTokens: 1000, softRatio: 0.7 })
+  apply(ctx, {})
 
   assert.equal(listenersFor(ctx, 'agent/pre-step').length, 2, 'a legitimate re-apply after disposal must register again')
   assert.equal(ctx.warnings.some((line) => line.includes('already applied the plugin')), false)
@@ -709,470 +576,125 @@ test('a re-apply after disposal registers again (the hot-reload path)', () => {
 })
 
 test('a second distinct context warns that the plugin is mounted twice', () => {
-  apply(createFakeContext(), { budgetTokens: 1000 })
+  const first = createFakeContext()
   const second = createFakeContext()
-  apply(second, { budgetTokens: 1000 })
-
-  const warnings = second.warnings.filter((line) => line.includes('mounted twice'))
-  assert.equal(warnings.length, 1, second.warnings.join(' | '))
-  assert.match(warnings[0], /counted twice/)
-  // Deliberately not skipped: a legitimate remount must keep working.
-  assert.equal(listenersFor(second, 'agent/pre-step').length, 1)
-  assert.equal(second.effects.length, 1)
+  apply(first, {})
+  apply(second, {})
+  assert.ok(second.warnings.some((line) => line.includes('already active')), second.warnings.join('\n'))
+  assert.equal(listenersFor(second, 'agent/pre-step').length, 1, 'the second mount is reported, not skipped')
 })
 
 // ---------------------------------------------------------------------------
-// src/plugin.js — the load-time activation line (B2)
+// src/plugin.js — the activation line
 // ---------------------------------------------------------------------------
 
 test('apply always writes exactly one activation line, enabled or not', (t) => {
-  const enabledLog = createLogFile(t)
-  const enabledCtx = activate({
-    enabled: true,
-    budgetTokens: 3_000_000,
-    softRatio: 0.7,
-    logFile: enabledLog,
-  })
-  const enabledLines = readLog(enabledLog).trim().split('\n')
-  assert.equal(enabledLines.length, 1, readLog(enabledLog))
-  assert.match(enabledLines[0], /^\d{4}-\d{2}-\d{2}T[\d:.]+Z activation: active createUserMessage=\S+/)
-  assert.match(
-    enabledLines[0],
-    /budgetTokens=3000000 softThreshold=2100000 softRatio=0\.7 presets=\[adg\] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=\[/,
-  )
-  // The rendered ladder is asserted from the default rather than transcribed, so
-  // a deliberate tier change does not need this test edited to match it.
-  assert.ok(enabledLines[0].includes(`stepTiers=[${DEFAULT_CONFIG.stepTiers.join(', ')}]`), enabledLines[0])
-  assert.match(enabledLines[0], /stepText=builtin dryRun=false hardDryRun=false logFile=/)
-  // The same line goes through the host log, so "the host loaded it" is visible
-  // without opening the file.
-  assert.ok(enabledCtx.infos.some((line) => line.includes('activation: active')), enabledCtx.infos.join(' | '))
+  const logLines = (path) => readLog(path).split('\n').filter((line) => line !== '')
 
   const disabledLog = createLogFile(t)
-  const disabledCtx = activate({ enabled: false, logFile: disabledLog })
-  const disabledLines = readLog(disabledLog).trim().split('\n')
-  assert.equal(disabledLines.length, 1, readLog(disabledLog))
-  assert.match(disabledLines[0], /activation: inactive \(enabled: false\)/)
-  assert.match(disabledLines[0], /budgetTokens=3000000 softThreshold=2100000 softRatio=0\.7 presets=\[adg\]/)
-  assert.match(disabledLines[0], /dryRun=false/)
-  assert.equal(disabledCtx.listeners.size, 0)
-  assert.ok(disabledCtx.infos.some((line) => line.includes('inactive (enabled: false)')), disabledCtx.infos.join(' | '))
+  apply(createFakeContext(), { enabled: false, logFile: disabledLog })
+  const disabled = logLines(disabledLog)
+  assert.equal(disabled.length, 1)
+  assert.match(disabled[0], /activation: inactive \(enabled: false\)/)
+
+  const enabledLog = createLogFile(t)
+  apply(createFakeContext(), { logFile: enabledLog })
+  const enabled = logLines(enabledLog)
+  assert.equal(enabled.length, 1)
+  assert.match(enabled[0], /activation: active createUserMessage=\S+/)
 })
 
 test('a throwing logger or an unwritable logFile cannot break apply', (t) => {
-  const hostileLogger = {
-    info() {
-      throw new Error('info exploded')
+  const hostile = {
+    on() {
+      throw new Error('no events for you')
     },
-    warn() {
-      throw new Error('warn exploded')
+    effect() {
+      throw new Error('no effects either')
     },
-    error() {
-      throw new Error('error exploded')
+    get() {
+      throw new Error('no services')
+    },
+    logger: {
+      info() {
+        throw new Error('boom')
+      },
+      warn() {
+        throw new Error('boom')
+      },
     },
   }
-  // A directory is a legal absolute path that can never be appended to, and a
-  // missing parent directory is the other way `appendFileSync` fails.
-  const directory = mkdtempSync(join(tmpdir(), 'dsh-adg-token-budget-dir-'))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
-  const configs = [
-    { logFile: directory },
-    { logFile: join(directory, 'missing-dir', 'budget.log') },
-    { enabled: false, logFile: directory },
-    {},
-  ]
-  for (const config of configs) {
-    assert.doesNotThrow(() => {
-      const ctx = createFakeContext({})
-      ctx.logger = hostileLogger
-      apply(ctx, config)
-    }, `config ${JSON.stringify(config)}`)
-  }
+  assert.doesNotThrow(() => apply(hostile, { stepTiers: [1] }))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-adg-token-budget-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  // A directory is not a writable file: the append fails and is swallowed.
+  assert.doesNotThrow(() => apply(createFakeContext(), { logFile: dir }))
 })
 
-test('activationLine reports the resolved configuration on one line', () => {
-  const line = activationLine(
-    normalizeConfig({
-      enabled: true,
-      budgetTokens: 1000,
-      softRatio: 0.5,
-      presets: ['adg'],
-      stepTiers: [5, 9],
-      dryRun: true,
-      hardDryRun: true,
-      logFile: 'D:\\x.log',
-    }),
-    'module-fallback:web',
-  )
-  assert.match(line, /^activation: active createUserMessage=module-fallback:web /)
-  assert.match(line, /budgetTokens=1000 softThreshold=500 softRatio=0\.5 presets=\[adg\]/)
-  assert.match(line, /stepNudge=true stepTiers=\[5, 9\] stepText=builtin dryRun=true hardDryRun=true logFile='D:\\x\.log'$/)
-  assert.equal(line.includes('\n'), false)
+test('activationLine reports the surviving configuration and none of the retired fields', () => {
+  const line = activationLine(normalizeConfig({ ...RETIRED_CONFIG, stepTiers: [2, 4], stepText: 'x', dryRun: true }), 'profile-fallback:web')
+  assert.match(line, /^activation: active createUserMessage=profile-fallback:web presets=\[adg\] /)
+  assert.match(line, /stepNudge=true/)
+  assert.match(line, /stepTiers=\[2, 4\]/)
+  assert.match(line, /stepText=custom/)
+  assert.match(line, /dryRun=true/)
+  assert.match(line, /logFile=null$/)
+  for (const retired of ['budgetTokens=', 'softThreshold=', 'softRatio=', 'cacheReadWeight=', 'softNudge=', 'hardDryRun=']) {
+    assert.equal(line.includes(retired), false, `${retired} must not appear in the activation line`)
+  }
   assert.match(activationLine(normalizeConfig({ enabled: false }), undefined), /^activation: inactive \(enabled: false\) /)
-  // A custom body is reported as a marker: a mistyped key would otherwise be
-  // invisible except as wording that did not change.
-  assert.match(
-    activationLine(normalizeConfig({ stepText: '自定义' }), undefined),
-    /stepText=custom dryRun=/,
-  )
+})
+
+test('the module exposes the loader-facing shape, and no retired export', () => {
+  assert.equal(pluginModule.name, 'dsh-adg-token-budget')
+  assert.equal(typeof pluginModule.apply, 'function')
+  assert.equal(typeof pluginModule.stepNudgeText, 'function')
+  assert.equal('NUDGE_TEXT' in pluginModule, false, 'the token wrap-up text is gone')
 })
 
 // ---------------------------------------------------------------------------
-// src/plugin.js — the filters
+// src/plugin.js — filtering
 // ---------------------------------------------------------------------------
 
-test('a top-level agent far above the budget is never touched', async () => {
-  const ctx = activate({}, { sessionProjections: fakeProjections(totalsOf(9_999_999)) })
+test('a top-level agent is never touched', async () => {
+  const ctx = activate({ stepTiers: [1] })
   const handler = listenerOf(ctx, 'agent/pre-step')
-  // Depth 0 via absence, via explicit 0, and via a top-level `adg` session.
-  for (const agent of [fakeAgent({ headerDepth: 0 }), fakeAgent({ subagentDepth: 0 }), fakeAgent({ preset: 'adg' })]) {
+  const agent = fakeAgent({ preset: 'adg' })
+  const next = trackedNext()
+  assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] })
+  assert.equal(next.calls, 1)
+  assert.equal(handler.testState.sessions.size, 0, 'a top-level agent must not allocate state')
+})
+
+test('a child of another preset, or with no preset, is never touched and allocates nothing', async () => {
+  const ctx = activate({ stepTiers: [1] })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  for (const agent of [fakeAgent({ preset: 'standard', headerDepth: 1 }), fakeAgent({ headerDepth: 1 }), fakeAgent({ preset: 'adg' })]) {
     const next = trackedNext()
-    const decision = await handler({ agent }, next)
-    assert.deepEqual(decision, { kind: 'enter', messages: [] })
+    assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] })
     assert.equal(next.calls, 1)
-    assert.equal(agent.calls.cancel.length, 0)
   }
-})
-
-test('a child of another preset, or with no preset, is never touched', async () => {
-  const ctx = activate({}, { sessionProjections: fakeProjections(totalsOf(9_999_999)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const cases = [
-    ['standard', fakeAgent({ preset: 'standard', headerDepth: 2 })],
-    ['absent', fakeAgent({ headerDepth: 2 })],
-    ['undefined', fakeAgent({ preset: undefined, headerDepth: 2 })],
-    ['ADG', fakeAgent({ preset: 'ADG', headerDepth: 2 })],
-    ['adg-other', fakeAgent({ preset: 'adg-other', headerDepth: 2 })],
-  ]
-  for (const [label, agent] of cases) {
-    const next = trackedNext()
-    const decision = await handler({ agent }, next)
-    assert.deepEqual(decision, { kind: 'enter', messages: [] }, `preset ${label}`)
-    assert.equal(next.calls, 1)
-    assert.equal(agent.calls.cancel.length, 0)
-  }
-})
-
-test('a governed child below the soft threshold passes through', async () => {
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(600)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext([{ role: 'user' }])
-  const decision = await handler({ agent }, next)
-  assert.deepEqual(decision, { kind: 'enter', messages: [{ role: 'user' }] })
-  assert.equal(next.calls, 1)
-  assert.equal(agent.calls.cancel.length, 0)
-  // Step checkpoints are on by default, so the step is counted. Nothing is
-  // injected and no flag is consumed — the entry is a counter, not a reminder.
-  assert.equal(handler.testState.sessions.size, 1)
-  assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 1, nudged: false, firedTiers: [] })
-})
-
-test('with stepNudge: false a passing step still allocates nothing', async () => {
-  // The zero-allocation pass-through is a real property of the token stage, and
-  // turning the step checkpoints off restores it exactly.
-  for (const raw of [{ budgetTokens: 1000, softRatio: 0.7, stepNudge: false }, { budgetTokens: 1000, softRatio: 0.7, softNudge: false, stepNudge: false }]) {
-    const ctx = activate(raw, { sessionProjections: fakeProjections(totalsOf(600)) })
-    const handler = listenerOf(ctx, 'agent/pre-step')
-    await handler({ agent: fakeAdgChild({ headerDepth: 1 }) }, trackedNext())
-    assert.equal(handler.testState.sessions.size, 0, JSON.stringify(raw))
-  }
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — the soft stage
-// ---------------------------------------------------------------------------
-
-test('the soft stage delegates first, then appends exactly one nudge, once', async () => {
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(700)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const existing = { role: 'user', id: 'existing' }
-
-  const first = trackedNext([existing])
-  const firstDecision = await handler({ agent }, first)
-  assert.equal(first.calls, 1, 'next() must be called on the soft path')
-  assert.equal(firstDecision.kind, 'enter')
-  assert.equal(firstDecision.messages.length, 2)
-  assert.equal(firstDecision.messages[0], existing, 'the downstream messages must be preserved in order')
-  const nudge = firstDecision.messages[1]
-  assert.equal(nudge.role, 'user')
-  assert.deepEqual(nudge.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
-  assert.equal(nudge.content[0].text, NUDGE_TEXT)
-  assert.match(nudge.id, /^[0-9a-f-]{36}$/)
-  assert.ok(Object.isFrozen(nudge), 'the injected message must be immutable like a real UserMessage')
-  assert.equal(handler.testState.sessions.has('child-1'), true)
-
-  // A second step at the same level must NOT add a second nudge.
-  const second = trackedNext([existing])
-  const secondDecision = await handler({ agent }, second)
-  assert.equal(second.calls, 1)
-  assert.deepEqual(secondDecision, { kind: 'enter', messages: [existing] })
-
-  // A third step is still nudged only once.
-  const third = trackedNext([existing])
-  const thirdDecision = await handler({ agent }, third)
-  assert.equal(third.calls, 1)
-  assert.equal(thirdDecision.messages.length, 1)
-})
-
-test('softNudge: false logs the soft stage once and consumes the one-shot flag', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, softNudge: false, logFile },
-    { sessionProjections: fakeProjections(totalsOf(700)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const existing = { role: 'user', id: 'existing' }
-  const next = trackedNext([existing])
-  const decision = await handler({ agent }, next)
-  assert.equal(next.calls, 1)
-  assert.deepEqual(decision, { kind: 'enter', messages: [existing] })
-  assert.match(readLog(logFile), /soft stage \(no nudge configured\)/)
-  // With the instruction switched off, the single log line IS the one-shot
-  // action, so it does consume the flag.
-  assert.equal(handler.testState.sessions.get('child-1').nudged, true)
-  await handler({ agent }, trackedNext([existing]))
-  assert.equal(decisionLines(logFile).length, 1, readLog(logFile))
-})
-
-test('a downstream reject is honoured: the soft stage never invents messages', async () => {
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(800)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = async () => ({ kind: 'reject' })
-  assert.deepEqual(await handler({ agent }, next), { kind: 'reject' })
-})
-
-test('a failing downstream listener is never swallowed, and next() is called once', async () => {
-  // The reproduction of the worst defect: this listener sits in a Cordis
-  // waterfall with the built-in step as the innermost `next`, and a downstream
-  // `agent/pre-step` listener (there are ~15 globally, e.g. dsh-hooks-codex)
-  // throws after it has delegated. Re-calling `next()` from the catch would shift
-  // the shared cursor past the end and re-enter the built-in behaviour, turning
-  // that listener's failure into a silent pass-through.
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(800)) })
-  const plugin = listenerOf(ctx, 'agent/pre-step')
-  const boom = new Error('downstream listener exploded')
-  let downstreamCalls = 0
-  const downstream = async (payload, next) => {
-    downstreamCalls += 1
-    waterfall.stats.listener.push('downstream')
-    await next()
-    throw boom
-  }
-  const inner = async () => ({ kind: 'enter', messages: [] })
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const waterfall = createWaterfall({ agent }, [plugin, downstream], inner)
-
-  await assert.rejects(waterfall.run(), (error) => error === boom)
-  assert.equal(downstreamCalls, 1, 'the downstream listener must run once')
-  assert.equal(waterfall.stats.inner, 1, 'the built-in pre-step behaviour must run exactly once')
-  assert.deepEqual(waterfall.stats.listener, ['downstream'])
-  // The same dispatch without this plugin installed behaves identically, which
-  // is the contract: a budget guard must not change anyone else's failure.
-  const plain = createWaterfall({ agent }, [downstream], inner)
-  await assert.rejects(plain.run(), (error) => error === boom)
-  assert.equal(plain.stats.inner, 1)
-})
-
-test('the once-per-session flag is set only after the nudge was delivered', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, logFile },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-
-  // The first soft step ends in a downstream `reject`, so the child was told
-  // nothing: the flag must stay unset, or the instruction is lost forever.
-  const rejecting = async () => ({ kind: 'reject' })
-  assert.deepEqual(await handler({ agent }, rejecting), { kind: 'reject' })
-  assert.equal(handler.testState.sessions.has('child-1'), false, 'an undelivered nudge must not consume the one-shot flag')
-  assert.match(readLog(logFile), /soft stage \(no nudge injected: decision kind=reject\)/)
-
-  // A later soft step is entered, so the instruction is finally delivered.
-  const next = trackedNext([{ role: 'user', id: 'existing' }])
-  const decision = await handler({ agent }, next)
-  assert.equal(next.calls, 1)
-  assert.equal(decision.messages.length, 2)
-  assert.equal(decision.messages[1].content[0].text, NUDGE_TEXT)
-  assert.equal(handler.testState.sessions.get('child-1').nudged, true)
-  assert.match(readLog(logFile), /soft stage: nudged usage=800 budget=1000 label=adg\/child-1/)
-})
-
-test('the decision log records the soft nudge exactly once per session', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, logFile },
-    { sessionProjections: fakeProjections(totalsOf(750)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const first = await handler({ agent }, trackedNext())
-  await handler({ agent }, trackedNext())
-  await handler({ agent }, trackedNext())
-  assert.equal(first.messages.length, 1)
-  const lines = decisionLines(logFile)
-  // One line per NUDGE, not one per step: a child that sits above the soft
-  // threshold for a hundred steps must not write a hundred lines.
-  assert.equal(lines.length, 1, `log was: ${JSON.stringify(readLog(logFile))}`)
-  assert.match(lines[0], /^\d{4}-\d{2}-\d{2}T[\d:.]+Z soft stage: nudged usage=750 budget=1000 label=adg\/child-1$/)
-})
-
-test('the decision log records a hard stop', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, softNudge: false, logFile },
-    { sessionProjections: fakeProjections(totalsOf(4000)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ id: 'child-hard', headerDepth: 1 })
-  assert.deepEqual(await handler({ agent }, trackedNext()), { kind: 'reject' })
-  assert.match(readLog(logFile), /hard stage: cancel usage=4000 budget=1000 label=adg\/child-hard/)
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — dryRun: compute and log every decision, take no action
-// ---------------------------------------------------------------------------
-
-test('dryRun soft injects nothing and logs the nudge it would have made', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: true, logFile },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const existing = { role: 'user', id: 'existing' }
-  const next = trackedNext([existing])
-  const decision = await handler({ agent }, next)
-
-  assert.equal(next.calls, 1, 'dryRun still delegates through next()')
-  assert.deepEqual(decision, { kind: 'enter', messages: [existing] }, 'dryRun must inject nothing')
-  assert.equal(agent.calls.cancel.length, 0)
-  assert.match(readLog(logFile), /dry-run soft stage: would nudge usage=800 budget=1000 label=adg\/child-1/)
-  // A calibration run must not consume the once-per-epoch flags either. It DOES
-  // count the step: that count is exactly what a step checkpoint is calibrated
-  // against, so refusing to count would leave nothing to measure.
-  const entry = handler.testState.sessions.get('child-1')
-  assert.equal(entry.nudged, false)
-  assert.deepEqual(entry.firedTiers, [])
-  assert.equal(entry.steps, 1)
-})
-
-test('dryRun soft logs why it would not nudge', async (t) => {
-  const rejectLog = createLogFile(t)
-  const rejecting = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: true, logFile: rejectLog },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const decision = await listenerOf(rejecting, 'agent/pre-step')({ agent }, async () => ({ kind: 'reject' }))
-  assert.deepEqual(decision, { kind: 'reject' })
-  assert.match(readLog(rejectLog), /dry-run soft stage: would not nudge \(decision kind=reject\)/)
-
-  const quietLog = createLogFile(t)
-  const quiet = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: true, softNudge: false, logFile: quietLog },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  await listenerOf(quiet, 'agent/pre-step')({ agent }, trackedNext())
-  assert.match(readLog(quietLog), /dry-run soft stage: would not nudge \(softNudge: false/)
-})
-
-test('dryRun hard does not cancel, does not reject, and delegates through next()', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: true, logFile },
-    { sessionProjections: fakeProjections(totalsOf(4000)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext([{ role: 'user' }])
-  const decision = await handler({ agent }, next)
-
-  assert.equal(next.calls, 1)
-  assert.deepEqual(decision, { kind: 'enter', messages: [{ role: 'user' }] })
-  assert.equal(agent.calls.cancel.length, 0, 'dryRun must not cancel a live child')
-  assert.match(readLog(logFile), /dry-run hard stage: would cancel usage=4000 budget=1000 label=adg\/child-1/)
-})
-
-test('hardDryRun arms the reminders for real while the cancel stays in calibration', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, stepTiers: [1], dryRun: false, hardDryRun: true, logFile },
-    { sessionProjections: fakeProjections(totalsOf(4000)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext([{ role: 'user', id: 'existing' }])
-  const decision = await handler({ agent }, next)
-
-  assert.equal(next.calls, 1, 'the hard stage must still delegate under hardDryRun')
-  assert.equal(agent.calls.cancel.length, 0, 'hardDryRun must never cancel a live child')
-  assert.equal(decision.kind, 'enter')
-  // The checkpoint IS injected: that is the whole point of arming the reminders
-  // without arming the destructive stage.
-  assert.equal(decision.messages.length, 2)
-  assert.match(decision.messages[1].content[0].text, /收敛检查点 1／1/)
-  const lines = decisionLines(logFile).map((line) => line.replace(/^\S+ /, ''))
-  assert.deepEqual(lines, [
-    'dry-run hard stage: would cancel usage=4000 budget=1000 label=adg/child-1',
-    'step stage: nudged tier=1/1 step=1 usage=4000 budget=1000 label=adg/child-1',
-  ])
-
-  // `dryRun` still outranks it: with both switches on, nothing is injected.
-  const both = activate(
-    { budgetTokens: 1000, softRatio: 0.7, stepTiers: [1], dryRun: true, hardDryRun: true },
-    { sessionProjections: fakeProjections(totalsOf(4000)) },
-  )
-  const inert = await listenerOf(both, 'agent/pre-step')({ agent: fakeAdgChild({ headerDepth: 1 }) }, trackedNext())
-  assert.deepEqual(inert, { kind: 'enter', messages: [] })
-})
-
-test('dryRun does not consume the one-shot flag, so arming still nudges', async (t) => {
-  const dryLog = createLogFile(t)
-  const dry = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: true, logFile: dryLog },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  const dryHandler = listenerOf(dry, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  for (let index = 0; index < 3; index += 1) {
-    assert.deepEqual(await dryHandler({ agent }, trackedNext()), { kind: 'enter', messages: [] })
-  }
-  // Calibration counts the steps it watches, and consumes no flag they would
-  // have set: `nudged` and `firedTiers` are still untouched after three steps.
-  assert.deepEqual(entryFields(dryHandler.testState.sessions.get('child-1')), { steps: 3, nudged: false, firedTiers: [] })
-
-  // Turning dryRun off is a config change (a fresh activation). Because the
-  // calibration run consumed nothing, the first governed step is still nudged —
-  // which is the whole point of being able to calibrate before arming.
-  const armedLog = createLogFile(t)
-  const armed = activate(
-    { budgetTokens: 1000, softRatio: 0.7, dryRun: false, logFile: armedLog },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
-  const decision = await listenerOf(armed, 'agent/pre-step')({ agent }, trackedNext())
-  assert.equal(decision.messages.length, 1)
-  assert.equal(decision.messages[0].content[0].text, NUDGE_TEXT)
-  assert.match(readLog(armedLog), /soft stage: nudged usage=800 budget=1000/)
-  assert.doesNotMatch(readLog(armedLog), /dry-run/)
+  assert.equal(handler.testState.sessions.size, 0)
 })
 
 // ---------------------------------------------------------------------------
 // src/plugin.js — the step checkpoints
 // ---------------------------------------------------------------------------
 
+test('a step below the first tier passes through and is counted', async (t) => {
+  const logFile = createLogFile(t)
+  const ctx = activate({ stepTiers: [2], logFile })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  assert.deepEqual(await handler({ agent }, trackedNext()), { kind: 'enter', messages: [] })
+  assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 1, firedTiers: [] })
+  // A step with no checkpoint due writes no decision line.
+  assert.deepEqual(decisionLines(logFile), [])
+})
+
 test('a checkpoint injects its reminder on the tier step, once per tier', async (t) => {
   const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2, 4], logFile },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
+  const ctx = activate({ stepTiers: [2, 4], logFile })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
 
@@ -1206,18 +728,15 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
 
   const lines = decisionLines(logFile).map((line) => line.replace(/^\S+ /, ''))
   assert.deepEqual(lines, [
-    'step stage: nudged tier=1/2 step=2 usage=10 budget=1000000 label=adg/child-1',
-    'step stage: nudged tier=2/2 step=4 usage=10 budget=1000000 label=adg/child-1',
+    'step stage: nudged tier=1/2 step=2 label=adg/child-1',
+    'step stage: nudged tier=2/2 step=4 label=adg/child-1',
   ])
-  assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 5, nudged: false, firedTiers: [0, 1] })
+  assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 5, firedTiers: [0, 1] })
 })
 
 test('a configured stepText is what actually reaches the child', async (t) => {
   const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2], stepText: '自定义检查点正文：自己决定。', logFile },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
+  const ctx = activate({ stepTiers: [2], stepText: '自定义检查点正文：自己决定。', logFile })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
   await handler({ agent }, trackedNext())
@@ -1232,11 +751,9 @@ test('a configured stepText is what actually reaches the child', async (t) => {
   assert.match(readLog(logFile), /step stage: nudged tier=1\/1 step=2 /)
 })
 
-test('only an entered step is counted, so a rejected step costs no tier', async () => {
-  const ctx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2] },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
+test('only an entered step is counted, so a rejected step costs no tier', async (t) => {
+  const logFile = createLogFile(t)
+  const ctx = activate({ stepTiers: [2], logFile })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
   await handler({ agent }, trackedNext())
@@ -1245,6 +762,9 @@ test('only an entered step is counted, so a rejected step costs no tier', async 
   assert.deepEqual(await handler({ agent }, async () => ({ kind: 'reject' })), { kind: 'reject' })
   assert.equal(handler.testState.sessions.get('child-1').steps, 1)
   assert.deepEqual(handler.testState.sessions.get('child-1').firedTiers, [])
+  // Tier 2 is still not due at step 1, so the rejected step writes no line at
+  // all: the checkpoint neither fired nor was owed.
+  assert.deepEqual(decisionLines(logFile), [])
 
   const decision = await handler({ agent }, trackedNext())
   assert.equal(decision.messages.length, 1)
@@ -1253,10 +773,7 @@ test('only an entered step is counted, so a rejected step costs no tier', async 
 })
 
 test('step counters are per child', async () => {
-  const ctx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2] },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
+  const ctx = activate({ stepTiers: [2] })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const first = fakeAdgChild({ id: 'child-a', headerDepth: 1 })
   const second = fakeAdgChild({ id: 'child-b', headerDepth: 1 })
@@ -1270,12 +787,72 @@ test('step counters are per child', async () => {
   assert.deepEqual(handler.testState.sessions.get('child-b').firedTiers, [])
 })
 
-test('dryRun checkpoints log every decision and consume nothing', async (t) => {
+test('a failing downstream listener is never swallowed, and next() is called once', async () => {
+  // The reproduction of the worst defect: this listener sits in a Cordis
+  // waterfall with the built-in step as the innermost `next`, and a downstream
+  // `agent/pre-step` listener (there are ~15 globally, e.g. dsh-hooks-codex)
+  // throws after it has delegated. Re-calling `next()` from the catch would shift
+  // the shared cursor past the end and re-enter the built-in behaviour, turning
+  // that listener's failure into a silent pass-through.
+  const ctx = activate({ stepTiers: [1] })
+  const plugin = listenerOf(ctx, 'agent/pre-step')
+  const boom = new Error('downstream listener exploded')
+  let downstreamCalls = 0
+  const downstream = async (payload, next) => {
+    downstreamCalls += 1
+    waterfall.stats.listener.push('downstream')
+    await next()
+    throw boom
+  }
+  const inner = async () => ({ kind: 'enter', messages: [] })
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  const waterfall = createWaterfall({ agent }, [plugin, downstream], inner)
+
+  await assert.rejects(waterfall.run(), (error) => error === boom)
+  assert.equal(downstreamCalls, 1, 'the downstream listener must run once')
+  assert.equal(waterfall.stats.inner, 1, 'the built-in pre-step behaviour must run exactly once')
+  assert.deepEqual(waterfall.stats.listener, ['downstream'])
+  // The same dispatch without this plugin installed behaves identically, which
+  // is the contract: a checkpoint guard must not change anyone else's failure.
+  const plain = createWaterfall({ agent }, [downstream], inner)
+  await assert.rejects(plain.run(), (error) => error === boom)
+  assert.equal(plain.stats.inner, 1)
+})
+
+test('a downstream reject is honoured: the checkpoint stage never invents messages', async () => {
+  const ctx = activate({ stepTiers: [1] })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  const next = async () => ({ kind: 'reject' })
+  assert.deepEqual(await handler({ agent }, next), { kind: 'reject' })
+})
+
+test('a resumed child with only a header depth is still governed', async () => {
+  const ctx = activate({ stepTiers: [1] })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  // `subagentDepth` is absent — the persisted header is what survives a resume.
+  const agent = fakeAgent({ preset: 'adg', headerDepth: 3 })
+  const decision = await handler({ agent }, trackedNext())
+  assert.equal(decision.messages.length, 1)
+  assert.match(decision.messages[0].content[0].text, /收敛检查点/)
+})
+
+test('a malformed payload is contained rather than propagating', async () => {
+  const ctx = activate({ stepTiers: [1] })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const next = trackedNext()
+  assert.deepEqual(await handler(undefined, next), { kind: 'enter', messages: [] })
+  assert.deepEqual(await handler({ agent: null }, next), { kind: 'enter', messages: [] })
+  assert.deepEqual(await handler({ agent: { id: 7, session: null } }, next), { kind: 'enter', messages: [] })
+})
+
+// ---------------------------------------------------------------------------
+// src/plugin.js — dryRun: compute and log every decision, inject nothing
+// ---------------------------------------------------------------------------
+
+test('dryRun checkpoints inject nothing, log every decision and consume nothing', async (t) => {
   const logFile = createLogFile(t)
-  const dry = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2], dryRun: true, logFile },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
+  const dry = activate({ stepTiers: [2], dryRun: true, logFile })
   const dryHandler = listenerOf(dry, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
   for (let index = 0; index < 3; index += 1) {
@@ -1286,91 +863,179 @@ test('dryRun checkpoints log every decision and consume nothing', async (t) => {
   // "steps a checkpoint was due", not "checkpoints that would have fired" — an
   // armed run fires each of them exactly once, on the step it becomes due.
   assert.deepEqual(decisionLines(logFile).map((line) => line.replace(/^\S+ /, '')), [
-    'dry-run step stage: would nudge tier=1/1 step=2 usage=10 budget=1000000 label=adg/child-1',
-    'dry-run step stage: would nudge tier=1/1 step=3 usage=10 budget=1000000 label=adg/child-1',
+    'dry-run step stage: would nudge tier=1/1 step=2 label=adg/child-1',
+    'dry-run step stage: would nudge tier=1/1 step=3 label=adg/child-1',
   ])
-  assert.deepEqual(entryFields(dryHandler.testState.sessions.get('child-1')), { steps: 3, nudged: false, firedTiers: [] })
+  assert.deepEqual(entryFields(dryHandler.testState.sessions.get('child-1')), { steps: 3, firedTiers: [] })
 
   // A step that never opened is reported as such, and still leaves the tier owed.
   assert.deepEqual(await dryHandler({ agent }, async () => ({ kind: 'reject' })), { kind: 'reject' })
   assert.match(readLog(logFile), /dry-run step stage: would not nudge \(decision kind=reject\) tier=1\/1 step=3/)
 
-  // Arming afterwards delivers that checkpoint, because calibration consumed
-  // nothing on that session.
-  const armed = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2] },
-    { sessionProjections: fakeProjections(totalsOf(10)) },
-  )
-  const armedHandler = listenerOf(armed, 'agent/pre-step')
-  await armedHandler({ agent }, trackedNext())
-  const decision = await armedHandler({ agent }, trackedNext())
-  assert.equal(decision.messages.length, 1)
-  assert.match(decision.messages[0].content[0].text, /收敛检查点 1／1/)
+  // Nothing was cancelled and nothing was rejected by this plugin: `dryRun` only
+  // withholds the message.
+  assert.equal(agent.calls.cancel.length, 0)
 })
 
-test('when both triggers are due, one reminder is sent and the tier is spent', async (t) => {
+test('dryRun counts the steps it watches and spends no tier', async (t) => {
   const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, stepTiers: [1], logFile },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
+  const dry = activate({ stepTiers: [2], dryRun: true, logFile })
+  const dryHandler = listenerOf(dry, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  for (let index = 0; index < 5; index += 1) {
+    assert.deepEqual(await dryHandler({ agent }, trackedNext()), { kind: 'enter', messages: [] })
+  }
+  // The count is exactly what a checkpoint is calibrated against, so it is kept;
+  // the tier is NOT consumed, which is what lets the same configuration deliver
+  // that reminder for real once `dryRun` is turned off.
+  assert.deepEqual(entryFields(dryHandler.testState.sessions.get('child-1')), { steps: 5, firedTiers: [] })
+  // A calibration run that consumed a tier would be able to hide it forever;
+  // every later step past it therefore keeps reporting it as still owed.
+  const lines = decisionLines(logFile)
+  assert.equal(lines.length, 4, `log was: ${JSON.stringify(readLog(logFile))}`)
+  assert.match(lines[3], /dry-run step stage: would nudge tier=1\/1 step=5 /)
+  assert.equal(agent.calls.cancel.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// src/plugin.js — stepNudge: the whole feature off
+// ---------------------------------------------------------------------------
+
+test('stepNudge: false turns the whole feature off and allocates nothing', async (t) => {
+  const logFile = createLogFile(t)
+  const ctx = activate({ stepNudge: false, stepTiers: [1], logFile })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  const next = trackedNext()
+  // No reminder, no counting, no state, no log line.
+  assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] })
+  assert.equal(next.calls, 1)
+  assert.equal(handler.testState.sessions.size, 0, 'nothing may be allocated with the checkpoints off')
+  assert.deepEqual(decisionLines(logFile), [])
+})
+
+// ---------------------------------------------------------------------------
+// src/plugin.js — the removed token layer
+// ---------------------------------------------------------------------------
+
+test('no token projection is ever consulted, even when the service is present', async (t) => {
+  const logFile = createLogFile(t)
+  let lookups = 0
+  const ctx = createFakeContext({
+    sessionProjections: {
+      stateOf() {
+        throw new Error('the token projection must never be read')
+      },
+    },
+  })
+  const originalGet = ctx.get
+  ctx.get = (name) => {
+    lookups += 1
+    return originalGet(name)
+  }
+  apply(ctx, { stepTiers: [1], logFile })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
   const decision = await handler({ agent }, trackedNext())
-
-  // Exactly one message — the token wrap-up, which is the more urgent of the
-  // two — rather than two near-identical reminders re-sent on every later step.
-  assert.equal(decision.messages.length, 1)
-  assert.equal(decision.messages[0].content[0].text, NUDGE_TEXT)
-  const entry = handler.testState.sessions.get('child-1')
-  assert.equal(entry.nudged, true)
-  assert.deepEqual(entry.firedTiers, [0], 'the checkpoint is spent: the child was told to converge')
-  assert.deepEqual(decisionLines(logFile).map((line) => line.replace(/^\S+ /, '')), [
-    'soft stage: nudged usage=800 budget=1000 label=adg/child-1',
-    'step stage: folded into the token wrap-up tier=1/1 step=1 usage=800 budget=1000 label=adg/child-1',
-  ])
-
-  // The next step carries nothing new.
-  assert.deepEqual((await handler({ agent }, trackedNext())).messages.length, 0)
+  assert.equal(lookups, 0, 'the plugin must not look up any service')
+  assert.equal(decision.messages.length, 1, 'the checkpoint still fires without a projection')
+  assert.match(decision.messages[0].content[0].text, /收敛检查点/)
 })
 
-test('stepNudge: false turns the checkpoints off without touching the token stage', async (t) => {
+test('a child is never cancelled, however many steps it takes', async (t) => {
   const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, stepTiers: [1], stepNudge: false, logFile },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
+  // A projection that would have reported a usage far past any budget the old
+  // soft/hard thresholds could have had, so nothing here depends on arithmetic.
+  const ctx = activate({ stepTiers: [1, 2, 3], logFile }, {
+    sessionProjections: { stateOf: () => ({ totals: { uncachedInputTokens: 50_000_000, outputTokens: 10_000_000 } }) },
+  })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
-  const decision = await handler({ agent }, trackedNext())
-  // The token wrap-up is still delivered for real...
-  assert.equal(decision.messages.length, 1)
-  assert.equal(decision.messages[0].content[0].text, NUDGE_TEXT)
-  // ...while the checkpoint is not injected, not logged, and not even counted.
-  assert.equal(handler.testState.sessions.get('child-1').steps, 0)
-  assert.deepEqual(handler.testState.sessions.get('child-1').firedTiers, [])
-  assert.doesNotMatch(readLog(logFile), /step stage/)
+  for (let index = 0; index < 10; index += 1) {
+    const decision = await handler({ agent }, trackedNext())
+    assert.equal(decision.kind, 'enter', 'the plugin never rejects a step of its own accord')
+  }
+  assert.equal(agent.calls.cancel.length, 0, 'the plugin has no destructive stage any more')
 })
 
-test('softNudge: false logs a due checkpoint once and spends its tier', async (t) => {
+test('the decision log never carries a retired stage line', async (t) => {
   const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, stepTiers: [1], softNudge: false, logFile },
-    { sessionProjections: fakeProjections(totalsOf(800)) },
-  )
+  const ctx = activate({ stepTiers: [1], dryRun: false, logFile }, {
+    sessionProjections: { stateOf: () => ({ totals: { uncachedInputTokens: 99_000_000 } }) },
+  })
   const handler = listenerOf(ctx, 'agent/pre-step')
   const agent = fakeAdgChild({ headerDepth: 1 })
-  assert.deepEqual(await handler({ agent }, trackedNext()), { kind: 'enter', messages: [] })
-
-  const lines = decisionLines(logFile).map((line) => line.replace(/^\S+ /, ''))
-  assert.deepEqual(lines, [
-    'soft stage (no nudge configured) usage=800 budget=1000 label=adg/child-1',
-    'step stage (no nudge configured) tier=1/1 step=1 usage=800 budget=1000 label=adg/child-1',
-  ])
-  assert.deepEqual(handler.testState.sessions.get('child-1').firedTiers, [0])
-  // A second step adds nothing: both flags are spent.
   await handler({ agent }, trackedNext())
-  assert.equal(decisionLines(logFile).length, 2)
+  await handler({ agent }, trackedNext())
+  listenersFor(ctx, 'subagent/end')[0].handler({ id: 'child-1' })
+
+  const log = readLog(logFile)
+  for (const retired of ['soft stage', 'hard stage', 'would cancel', 'budget=', 'usage=', 'no budget data']) {
+    assert.equal(log.includes(retired), false, `the log must not contain "${retired}": ${log}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// src/plugin.js — state hygiene
+// ---------------------------------------------------------------------------
+
+test('the per-session map is released on subagent/end', async (t) => {
+  const logFile = createLogFile(t)
+  const ctx = activate({ stepTiers: [1], logFile })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  await handler({ agent }, trackedNext())
+  assert.equal(handler.testState.sessions.size, 1)
+
+  const [settle] = listenersFor(ctx, 'subagent/end')
+  assert.ok(settle, 'a subagent/end listener must be registered')
+  assert.deepEqual(settle.options, { global: true })
+  settle.handler({ id: 'child-1' })
+  assert.equal(handler.testState.sessions.size, 0)
+  assert.match(readLog(logFile), /settled: released session state label=child-1/)
+
+  // An event without a usable id is ignored, not a crash.
+  settle.handler({})
+  settle.handler(undefined)
+  assert.equal(handler.testState.sessions.size, 0)
+})
+
+test('the disposal effect clears the map', async () => {
+  const ctx = activate({ stepTiers: [1] })
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  await handler({ agent: fakeAdgChild({ headerDepth: 1 }) }, trackedNext())
+  assert.equal(handler.testState.sessions.size, 1)
+  dispose(ctx)
+  assert.equal(handler.testState.sessions.size, 0)
+})
+
+test('the listeners are registered globally and exactly once', () => {
+  const ctx = activate({})
+  const preStep = listenersFor(ctx, 'agent/pre-step')
+  assert.equal(preStep.length, 1)
+  assert.deepEqual(preStep[0].options, { global: true })
+  assert.equal(listenersFor(ctx, 'subagent/end').length, 1)
+  assert.equal(ctx.effects.length, 1, 'exactly one disposal effect')
+})
+
+// ---------------------------------------------------------------------------
+// src/plugin.js — the checkpoint wording is part of the behaviour
+// ---------------------------------------------------------------------------
+
+test('the built-in checkpoint wording is unchanged', () => {
+  // The wording is what makes an early, dense ladder safe: an optional,
+  // symmetric choice the child may disregard. It is pinned literally so a
+  // refactor cannot quietly turn it into an order.
+  assert.equal(STEP_CHOICE_BODY, [
+    '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
+    '- **收敛**：如果现有产出已经能回答委派目标，就收尾汇报——交付了什么、还有哪些部分没有验证。',
+    '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
+    '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
+  ].join('\n'))
+  assert.equal(STEP_LAST_TAIL, [
+    '',
+    '这是本轮的最后一个检查点，后面不会再提醒。如果选择继续，请顺便写一句预计还需要多少步、以及完成标准是什么。',
+  ].join('\n'))
 })
 
 test('stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total', () => {
@@ -1400,9 +1065,9 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   assert.match(stepNudgeText(undefined), /^【收敛检查点 1／1】调度代理提醒：这是你的第 0 步。/)
   assert.match(stepNudgeText({ tierIndex: -1, tierCount: 0, stepCount: Number.NaN }), /^【收敛检查点 1／1】/)
 
-  // The wording is the behaviour, so the suite pins it. Each property exists
-  // because the alternative is the trade this feature is not allowed to make:
-  // an early, frequent checkpoint that pushes a child into under-delivering.
+  // Each property exists because the alternative is the trade this feature is
+  // not allowed to make: an early, frequent checkpoint that pushes a child into
+  // under-delivering.
   assert.match(STEP_CHOICE_BODY, /可选/)
   assert.match(STEP_CHOICE_BODY, /不是停止指令/)
   assert.match(STEP_CHOICE_BODY, /直接无视这条提醒/)
@@ -1416,294 +1081,4 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   assert.doesNotMatch(STEP_CHOICE_BODY, /立即停止/)
   assert.doesNotMatch(STEP_CHOICE_BODY, /不要再调用探索类工具/)
   assert.doesNotMatch(STEP_CHOICE_BODY, /请立即停止探索并汇报/)
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — the hard stage
-// ---------------------------------------------------------------------------
-
-test('the hard stage cancels exactly once and rejects without delegating', async (t) => {
-  const logFile = createLogFile(t)
-  const ctx = activate(
-    { budgetTokens: 1000, softRatio: 0.7, logFile },
-    { sessionProjections: fakeProjections(totalsOf(1000)) },
-  )
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext()
-  const decision = await handler({ agent }, next)
-  assert.deepEqual(decision, { kind: 'reject' })
-  assert.equal(next.calls, 0, 'the hard stage must not call next()')
-  assert.equal(agent.calls.cancel.length, 1)
-  assert.deepEqual(agent.calls.cancel[0].cause, { kind: 'parent' })
-  assert.match(readLog(logFile), /hard stage: cancel usage=1000 budget=1000/)
-})
-
-test('a throwing agent.cancel still yields the hard reject', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: fakeProjections(totalsOf(1000)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({
-    headerDepth: 1,
-    cancel() {
-      throw new Error('already settled')
-    },
-  })
-  const next = trackedNext()
-  assert.deepEqual(await handler({ agent }, next), { kind: 'reject' })
-  assert.equal(next.calls, 0)
-  assert.equal(agent.calls.cancel.length, 1)
-  assert.ok(ctx.warnings.some((line) => line.includes('agent.cancel failed')))
-})
-
-test('a resumed child with only a header depth is still governed', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: fakeProjections(totalsOf(1000)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  // Fresh options (no subagentDepth) plus a persisted delegation depth: the
-  // header is the authoritative, monotone signal.
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  assert.deepEqual(await handler({ agent }, trackedNext()), { kind: 'reject' })
-  assert.equal(agent.calls.cancel.length, 1)
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — missing data and failures
-// ---------------------------------------------------------------------------
-
-test('missing sessionProjections passes through without crashing or cancelling', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, {})
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext()
-  assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] })
-  assert.equal(next.calls, 1)
-  assert.equal(agent.calls.cancel.length, 0)
-  // A child with no projection has nothing to nudge or stop with on the token
-  // path, so no token flag may be set. The step checkpoint does not need the
-  // projection, so it still counts the step.
-  assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 1, nudged: false, firedTiers: [] })
-})
-
-test('with no projection, a step checkpoint still fires', async (t) => {
-  // The step stage reads no service, so a broken projection must not disable it.
-  const logFile = createLogFile(t)
-  const ctx = activate({ budgetTokens: 1000, stepTiers: [2], logFile }, {})
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  assert.deepEqual(await handler({ agent }, trackedNext()), { kind: 'enter', messages: [] })
-  const decision = await handler({ agent }, trackedNext())
-  assert.equal(decision.messages.length, 1)
-  assert.match(decision.messages[0].content[0].text, /收敛检查点 1／1/)
-  assert.match(readLog(logFile), /step stage: nudged tier=1\/1 step=2 usage=undefined budget=1000 label=adg\/child-1/)
-})
-
-test('a projection without a mounted stateOf, or with no totals, passes through', async () => {
-  const services = [
-    {},
-    { stateOf: 'not a function' },
-    fakeProjections(undefined),
-    fakeProjections(null),
-    fakeProjections({ last: null }),
-    { stateOf: () => undefined },
-  ]
-  for (const service of services) {
-    const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: service })
-    const handler = listenerOf(ctx, 'agent/pre-step')
-    const agent = fakeAdgChild({ headerDepth: 1 })
-    const next = trackedNext()
-    const decision = await handler({ agent }, next)
-    assert.deepEqual(decision, { kind: 'enter', messages: [] })
-    assert.equal(next.calls, 1)
-    assert.equal(agent.calls.cancel.length, 0)
-  }
-})
-
-test('a throwing stateOf is contained: next() decides and the failure is logged once', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, {
-    sessionProjections: fakeProjections(new Error('projection exploded')),
-  })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext([{ role: 'user' }])
-  const decision = await handler({ agent }, next)
-  assert.equal(next.calls, 1, "the handler must fall back to next()'s decision")
-  assert.deepEqual(decision, { kind: 'enter', messages: [{ role: 'user' }] })
-  assert.equal(agent.calls.cancel.length, 0)
-  assert.ok(ctx.warnings.some((line) => line.includes('pre-step handler failed')), ctx.warnings.join(' | '))
-
-  // The "logged once" contract: a second failure does not repeat the warning.
-  const before = ctx.warnings.length
-  await handler({ agent }, trackedNext())
-  assert.equal(ctx.warnings.length, before)
-})
-
-test('a throwing ctx.get degrades to pass-through', async () => {
-  const ctx = createFakeContext({})
-  ctx.get = () => {
-    throw new Error('service lookup exploded')
-  }
-  apply(ctx, { budgetTokens: 1000 })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const agent = fakeAdgChild({ headerDepth: 1 })
-  const next = trackedNext()
-  assert.deepEqual(await handler({ agent }, next), { kind: 'enter', messages: [] })
-  assert.equal(next.calls, 1)
-  assert.equal(agent.calls.cancel.length, 0)
-})
-
-test('a malformed payload is contained rather than propagating', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: fakeProjections(totalsOf(1)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  for (const payload of [undefined, null, {}, { agent: undefined }, { agent: {} }, { agent: { id: 42 } }]) {
-    const next = trackedNext()
-    const decision = await handler(payload, next)
-    assert.deepEqual(decision, { kind: 'enter', messages: [] })
-    assert.equal(next.calls, 1)
-  }
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — cacheReadWeight
-// ---------------------------------------------------------------------------
-
-test('cacheReadWeight actually moves a case across the budget', async () => {
-  // 1_000_000 uncached + 3_000_000 cache-read; budget 3_000_000.
-  const totals = totalsOf(1_000_000, 0, 3_000_000, 0)
-
-  const under = activate({ budgetTokens: 3_000_000, cacheReadWeight: 0 }, { sessionProjections: fakeProjections(totals) })
-  const underAgent = fakeAdgChild({ headerDepth: 1 })
-  const underNext = trackedNext()
-  const underDecision = await listenerOf(under, 'agent/pre-step')({ agent: underAgent }, underNext)
-  assert.deepEqual(underDecision, { kind: 'enter', messages: [] })
-  assert.equal(underNext.calls, 1)
-  assert.equal(underAgent.calls.cancel.length, 0)
-
-  const over = activate({ budgetTokens: 3_000_000, cacheReadWeight: 1 }, { sessionProjections: fakeProjections(totals) })
-  const overAgent = fakeAdgChild({ headerDepth: 1 })
-  const overNext = trackedNext()
-  const overDecision = await listenerOf(over, 'agent/pre-step')({ agent: overAgent }, overNext)
-  assert.deepEqual(overDecision, { kind: 'reject' })
-  assert.equal(overNext.calls, 0)
-  assert.equal(overAgent.calls.cancel.length, 1)
-
-  // A fractional weight lands in the soft band: 1_000_000 + 1_500_000 =
-  // 2_500_000, which is >= 0.7 * 3_000_000 and below the budget.
-  const soft = activate(
-    { budgetTokens: 3_000_000, cacheReadWeight: 0.5, softRatio: 0.7 },
-    { sessionProjections: fakeProjections(totals) },
-  )
-  const softAgent = fakeAdgChild({ headerDepth: 1 })
-  const softNext = trackedNext()
-  const softDecision = await listenerOf(soft, 'agent/pre-step')({ agent: softAgent }, softNext)
-  assert.equal(softNext.calls, 1)
-  assert.equal(softDecision.messages.length, 1)
-  assert.equal(softAgent.calls.cancel.length, 0)
-})
-
-test('a weight that flips an agent from soft to hard flips cancel accordingly', async () => {
-  const totals = totalsOf(500_000, 0, 1_000_000, 0)
-
-  const softCtx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.5, cacheReadWeight: 0 },
-    { sessionProjections: fakeProjections(totals) },
-  )
-  const softAgent = fakeAdgChild({ headerDepth: 1 })
-  const softNext = trackedNext()
-  const softDecision = await listenerOf(softCtx, 'agent/pre-step')({ agent: softAgent }, softNext)
-  assert.equal(softNext.calls, 1)
-  assert.equal(softDecision.messages.length, 1)
-  assert.equal(softAgent.calls.cancel.length, 0)
-
-  const hardCtx = activate(
-    { budgetTokens: 1_000_000, softRatio: 0.5, cacheReadWeight: 1 },
-    { sessionProjections: fakeProjections(totals) },
-  )
-  const hardAgent = fakeAdgChild({ headerDepth: 1 })
-  const hardNext = trackedNext()
-  const hardDecision = await listenerOf(hardCtx, 'agent/pre-step')({ agent: hardAgent }, hardNext)
-  assert.deepEqual(hardDecision, { kind: 'reject' })
-  assert.equal(hardNext.calls, 0)
-  assert.equal(hardAgent.calls.cancel.length, 1)
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — state hygiene
-// ---------------------------------------------------------------------------
-
-test('the per-session map is released on subagent/end', async () => {
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(800)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  const onEnd = listenerOf(ctx, 'subagent/end')
-  assert.equal(typeof onEnd, 'function')
-
-  const agent = fakeAdgChild({ id: 'child-abc', headerDepth: 1 })
-  await handler({ agent }, trackedNext())
-  assert.equal(handler.testState.sessions.has('child-abc'), true)
-
-  onEnd({ runId: 'run-1', provider: 'in-process', id: 'child-abc', local: true, stopReason: 'completed' })
-  assert.equal(handler.testState.sessions.has('child-abc'), false)
-
-  // An unknown or malformed settle edge is harmless.
-  assert.doesNotThrow(() => onEnd({}))
-  assert.doesNotThrow(() => onEnd(undefined))
-  assert.doesNotThrow(() => onEnd({ id: 42 }))
-})
-
-test('the disposal effect clears the map', async () => {
-  const ctx = activate({ budgetTokens: 1000, softRatio: 0.7 }, { sessionProjections: fakeProjections(totalsOf(800)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  await handler({ agent: fakeAdgChild({ id: 'child-1', headerDepth: 1 }) }, trackedNext())
-  await handler({ agent: fakeAdgChild({ id: 'child-2', headerDepth: 1 }) }, trackedNext())
-  assert.equal(handler.testState.sessions.size, 2)
-
-  assert.equal(ctx.effects.length, 1)
-  const dispose = ctx.effects[0]()
-  assert.equal(typeof dispose, 'function')
-  dispose()
-  assert.equal(handler.testState.sessions.size, 0)
-})
-
-test('with stepNudge: false a child that only passes through allocates nothing', async () => {
-  const ctx = activate({ budgetTokens: 1000, stepNudge: false }, { sessionProjections: fakeProjections(totalsOf(10)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  for (let index = 0; index < 25; index += 1) {
-    await handler({ agent: fakeAdgChild({ id: `child-${index}`, headerDepth: 1 }) }, trackedNext())
-  }
-  assert.equal(handler.testState.sessions.size, 0)
-})
-
-test('with step checkpoints on, each child gets exactly one counter entry', async () => {
-  const ctx = activate({ budgetTokens: 1000 }, { sessionProjections: fakeProjections(totalsOf(10)) })
-  const handler = listenerOf(ctx, 'agent/pre-step')
-  for (let index = 0; index < 25; index += 1) {
-    await handler({ agent: fakeAdgChild({ id: `child-${index}`, headerDepth: 1 }) }, trackedNext())
-  }
-  // Bounded by live children, not by steps: 25 children, 25 entries, one step each.
-  assert.equal(handler.testState.sessions.size, 25)
-  for (let index = 0; index < 25; index += 1) {
-    assert.equal(handler.testState.sessions.get(`child-${index}`).steps, 1)
-  }
-})
-
-// ---------------------------------------------------------------------------
-// src/plugin.js — module shape
-// ---------------------------------------------------------------------------
-
-test('the module exposes the loader-facing shape', async () => {
-  const module = await import('../src/plugin.js')
-  assert.equal(module.name, 'dsh-adg-token-budget')
-  assert.equal(typeof module.apply, 'function')
-  assert.equal(module.Config, undefined, 'no Config schema: the plugin hand-normalizes')
-  assert.equal(module.inject, undefined, 'no static inject: a pending entry is a fatal boot error')
-  assert.equal(module.default, undefined)
-})
-
-test('the listeners are registered globally and exactly once', () => {
-  const ctx = activate({})
-  const preStep = ctx.listeners.get('agent/pre-step')
-  assert.equal(preStep.length, 1, 'exactly one agent/pre-step listener')
-  assert.deepEqual(preStep[0].options, { global: true })
-  const end = ctx.listeners.get('subagent/end')
-  assert.equal(end.length, 1)
-  assert.deepEqual(end[0].options, { global: true })
-  assert.equal(ctx.listeners.size, 2)
 })

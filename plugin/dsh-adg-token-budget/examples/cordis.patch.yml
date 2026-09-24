@@ -8,11 +8,19 @@
 # change up without a restart — but ONLY a `config:` change: the live reload does
 # not re-`import` a module the process already loaded, so replacing the package's
 # `src/` needs a restart (measured; see the README's Install section). Deploy the
-# code first, restart, confirm the new `activation:` line carries the newer
-# fields, and only then turn `dryRun` off — an old build sitting on a new config
-# silently ignores keys it does not know, `hardDryRun` included.
+# code first, restart, confirm the new `activation:` line, and only then turn
+# `dryRun` off.
 # `enabled: false` ships on purpose: install the plugin
 # and flip this to `true` deliberately, in one step you can undo.
+#
+# The cumulative token budget is gone. This plugin injects NOTHING at a token
+# threshold and never cancels a child: it only counts the steps a governed child
+# enters and, at the tiers below, appends one optional convergence reminder.
+# An output-shaped delegation (a document, a report, a long digest) needs the
+# tokens it needs, so a threshold would truncate the deliverable instead of
+# saving anything. A row that still carries `budgetTokens`, `softRatio`,
+# `cacheReadWeight`, `softNudge` or `hardDryRun` loads fine — those keys are
+# simply ignored.
 #
 # Every key under `config:` is optional; the commented values are the defaults.
 
@@ -30,35 +38,12 @@
         # governed — the plugin fails open there on purpose.
         # presets: ['adg']
         #
-        # Cumulative budget per child agent session. Cumulative means the whole
-        # session log: uncachedInputTokens + outputTokens
-        #   + cacheReadTokens * cacheReadWeight + cacheWriteTokens.
-        # Measured on the audit corpus: average child 1.73M, largest audited
-        # child 5.22M, heaviest observed implementation delegation 7.65M — so
-        # 3000000 already cancels ~5 of 22 audited children. Calibrate with
-        # dryRun before arming.
-        # budgetTokens: 3000000
-        #
-        # Soft stage threshold, as a fraction of budgetTokens in [0, 1].
-        # At/above it the child is told to stop exploring and report now.
-        # softRatio: 0.7
-        #
-        # Multiplier on cacheReadTokens. `1` counts every cached read as a full
-        # token (the strictest, and the default); `0` ignores cached reads
-        # entirely; a fraction discounts them.
-        # cacheReadWeight: 1
-        #
-        # Whether the plugin injects a reminder into a step at all. Its two
-        # triggers are the token soft stage and the step checkpoints; false
-        # makes both log once instead of injecting, and keeps the hard cap.
-        # softNudge: true
-        #
-        # Whether the STEP CHECKPOINTS run: count the steps a governed child
-        # enters, and inject a convergence reminder when that count reaches each
+        # Whether the step checkpoints run: count the steps a governed child
+        # ENTERS, and inject a convergence reminder when that count reaches each
         # stepTiers entry (once per tier per residency epoch; at most one
-        # reminder message per step). false disables them entirely — including
-        # the counting — and restores the token stage's zero-allocation
-        # pass-through.
+        # reminder message per step). `false` turns the whole feature off,
+        # counting included, so a passing step allocates nothing. Use `dryRun`
+        # to keep counting while injecting nothing.
         # stepNudge: true
         #
         # The step numbers the checkpoints fire on, ascending. A bare number
@@ -87,23 +72,18 @@
         # the row instead of needing a new package and a dsh restart.
         # stepText: null
         #
-        # Calibration switch. true computes and logs every decision it would
-        # make (soft nudge, step checkpoints and hard cancel) but takes no
-        # action: nothing is injected, agent.cancel is never called, the hard
-        # stage still delegates through next(), and no once-per-epoch flag is
-        # consumed — so arming afterwards still nudges. Recommended first step.
+        # Calibration switch. true computes and logs every checkpoint decision it
+        # would make but injects nothing and consumes nothing: the step is
+        # delegated through next() as usual, no tier is marked fired (so turning
+        # `dryRun` off still delivers that reminder), and the steps ARE still
+        # counted — "which step would have been reminded" is the fact being
+        # calibrated. Recommended first step. There is nothing destructive left to
+        # keep dry.
         # dryRun: false
         #
-        # Calibration switch for the DESTRUCTIVE stage only. With `dryRun` off,
-        # the hard stage logs what it would cancel and delegates through, while
-        # the reminders are injected for real. This is the "arm the reminders,
-        # keep the cancels on paper" setting. Ignored while `dryRun` is on,
-        # which already covers every stage.
-        # hardDryRun: false
-        #
         # Append the load-time activation line plus one line per decision EVENT
-        # here (soft nudge, step checkpoint, hard stop, dry-run decision, settle,
-        # no-data note). A step that passes through writes nothing. Absolute
-        # path, or null for no file logging. Each line is prefixed with an
-        # ISO-8601 timestamp.
+        # here (step checkpoint, dry-run decision, settle, and a "nudge could not
+        # be delivered" note). A step with no checkpoint due writes nothing.
+        # Absolute path, or null for no file logging. Each line is prefixed with
+        # an ISO-8601 timestamp.
         # logFile: 'D:\dsh-adg-token-budget.log'

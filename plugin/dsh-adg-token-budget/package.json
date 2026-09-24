@@ -1,7 +1,7 @@
 {
   "name": "dsh-adg-token-budget",
-  "version": "0.1.0",
-  "description": "DSH plugin: step checkpoints plus a two-stage cumulative token budget for delegated child agents of the 'adg' agent preset — a dispatcher-attributed convergence reminder at chosen step counts, a soft wrap-up nudge at a ratio of the budget, and a hard cancel at the budget.",
+  "version": "0.2.0",
+  "description": "DSH plugin: step checkpoints for delegated child agents of the 'adg' agent preset — a dispatcher-attributed, optional convergence reminder at chosen step counts. The cumulative token budget it was named after (a soft wrap-up nudge and a hard agent.cancel) has been removed: output-shaped tasks need the tokens they need.",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -9,7 +9,7 @@
     "cordis-plugin",
     "subagent",
     "token",
-    "budget",
+    "checkpoint",
     "adg"
   ],
   "type": "module",

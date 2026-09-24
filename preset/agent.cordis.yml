@@ -7,7 +7,8 @@
 #   3. `compaction-basic` / `tool-result-pruner` / `tool-web` 三行**刻意不覆盖**体积旋钮：
 #      压缩阈值、单条工具结果截断、抓取与检索上限一律用插件出厂默认值
 #      （0.8+0.16 / 8192+4096+1024 / 200000+8+4）。省 token 交给 host-plane 插件
-#      `dsh-adg-token-budget`（步数检查点 + 两档预算），不再靠截断工具结果与提前压缩 ——
+#      `dsh-adg-token-budget`（只剩步数收敛检查点；按累计 token 介入的软/硬两档已移除），
+#      不再靠截断工具结果与提前压缩 ——
 #      实测那两样会把工具已经取到的事实切掉、让上下文信息失真。persona 里也不再写
 #      「委派预算／成本纪律」（见 README「token 成本纪律」）。
 #   4. 步数收敛检查点：调度 persona 要求把「收敛规模」写进每条委派 prompt，
@@ -190,7 +191,7 @@
 # 早期版本把 thresholdRatio 压到 0.6（更早压缩）、把 pruner 压到 4096/2048/768
 # （单条结果超 4096 字符就砍中间）来省 token —— 实测代价是**信息被切掉**：工具已经
 # 取到的事实被裁掉后，模型只能重取或猜，净效果是把省下的 token 换成更差的结论。
-# 省 token 现在交给 host-plane 插件 `dsh-adg-token-budget`（步数检查点 + 两档预算），
+# 省 token 现在交给 host-plane 插件 `dsh-adg-token-budget`（只剩步数收敛检查点；按累计 token 介入的软/硬两档已移除），
 # 它压的是「步数 × 上下文体积」这个真正的成本驱动因素，而不是单条结果的完整度。
 # 以后若确实要覆盖，插件在加载时会校验：两个 ratio 必须落在 (0,1] 且
 # retainRatio < thresholdRatio；pruner 必须满足 head + 标记 + tail ≤ threshold ——
@@ -522,7 +523,7 @@
 # searchMaxQueries）：截断工具输出会把工具已经取到的事实切掉，模型只能重取或猜 ——
 # 净效果是把省下的 token 换成更差的结论。实测 web_fetch 是子代理里最大的单一上下文
 # 来源（3.5M 字符 / 369 次调用），但"大"不等于"该砍"：砍掉的正是调研型委派唯一需要的东西。
-# 省 token 交给 host-plane 插件 `dsh-adg-token-budget`（步数检查点 + 两档预算）。
+# 省 token 交给 host-plane 插件 `dsh-adg-token-budget`（只剩步数收敛检查点；按累计 token 介入的软/硬两档已移除）。
 # 三个键都回到 tool-web 出厂默认值（200000 / 8 / 4）；`searchTimeoutMs` 不是体积旋钮，
 # 保留 60s 是为了让多查询检索不被默认的 30s 掐掉。
 - id: tool-web

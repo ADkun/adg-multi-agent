@@ -8,6 +8,12 @@
  * whole GUI. Instead every unusable value falls back to its default here and is
  * reported through the plugin's own logger.
  *
+ * There are no token-budget keys here. The plugin used to take `budgetTokens`,
+ * `softRatio`, `cacheReadWeight`, `softNudge` and `hardDryRun`; the token
+ * soft stage and the hard cancel they configured were removed, and a row that
+ * still carries them is not an error — unknown keys are simply ignored, so an
+ * older composition keeps loading and only the step checkpoints remain.
+ *
  * @module dsh-adg-token-budget/config
  */
 
@@ -35,23 +41,14 @@ export const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   /** Agent-preset names whose delegated children this plugin governs. */
   presets: Object.freeze(['adg']),
-  /** Cumulative token budget for one child agent session. */
-  budgetTokens: 3_000_000,
-  /** Soft stage threshold, as a fraction of `budgetTokens` in `[0, 1]`. */
-  softRatio: 0.7,
-  /** Multiplier applied to `cacheReadTokens` when folding cumulative usage. */
-  cacheReadWeight: 1,
-  /**
-   * Whether the plugin injects a reminder into a step at all. Its two triggers
-   * are the token soft stage (`softNudge`) and the step checkpoints
-   * (`stepNudge`); `false` logs each of them once instead of injecting, and the
-   * hard cap still applies.
-   */
-  softNudge: true,
   /**
    * Whether the step checkpoints run: count the steps this child has entered,
-   * and inject a convergence reminder when the count reaches each
-   * `stepTiers` entry (once per tier per residency epoch).
+   * and inject a convergence reminder when the count reaches each `stepTiers`
+   * entry (once per tier per residency epoch).
+   *
+   * `false` turns the whole feature off — including the counting, so nothing is
+   * allocated on a passing step. Use `dryRun` to keep counting while injecting
+   * nothing.
    */
   stepNudge: true,
   /**
@@ -78,19 +75,14 @@ export const DEFAULT_CONFIG = Object.freeze({
    */
   stepText: null,
   /**
-   * Calibration switch: compute and log every decision, but take no action —
-   * no message is injected and no `agent.cancel` is issued. The step is
-   * delegated through `next()` even at the hard stage.
+   * Calibration switch: compute and log every checkpoint decision, but inject
+   * nothing and consume nothing. The step is delegated through `next()` either
+   * way; only the message is withheld, and no tier is marked fired, so arming
+   * the plugin afterwards still delivers that checkpoint. Steps are still
+   * counted, because "which step would have been reminded" is the thing being
+   * calibrated.
    */
   dryRun: false,
-  /**
-   * Calibration switch for the destructive stage only. With `dryRun` off, the
-   * hard stage logs what it would cancel and delegates through, while the
-   * reminders are injected for real. Arming the reminders without arming
-   * `agent.cancel` is exactly what this key is for. Ignored while `dryRun` is
-   * on, which already covers every stage.
-   */
-  hardDryRun: false,
   /** Append one line per decision to this absolute path; `null` disables it. */
   logFile: null,
 })
@@ -110,50 +102,11 @@ function readNumber(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-/** Clamp `value` into `[min, max]`. */
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value))
-}
-
 /** Read a non-empty trimmed string, or `undefined` when there is none. */
 function readText(value) {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed === '' ? undefined : trimmed
-}
-
-/**
- * Read a positive token budget.
- *
- * A non-positive or unusable budget falls back to the default: stopping every
- * child on its first step is never what a mistyped value means, and the default
- * is the only value the plugin can defend as deliberate.
- *
- * @param value - the raw value.
- * @param fallback - the default budget.
- * @returns a positive safe integer.
- */
-function readBudgetTokens(value, fallback) {
-  const resolved = readNumber(value, fallback)
-  if (resolved < 1) return fallback
-  return clamp(Math.round(resolved), 1, Number.MAX_SAFE_INTEGER)
-}
-
-/**
- * Read a finite number and clamp it into `[min, max]` without rounding.
- *
- * Used for a weight rather than a count: a fractional cache-read discount is a
- * legitimate configuration, and rounding it would silently change the meaning
- * of the value the operator wrote.
- *
- * @param value - the raw value.
- * @param fallback - the default to use when nothing usable is present.
- * @param min - the inclusive lower bound.
- * @param max - the inclusive upper bound.
- * @returns the resolved number.
- */
-function readClampedNumber(value, fallback, min, max) {
-  return clamp(readNumber(value, fallback), min, max)
 }
 
 /**
@@ -231,6 +184,9 @@ function readStepTiers(value, fallback) {
 /**
  * Normalize one raw `config:` block into a complete option object.
  *
+ * Unknown keys — including the removed token-budget keys — are ignored: this is
+ * a total function of the keys it knows, so an older row still loads.
+ *
  * @param {unknown} raw - the row's configuration, as composed from YAML.
  * @returns {typeof DEFAULT_CONFIG} every option resolved to a usable value.
  */
@@ -240,19 +196,11 @@ export function normalizeConfig(raw) {
   return {
     enabled: readBoolean(input.enabled, DEFAULT_CONFIG.enabled),
     presets: readNames(input.presets, DEFAULT_CONFIG.presets),
-    // A non-positive budget would stop every child on its first step, which is
-    // never what a mistyped value means; fall back rather than arm a hair
-    // trigger, and clamp the upper end so the fold stays in safe-integer range.
-    budgetTokens: readBudgetTokens(input.budgetTokens, DEFAULT_CONFIG.budgetTokens),
-    softRatio: clamp(readNumber(input.softRatio, DEFAULT_CONFIG.softRatio), 0, 1),
-    cacheReadWeight: readClampedNumber(input.cacheReadWeight, DEFAULT_CONFIG.cacheReadWeight, 0, 100),
-    softNudge: readBoolean(input.softNudge, DEFAULT_CONFIG.softNudge),
     stepNudge: readBoolean(input.stepNudge, DEFAULT_CONFIG.stepNudge),
     stepTiers: readStepTiers(input.stepTiers, DEFAULT_CONFIG.stepTiers),
     // `null` (and any unusable value) means "use the built-in body".
     stepText: readStepText(input.stepText),
     dryRun: readBoolean(input.dryRun, DEFAULT_CONFIG.dryRun),
-    hardDryRun: readBoolean(input.hardDryRun, DEFAULT_CONFIG.hardDryRun),
     // `null` (and any unusable value) means "no file logging".
     logFile: logFile ?? DEFAULT_CONFIG.logFile,
   }

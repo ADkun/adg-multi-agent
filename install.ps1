@@ -1,4 +1,4 @@
-﻿# 安装 Adg 多智能体模式 preset + 配套技能 + token 预算插件到本机 dsh 用户根。
+﻿# 安装 Adg 多智能体模式 preset + 配套技能 + 步数收敛检查点插件到本机 dsh 用户根。
 # 用法： powershell -ExecutionPolicy Bypass -File .\install.ps1
 # 注意：本文件必须保留 UTF-8 BOM —— Windows PowerShell 5.1 在没有 BOM 时会按系统 ANSI
 # 代码页读取脚本，中文变成乱码并直接解析失败（本仓库已实测复现，见 README「兼容性」）。
@@ -56,12 +56,13 @@ if (-not (Test-Path -LiteralPath $patchFile)) {
     $head = @()
     if ($lines.Count -gt 1) { $head = $lines[0..($lines.Count - 2)] }
     $row = @(
-      '# token 预算守卫 + 步数收敛检查点：限制 Adg 专家子代理的累计 token，并按 4/8/12/…/280 的阶梯注入可选收敛提醒。',
+      '# 步数收敛检查点：按 4/8/12/…/280 的阶梯给 Adg 专家子代理注入可选收敛提醒。',
       '# 提醒是"自己选：收敛汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。',
+      '# 按累计 token 介入的两档（软档收尾提醒 + 硬档 agent.cancel）已整体移除：输出型任务本来就需要那么多 token，',
+      '#   按阈值砍只会截断产出。插件现在既不注入任何 token 触发的消息，也从不 agent.cancel（详见 README）。',
       '# enabled: false 表示已挂载但不动作。改 config: 热重载立即生效；但换过 src\ 里的代码之后必须重启 dsh',
-      '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块；旧代码不认识 hardDryRun 与 stepText）。',
-      '# 推荐上线顺序：enabled: true + dryRun: true 校准 → dryRun: false + hardDryRun: true（只武装提醒）',
-      '# → 等 would cancel 的行与真实节省都看明白了，再考虑 hardDryRun: false。',
+      '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块）。',
+      '# 推荐上线顺序：enabled: true + dryRun: true 校准 → dryRun: false（提醒真的注入）。没有硬档要武装了。',
       '# 想调措辞：写 stepText（config: 改动，热重载、不用重启）；激活行会写 stepText=builtin|custom。',
       '- insert:',
       '    - id: adg-token-budget',
@@ -69,13 +70,8 @@ if (-not (Test-Path -LiteralPath $patchFile)) {
       '      config:',
       '        enabled: false',
       "        presets: ['adg']",
-      '        budgetTokens: 3000000',
-      '        softRatio: 0.7',
-      '        cacheReadWeight: 1',
-      '        softNudge: true',
       '        stepNudge: true',
       '        stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]',
-      '        hardDryRun: true',
       "        logFile: '$(Join-Path $root 'adg-token-budget.log')'"
     )
     # 不带 BOM 的 UTF-8 + LF：与 dsh 自己生成的 patch 文件逐字节一致（-Encoding UTF8 在 5.1 下会写 BOM）。
@@ -94,7 +90,6 @@ Write-Host "下一步：重启 dsh，然后在新建对话里选择「Adg 多智
 Write-Host "（preset 改动按重启验收：已挂载的会话不会中途换组合，别在重启前拿它做验证。）"
 Write-Host "（插件行是另一回事：web profile 的 cordis.patch.yml 改 config: 热重载、不用重启；"
 Write-Host "  但换过插件 src\ 里的代码之后必须重启 —— 热重载不会重新 import 已加载的模块，"
-Write-Host "  而旧代码不认识 hardDryRun，在旧代码上关 dryRun 会真武装硬档。"
-Write-Host "  装好不等于已武装，见 README「装完必须重启 dsh」与「怎么确认它已经武装」。）"
+Write-Host "  所以这次改完 src\ 的代码，必须重启 dsh 才会生效。装好不等于已武装，见 README。）"
 Write-Host ""
-Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src\ 里的代码之后同样必须重启（旧代码不认识 hardDryRun，别在旧代码上关 dryRun）。"
+Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src\ 里的代码之后同样必须重启。"

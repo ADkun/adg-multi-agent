@@ -87,7 +87,8 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   不要漏掉。**不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
   "结论控制在 N 字符内"、"禁止整读大文件"之类）：那一层纪律已整体撤销 —— 截断与提前压缩会把
   工具已经取到的事实切掉，写在 persona 里的预算提示会把注意力从"把事情做对"挪到"别写太多"，
-  净效果是更差的结论。省 token 交给插件（步数检查点 + 两档预算），见 README「token 成本纪律」。
+  净效果是更差的结论。省 token 交给插件的**步数收敛检查点**（`dsh-adg-token-budget`；它**不比较
+  任何 token 阈值**，包名里的 `token-budget` 只是历史名称），见 README「token 成本纪律」。
 - **不要给那三行体积旋钮加回覆盖值。** `compaction-basic` / `tool-result-pruner` / `tool-web` 三行
   刻意不写压缩阈值、单条工具结果截断、`fetchMaxOutputChars` / `searchMaxResults` /
   `searchMaxQueries`，一律用插件出厂默认值 —— 加一个智能体**不需要**动它们，而且"靠截断省 token"

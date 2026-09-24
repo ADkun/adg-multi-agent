@@ -1,49 +1,69 @@
 # dsh-adg-token-budget
 
-A host-plane [DSH](https://github.com/deepseek-ai/dsh) / Cordis plugin that keeps
-the **delegated child agents of the `adg` agent preset** from burning millions of
-tokens in an unbounded exploration loop. It puts two things on those children:
-**step checkpoints** (a convergence reminder every N steps) and a **two-stage
-cumulative token budget** (a wrap-up instruction, then a hard stop).
+A host-plane [DSH](https://github.com/deepseek-ai/dsh) / Cordis plugin that reminds the
+**delegated child agents of the `adg` agent preset** to converge. It keeps exactly **one**
+feature: **step convergence checkpoints** (`步数收敛检查点`) — an optional reminder injected on
+a child's Nth *entered* step, once per configured tier per residency epoch.
 
-One delegated expert can otherwise burn millions of tokens in an unbounded
-exploration loop. This plugin is the backstop for that, and nothing else: it does
-not schedule work, does not pick models, and does not touch top-level sessions.
+One delegated expert can otherwise explore without converging for hundreds of steps. This
+plugin is the backstop for that, and nothing else: it does not schedule work, does not pick
+models, and does not touch top-level sessions.
 
-## The three stages
+The package name and the composed row id are now **historical**: `dsh-adg-token-budget` /
+`adg-token-budget` no longer describe what the plugin does, because **no token budget is
+enforced any more** （本次改动 removed the token stages — see
+[What was removed, and why](#what-was-removed-and-why)). The name was kept on purpose: the
+deployed path (`$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`), the row id and
+therefore the hot-reload identity of the row do not change, and renaming it would be a
+deployment change with no behavioural benefit.
 
-The plugin registers exactly one `agent/pre-step` waterfall listener. It decides
-on every proposed step of every governed child, on two independent triggers:
+## The one stage
+
+The plugin registers exactly one `agent/pre-step` waterfall listener. It decides on every
+proposed step of every governed child, on **one** trigger:
 
 | Stage | Trigger | Action |
 | --- | --- | --- |
 | **step** | the child is entering its `stepTiers[n]`-th step | call `next()` first, then append the nth convergence reminder to the returned `{kind:'enter'}` decision's `messages` — at most once per tier per residency epoch. The reminder is an **optional choice** (converge, or continue and disregard it), never a stop order |
-| **soft** | `usage >= budgetTokens * softRatio` | call `next()` first, then append one wrap-up instruction to the returned `{kind:'enter'}` decision's `messages` — at most once per residency epoch |
-| **hard** | `usage >= budgetTokens` | `agent.cancel({kind:'parent'})` **and** return `{kind:'reject'}` — without calling `next()` |
 
-The two reminder stages differ in kind, and the difference is deliberate: the **step**
-checkpoint is early, frequent, and ignorable, because being early and frequent is only
-safe if the child may say "no, I still have work"; the **soft** wrap-up is late,
-one-shot, and directive, because it fires on money already spent.
+At most **one** reminder message is appended per step. Cost is the reason: an injected message
+stays in the child's context and is re-sent on every later step, so paying for the same advice
+twice is exactly the waste this plugin exists to prevent. There is no second trigger left for a
+step checkpoint to collide with, so the old "folded into the token wrap-up" path is gone with it.
 
-At most **one** reminder message is appended per step. When the soft stage and a
-step checkpoint fall on the same step the soft wrap-up wins — it is the more
-urgent of the two — and the checkpoint is spent, logged as
-`step stage: folded into the token wrap-up …`. Cost is the reason: an injected
-message stays in the child's context and is re-sent on every later step, so
-paying for the same advice twice is exactly the waste this plugin exists to
-prevent.
+The step stage needs no projection at all — its count is the number of steps this listener has
+watched the child enter. The plugin never calls `agent.cancel`, never returns `{kind:'reject'}`,
+never reads `ctx.get('sessionProjections')`, and has no destructive stage: `{kind:'reject'}` does
+not appear anywhere in its code path.
 
-Cumulative usage is
+### What was removed, and why
 
-```
-uncachedInputTokens + outputTokens + cacheReadTokens * cacheReadWeight + cacheWriteTokens
-```
+Earlier versions also read `ctx.get('sessionProjections')?.stateOf(agent.session, 'tokenUsage')`
+and intervened on the cumulative figure: a wrap-up instruction at `budgetTokens * softRatio`
+(the **soft** stage) and `agent.cancel({kind:'parent'})` plus `{kind:'reject'}` at
+`budgetTokens` (the **hard** stage). Both stages are gone （本次改动）, along with the
+`budgetTokens`, `softRatio`, `cacheReadWeight`, `softNudge` and `hardDryRun` options. The
+measured evidence those stages produced is kept in this file, but it is labelled as **history of
+a removed feature** throughout, and none of it describes current behaviour.
 
-read from `ctx.get('sessionProjections')?.stateOf(agent.session, 'tokenUsage')`,
-whose `totals` are cumulative over the whole session log. The **step** stage
-needs no projection at all — it counts the steps this listener watched the child
-enter — so a broken projection disables the token stages, not the checkpoints.
+设计理由（用户口径）：**输出型任务（写文档、生成报告、消化长语料）本身就需要那么多 token**，
+按累计 token 阈值介入只会截断产出，省不下有意义的东西；**累计量大本身不是"跑飞了"的证据**。
+步数才是那个真正出问题的信号（子代理反复探索不收敛），而且它的提醒是"二选一、可以直接无视"，
+不是停止指令。
+
+In other words, a token threshold is the wrong instrument for the tasks this preset delegates: an
+output-shaped job genuinely needs the tokens it needs, and a budget truncates the deliverable
+instead of saving anything. A large cumulative total is not by itself evidence of a runaway loop.
+A **step** count measures the thing that actually goes wrong — a child that keeps exploring
+without converging — and the reminder it injects is a choice the child may disregard rather than
+an order.
+
+**An older composed row still loads.** `normalizeConfig` is a total function of the keys it
+knows: unknown keys — including all five removed ones — are silently ignored, and the row runs
+with the step checkpoints only. That matters for operators, because live compositions written
+before this change still carry `budgetTokens: 3000000`, `softRatio: 0.7`, `cacheReadWeight: 1`,
+`softNudge: true` and `hardDryRun: true`; none of them is an error, and none of them has any
+effect.
 
 ## The step checkpoints
 
@@ -60,10 +80,11 @@ dispatcher's behalf**: every checkpoint message opens with
 this is your step N".
 
 A step is counted when the child **enters** it, so a step a downstream listener
-rejected is never charged, and the count is strictly per child. The counter lives
-in the same per-session state as the token flags and is released on
-`subagent/end`, so a resumed child starts a fresh epoch — the same residency rule
-the token soft stage uses.
+rejected is never charged, and the count is strictly per child. The counter lives in one
+per-session entry, `{ steps, firedTiers }`, allocated on the first entered step of a governed
+child while the checkpoints are on. `firedTiers` holds the index of every tier already fired, so
+a tier fires at most once per residency epoch, and a checkpoint that could not be delivered (the
+step was not entered, or the message could not be built) stays owed to the child on a later step.
 
 The default ladder is
 **4 / 8 / 12 / 18 / 24 / 32 / 42 / 55 / 72 / 95 / 125 / 165 / 215 / 280** — early and
@@ -95,16 +116,23 @@ whole corpus add up to roughly **0.5M token-equivalents** of input against ~205M
 by those same children — about 0.25%. The lever is the 92.6% of steps that now run
 *after* a child has been asked whether it is done.
 
-Three details exist specifically so that the checkpoints do not make answers
+The residency rule is worth stating plainly, because it is what makes a resumed child
+re-eligible: `subagent/end` fires **once per residency epoch**, and a continuable child that is
+resumed later starts a fresh epoch. So a resumed child starts its step count and its fired tiers
+over, and CAN be reminded again for a tier it had already spent before going dormant. That is
+intended rather than a leak: the resumed child has a new plan and a new chance to run away, and
+it inherits no state from the earlier epoch. The bounded-state guarantee is unaffected — the
+entry is created for the new epoch and released again on the next `subagent/end`.
+
+Four details exist specifically so that the checkpoints do not make answers
 worse:
 
 - **Every reminder is a choice, not an order.** The body says outright that it is
   optional, that it may be **直接无视**, names both branches symmetrically
   (converge and report — or keep working without trimming the plan), and leaves the
   decision to the task. The only thing it requires is that the child say which branch
-  it picked. The suite pins each of those clauses
-  (`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is
-  total`), plus the negative: the body must not contain an order to stop exploring.
+  it picked. The suite pins each of those clauses, plus the negative: the body must not
+  contain an order to stop exploring.
   This is the property that makes an early, dense ladder safe. A checkpoint that said
   "stop now" would trade tokens for a worse answer, which is the one trade this feature
   is not allowed to make.
@@ -116,40 +144,15 @@ worse:
   steps and what "done" means), not mounting pressure. A dense ladder whose messages
   got firmer every four steps would be a coercion engine; the unit test compares the
   body across tiers to keep it flat.
-- **`stepNudge: false` turns them off completely**, counting included, and
-  restores the token stage's zero-allocation pass-through. The checkpoints are a
-  separate switch from `softNudge`, which is the master switch for injection.
+- **`stepNudge: false` turns the whole feature off**: nothing is counted, no per-session
+  state is allocated, and the step passes straight through without an injection. There is no
+  second switch left — the checkpoints are the only feature.
 
 The wording is also the part most likely to be tuned, so it is overridable: a
 `stepText` in `config:` replaces the built-in body entirely, and because `config:`
 hot-reloads, a wording change needs neither a new package nor a dsh restart. The
 activation line reports `stepText=builtin` or `stepText=custom`, so a mistyped key is
 visible instead of silent.
-
-The **soft** instruction (in Chinese, because the delegated experts it addresses
-work in Chinese) tells the child that it is near its budget, that it must stop
-exploring now and not open new lines of investigation, and that it must
-immediately report its current conclusions with the evidence it already has —
-including an explicit statement of what it has *not* verified. It is injected at
-most **once per residency epoch of a child session**.
-
-The distinction is real and deliberate. The once-per-session flag is released on
-`subagent/end`, and the subagent layer emits that event **once per residency
-epoch** — a continuable child that is resumed later starts a fresh epoch. So a
-resumed child CAN be nudged a second time. That is arguably the desirable
-behaviour rather than a leak: the resumed child has a new plan and a new chance
-to run away with the budget, and the flag it would otherwise inherit was
-consumed by an instruction that was delivered before the child went dormant.
-The bounded-state guarantee is unaffected — the map entry is created for the new
-epoch and released again on the next `subagent/end`.
-
-The **hard** stage does both things on purpose. `cancel` aborts the in-flight
-turn so no further requests are billed, and `reject` guarantees the loop does not
-proceed to derivation even if the abort lands late: the agent loop maps a
-rejected pre-step to a `blocked` turn end without opening a step, so the child
-surfaces to the dispatcher as a cancelled run **with its partial output**, which
-the delegation tool appends (as `Partial output before the run ended: …`). A
-budget stop therefore loses the child's remaining plan, not its findings.
 
 ### Filtering
 
@@ -175,47 +178,39 @@ A step is considered only when **all** of these hold, in this order:
    expert delegate as if it were top-level. An out-of-contract value is ignored
    rather than thrown, because a malformed header must not be able to abort a
    live step — and the string case is the one that matters, since `'1' > 0` is
-   true in JavaScript and a coercion would let a mistyped header cancel a real
-   child;
-3. `session.header.agentPreset` is one of `presets`.
+   true in JavaScript and a coercion would let a mistyped header govern a real child;
+3. `session.header.agentPreset` is one of `presets`;
+4. `stepNudge` is true — otherwise the step passes through and nothing is counted.
 
 A top-level agent (depth 0) is never touched — in particular never the
 dispatcher. A child whose header carries **no** `agentPreset` is never touched
-either: that case fails *open*, not closed, because guessing there could stop
+either: that case fails *open*, not closed, because guessing there could govern
 sessions this plugin was never pointed at.
 
-If the projection service is missing, or `stateOf(session, 'tokenUsage')` returns
-nothing usable, no token decision is made — nothing is injected or cancelled on
-the token path, and the fact is logged once as
-`no budget data: passing through the token stages label=…`. "No budget data" is
-not "no budget". The **step** checkpoints keep working in that case, because they
-read no service at all; only a test asserts that, and the live behaviour is worth
-watching for on a machine whose projection service is broken.
+There is no projection to be missing. The plugin reads no service at all, so the
+`no budget data: passing through the token stages …` line that older builds could write no
+longer exists.
 
 ## Configuration
 
 Every key is optional. The plugin exports **no** Cordis `Config` schema: it
 hand-normalizes the raw config object, so a malformed value falls back to its
-default instead of failing the profile load.
+default instead of failing the profile load. Unknown keys — including the five removed
+token-budget keys — are silently ignored, which is what lets an older composed row keep
+loading.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Master switch. `false` registers nothing at all. |
+| `enabled` | `true` | Master switch. `false` registers nothing at all (the activation line is still written). |
 | `presets` | `['adg']` | Preset names to govern. A bare string (`presets: adg`) reads as a one-name list. |
-| `budgetTokens` | `3000000` | Cumulative budget per child session. A non-positive or unusable value falls back to this default. |
-| `softRatio` | `0.7` | Soft threshold as a fraction of `budgetTokens`, clamped to `[0, 1]`. `1` disables the soft stage. |
-| `cacheReadWeight` | `1` | Multiplier on `cacheReadTokens`, clamped to `[0, 100]`. Fractional values are kept as written. |
-| `softNudge` | `true` | Master switch for injection. `false` makes **both** reminder triggers log once instead of injecting a message (`soft stage (no nudge configured)` / `step stage (no nudge configured)`), and keeps the hard cap. The single log line IS the one-shot action, so it consumes the flag. |
-| `stepNudge` | `true` | Whether the step checkpoints run. `false` disables them completely — no counting, no injection, no per-session allocation for them — leaving the token stages exactly as they were. |
+| `stepNudge` | `true` | Whether the step checkpoints run. `false` turns the whole feature off: nothing is counted, no per-session state is allocated, and the step passes straight through without an injection. |
 | `stepTiers` | `[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]` | The step numbers a checkpoint fires on, ascending and de-duplicated. A bare number reads as a one-tier list. At most 16 tiers are honoured. An unusable value (`[]`, `'x'`, `[0]`) falls back to this default rather than silently switching the checkpoints off; use `stepNudge: false` for that. Early and dense on purpose: see [The step checkpoints](#the-step-checkpoints) for the distribution this ladder is fitted to and why the average was the wrong anchor. |
 | `stepText` | `null` | Optional wording for a step checkpoint, replacing the built-in body entirely — including the sentence the built-in adds on the last tier. Blank or unusable values fall back to the built-in body rather than leaving the checkpoint wordless; anything over 4000 characters is truncated. This key exists so that tuning the wording is a `config:` edit (hot-reloaded) instead of a new package plus a dsh restart. The activation line reports `stepText=builtin` or `stepText=custom`, which is how a mistyped key becomes visible. |
-| `dryRun` | `false` | Calibration switch. Computes and logs **every** decision it would make — the soft nudge, the step checkpoints and the hard cancel — and takes no action: no message is injected, `agent.cancel` is never called, and the hard stage still delegates through `next()`. It also **consumes no once-per-epoch flag**, so arming the same session afterwards still delivers every reminder. It *does* count steps, because that count is what a checkpoint is calibrated against. |
-| `hardDryRun` | `false` | Calibration switch for the destructive stage only. With `dryRun` off, the hard stage logs `dry-run hard stage: would cancel …` and delegates through, while the reminders are injected for real. This is the "arm the reminders, keep the cancels on paper" setting. Ignored while `dryRun` is on, which already covers every stage. |
+| `dryRun` | `false` | Calibration switch for the checkpoints. Every due checkpoint logs exactly one line and injects nothing, and the step is delegated through `next()` as usual. Steps **are still counted** — that is the calibration — and **no tier is consumed**, so arming the plugin afterwards still delivers that checkpoint. |
 | `logFile` | `null` | Absolute path; when set, the activation line plus one line per decision *event* is appended (see below). A relative path disables file logging with a warning. |
 
-Every threshold is **inclusive**: a child exactly at `budgetTokens * softRatio`
-is nudged, a child exactly at `budgetTokens` is stopped, and a tier configured as
-`12` fires on the step the child enters as its 12th.
+Step numbers are **inclusive**: a tier configured as `12` fires on the step the child
+enters as its 12th.
 
 ### What actually reaches `logFile`
 
@@ -225,23 +220,21 @@ stays small even for a child that runs hundreds of steps. The complete list is:
 
 | Event | Line |
 | --- | --- |
-| load | `activation: active createUserMessage=<strategy> budgetTokens=… softThreshold=… softRatio=… presets=[…] cacheReadWeight=… softNudge=… stepNudge=… stepTiers=[…] stepText=builtin|custom dryRun=… hardDryRun=… logFile=…` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible |
+| load | `activation: active createUserMessage=<strategy> presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin\|custom dryRun=false logFile='…'` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible. **A stale line** — one carrying `budgetTokens=`, `softThreshold=`, `softRatio=`, `cacheReadWeight=`, `softNudge=` or `hardDryRun=`, or missing `stepText=` — was written by an older build still resident in the process, i.e. the restart has not happened yet |
 | load | a registration note (`registration skipped: this context already applied the plugin`, `warning: N registration(s) are already active …`) |
-| soft | `soft stage: nudged …`, `soft stage (no nudge configured) …`, or `soft stage (no nudge injected: …) …` — at most once per residency epoch unless nothing was delivered |
-| step | `step stage: nudged tier=<n>/<N> step=<n> usage=… budget=… label=…`, or `step stage: folded into the token wrap-up …` when the soft stage took the same step, or `step stage (no nudge configured) …`, or `step stage (no nudge injected: …) …` — at most once per tier per residency epoch unless nothing was delivered |
-| hard | `hard stage: cancel usage=… budget=… label=…` |
-| dry-run | `dry-run soft stage: would nudge …` / `would not nudge (…) …`, `dry-run step stage: would nudge …` / `would not nudge (…) …`, `dry-run hard stage: would cancel …` |
+| step | `step stage: nudged tier=<n>/<N> step=<S> label=…` — at most once per tier per residency epoch |
+| step | `step stage (no nudge injected: decision kind=…) …` or `step stage (no nudge injected: nudge construction failed) …` — the tier stays unconsumed, so a later step may still deliver it |
+| dry-run | `dry-run step stage: would nudge tier=… …`; `dry-run step stage: would not nudge (decision kind=…) …`; `dry-run step stage: would not nudge (nudge construction failed) …` |
 | settle | `settled: released session state label=<agent.id>` |
-| no data | `no budget data: passing through the token stages label=…` — at most once per activation |
+| failure (host log) | `apply failed (…); the step checkpoints are inactive`, or `context has no event API; the step checkpoints are inactive` — either means the plugin degraded to a no-op |
 
-**A dry-run reminder line is written per *step*, not per reminder.** Because
-calibration consumes no flag, a due checkpoint reports itself again on every step
-at or past it, and a child over its budget reports `would cancel` on every step
-until it happens to stop. So those counts mean "steps at which this decision was
-due", not "children that would have been touched" and not "messages that would
-have been sent" — an armed run delivers each reminder exactly once.
+**A dry-run checkpoint line is written per *step*, not per reminder.** Because
+calibration consumes no tier, a due checkpoint reports itself again on every step
+at or past it, so those counts mean "steps at which this checkpoint was due", not "children
+that would have been touched" and not "messages that would have been sent" — an armed
+run delivers each reminder exactly once.
 
-A plain PASS step is deliberately **not** logged. The first line ever written
+A plain pass-through step is deliberately **not** logged. The first line ever written
 through the decision sink is also echoed once to `ctx.logger.info`, so an armed
 plugin is observable without flooding the host log at every step.
 
@@ -257,10 +250,11 @@ Concretely:
 
 - **`apply` never throws.** Its whole body is wrapped; any failure is logged
   through `ctx.logger?.warn` and the plugin degrades to a no-op.
-- **Every per-event handler is wrapped.** A bug in the budget logic catches,
-  logs once, and returns `next()` — it cannot abort someone's turn.
-- **No `static inject`.** `ctx.get('sessionProjections')` is read lazily inside
-  the handler, and a missing service simply means pass-through.
+- **Every per-event handler is wrapped.** A bug in the checkpoint logic catches,
+  logs once, and returns the decision `next()` produced — it cannot abort someone's turn.
+- **No `static inject`.** The plugin reads **no service at all** — the removed token stages
+  were the only reason it ever needed `sessionProjections`, and the step count comes from the
+  listener's own state.
 - **No static `import` of any `@deepseek-ai/*` package.** The plugin is deployed
   as a plain directory under `$DSH_HOME/profiles/node_modules/`, so anything it
   needs from the harness is resolved at call time with `createRequire`, and every
@@ -268,22 +262,19 @@ Concretely:
 - **No top-level side effects**, no `process.exit`, no network, and no
   filesystem writes outside the configured `logFile`.
 - **Bounded state.** Per-session state lives in a `Map` keyed by `agent.id`, one
-  entry per live child, holding `{ steps, nudged, firedTiers }`. Its allocation
-  rule is the one thing `stepNudge` changes: with the checkpoints on (the
-  default) the first entered step of a governed child allocates its counter,
-  because a step cannot be counted without somewhere to count it; with
-  `stepNudge: false` the map is touched only by the token stage's one-shot
-  action, so a pass-through step allocates nothing at all. `firedTiers` holds one
-  index per tier already fired, so it is bounded by `stepTiers` (at most
-  `MAX_STEP_TIERS` = 16 entries). The whole entry is released on `subagent/end`
-  and cleared wholesale by a `ctx.effect` disposer, so a long-lived host cannot
-  accumulate children — only one small object per *concurrently running* child.
+  entry per live child, holding `{ steps, firedTiers }`. The allocation rule follows
+  `stepNudge`: with the checkpoints on (the default) the first entered step of a governed
+  child allocates its counter, because a step cannot be counted without somewhere to count
+  it; with `stepNudge: false` no entry is ever allocated, and a passing step allocates
+  nothing. `firedTiers` holds one index per tier already fired, so it is bounded by
+  `stepTiers` (at most `MAX_STEP_TIERS` = 16 entries). The whole entry is released on
+  `subagent/end` and cleared wholesale by a `ctx.effect` disposer, so a long-lived host
+  cannot accumulate children — only one small object per *concurrently running* child.
 
 ## The reminder messages, and why they may fall back
 
-Both triggers inject the same kind of object — the step checkpoint's
-`stepNudgeText({tierIndex, tierCount, stepCount})` and the soft stage's
-`NUDGE_TEXT` — as a `UserMessage`:
+The single trigger injects one kind of object — the step checkpoint's
+`stepNudgeText({tierIndex, tierCount, stepCount, body})` — as a `UserMessage`:
 `{ id, role: 'user', content: ContentBlock[], source: { kind: 'plugin', plugin } }`.
 First-party code builds these with `createUserMessage` from
 `@deepseek-ai/dsh-llm`, which this plugin cannot import statically.
@@ -353,10 +344,11 @@ each block all frozen.
 The plugin's local fallback constructor reproduces that precisely: a v4 UUID via
 `crypto.randomUUID()` (with a manual `getRandomValues` path if that API is
 absent), a `structuredClone` of the blocks, and the same `deepFreeze`. It is used
-automatically when resolution fails, so the soft stage keeps working. If even
-that cannot be constructed, the nudge-construction failure is caught, the soft
-decision is logged without an instruction, and the **hard cap still applies** —
-the plugin never lets a nudge-construction failure escape the handler.
+automatically when resolution fails, so a due checkpoint still gets its message. If even
+that cannot be constructed, the failure is caught, the checkpoint is logged without an
+instruction (`step stage (no nudge injected: nudge construction failed) …`), the tier stays
+unconsumed, and the step still passes through — the plugin never lets a
+nudge-construction failure escape the handler.
 
 ## Install and enable
 
@@ -370,17 +362,19 @@ Copy-Item -Recurse -Force `
 #    $env:DSH_HOME\profiles\web\cordis.patch.yml
 #    the example ships `enabled: false`, so pasting it as-is arms nothing
 
-# 3. to calibrate everything first: `enabled: true`, leave `dryRun: true`
-# 4. to arm the REMINDERS only:      `dryRun: false` + `hardDryRun: true`
-# 5. to arm everything:              `dryRun: false` + `hardDryRun: false`
+# 3. installed, inert:                   `enabled: false`
+# 4. calibrate against your own traffic: `enabled: true` + `dryRun: true`
+# 5. arm the reminders for real:         `enabled: true` + `dryRun: false`
 ```
 
-Step 4 is the recommended steady state until the hard cap has been calibrated on
-your own traffic: the checkpoints and the token wrap-up are injected for real
-while `agent.cancel` stays on paper. Step 5 should follow only once the
-`would cancel` lines have been read and the budget raised above the bulk of your
-own distribution — see
-[Calibration: what 3,000,000 would have done](#calibration-what-3000000-would-have-done).
+**Step 5 is the end state.** With the cancel removed there is no `hardDryRun`, and nothing
+left in calibration afterwards: the only remaining knobs are the wording (`stepText`) and the
+ladder (`stepTiers`), both of which are `config:` edits. Step 4 is worth doing once on your own
+traffic, because it turns `logFile` into a measurement of *which step* each of your children
+would have been reminded on: the line shape is in
+[What actually reaches `logFile`](#what-actually-reaches-logfile), and the same calibration
+method on this machine is kept as history in
+[Removed token stages: the dry-run calibration data](#removed-token-stages-the-dry-run-calibration-data-history).
 
 Steps 3–5 are `config:` edits, and this profile is `patchReload: live`, so they are
 picked up **without restarting `dsh`** — the host re-applies the row and writes a
@@ -392,27 +386,30 @@ produced.
 live reload re-applies the row but does **not** re-`import` a module the process
 already loaded. On 2026-09-25 the package directory was replaced with a build
 carrying the step checkpoints and the row was pointed at a new `config` in the
-same edit; the host re-applied the row (the new `dryRun: false` appeared in a new
-`activation:` line) but the line still had the **old shape** — no `stepNudge=`,
-no `stepTiers=`, no `hardDryRun=`. Node's ESM registry is keyed by resolved file
+same edit; the host re-applied the row (the new `dryRun` value appeared in a new
+`activation:` line) but the line still had the **old shape** — no `stepNudge=`, no
+`stepTiers=`, no `stepText=`. Node's ESM registry is keyed by resolved file
 URL, and that URL had not changed. So:
 
 - after changing **`config:` only** — no restart;
 - after changing **any file under `src/`** — restart `dsh`, then confirm the new
-  code is really loaded by checking that the `activation:` line carries the newer
-  fields (add a field to the line whenever you add a feature; the line doubling as
-  a build identifier is what makes this check possible at all).
+  code is really loaded by checking that the `activation:` line carries the current fields
+  (`stepNudge=`, `stepTiers=`, `stepText=`, `dryRun=`) and **none of the removed ones**
+  (`budgetTokens=`, `softThreshold=`, `softRatio=`, `cacheReadWeight=`, `softNudge=`,
+  `hardDryRun=`). The line doubling as a build identifier is what makes this check possible
+  at all.
 
 Two consequences worth stating plainly, because they are easy to get wrong when
 you are rolling this out:
 
-1. **Until the restart, the row is read by the OLD code.** Every key the old build
-   does not know is silently ignored — including a new safety key. Arming
-   reminders by setting `dryRun: false` in the same edit that adds `hardDryRun:
-   true` therefore arms the *cancel* on the still-loaded old build, because that
-   build has never heard of `hardDryRun`. Change the code and the config in
-   separate steps: deploy the code, restart, verify the new activation line, and
-   only then turn `dryRun` off.
+1. **Until the restart, the row is read by the OLD code.** Every key that build does not
+   know is silently ignored — a new key, and equally the five keys this build removed.
+   Changing the code and the config in the same step therefore arms a row whose
+   meaning the loaded module does not share: deploy the code, restart, verify the new
+   activation line, and only then touch `dryRun` / `stepTiers`. Because a checkpoint is
+   injected on step counts rather than on money, the failure mode of doing this in the
+   wrong order is a reminder in the wrong wording or on the wrong ladder, not a truncated
+   child — which is exactly what the removal bought.
 2. The `examples/cordis.patch.yml` claim "`enabled: false` ships on purpose" is
    true of the file as shipped.
 
@@ -433,40 +430,49 @@ a `LICENSE` file that actually exists, which `npm pack --dry-run --json` lists.
 
 ## How to verify it is active
 
-1. **The load-time activation line — this exists now.** Every `apply` writes
-   exactly one line, through `ctx.logger.info` **and** through `logFile`. It is
-   the "the host loaded this plugin, with this configuration" marker, and it is
-   written even when `enabled: false` (as `activation: inactive (enabled:
-   false)`), so a successful load can never look like silence again. The host log
-   form is prefixed `dsh-adg-token-budget: `; the file form is bare.
-2. **`logFile`.** With `logFile` set to an absolute path, the activation line and
+1. **The load-time activation line.** Every `apply` writes exactly one line, through
+   `ctx.logger.info` **and** through `logFile`. It is the "the host loaded this plugin, with
+   this configuration" marker, and it is written even when `enabled: false` (as
+   `activation: inactive (enabled: false)`), so a successful load can never look like silence
+   again. The current shape is
+   `activation: active createUserMessage=<strategy> presets=[adg] stepNudge=true stepTiers=[…] stepText=builtin|custom dryRun=false logFile='…'`.
+   The host log form is prefixed `dsh-adg-token-budget: `; the file form is bare. **If the
+   line still carries `budgetTokens=` / `softNudge=` / `hardDryRun=` and has no `stepText=`,
+   the old module is still resident — restart `dsh`.**
+2. **The suite.** In the plugin directory, `node --test test` runs with no `node_modules` at
+   all. It covers the surviving feature end to end: config normalization (including the tier
+   reader's fallback / sort / dedupe / bound rules and the `stepText` reader), the pure decision
+   helpers, the filters, one reminder per tier per epoch, entered-step-only counting,
+   `stepNudge: false` zero-allocation, every `dryRun` branch, the choice wording, the activation
+   line, and state release on `subagent/end` and disposal.
+3. **No destructive path exists.** This is a source check, not a log check. The module
+   comments *do* name the removed calls — deliberately, to explain what was removed — so
+   strip comment lines first and scan what is left:
+
+   ```powershell
+   Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName } |
+     Where-Object { $_ -notmatch '^\s*(\*|//|/\*)' } |
+     Select-String "agent\.cancel|sessionProjections|kind: 'reject'"
+   ```
+
+   It returns nothing: the only remaining mentions are the prose documenting the removal.
+   That is the proof that the token stages are really gone.
+4. **`logFile`.** With `logFile` set to an absolute path, the activation line and
    one line per decision *event* are appended — see
-   [What actually reaches `logFile`](#what-actually-reaches-logfile). A soft nudge
-   or a step checkpoint is logged once per residency epoch, not once per step, so
-   the file stays small even for a child that sits above the ratio for a long
-   time.
-3. **The first decision** is echoed once to `ctx.logger.info` as
+   [What actually reaches `logFile`](#what-actually-reaches-logfile). An armed checkpoint
+   writes `step stage: nudged tier=… step=… label=…`; under `dryRun: true` the same due
+   checkpoint writes `dry-run step stage: would nudge …` instead. A checkpoint is logged once
+   per tier per residency epoch, not once per step, so the file stays small.
+5. **The first decision** is echoed once to `ctx.logger.info` as
    `dsh-adg-token-budget: first decision: …`, so the host log shows activity
    without one line per step.
-4. **Behaviour — the checkpoints.** A governed child at any of the `stepTiers`
+6. **Behaviour — the checkpoints.** A governed child at any of the `stepTiers`
    steps receives a `【收敛检查点 …】` message it did not get before, offering the
    choice between converging and continuing. The cheapest way to see one is to set
    `stepTiers: [1, 2]` on a scratch profile, where the first checkpoint lands on the
    child's first step — or to set `stepText` to a sentence you will recognise, which
    needs no restart at all. `step stage: nudged …` appears in `logFile` at the same
    moment.
-5. **Behaviour — the token stages.** A governed child that crosses the ratio
-   should wrap up and report instead of starting another investigation, and one
-   that crosses the budget should come back to the dispatcher as a cancelled run
-   whose result ends with `Partial output before the run ended: …`.
-
-Set `softRatio` low (for example `0.05`) and `budgetTokens` small (for example
-`20000`) on a scratch profile to exercise the token stages quickly. To calibrate
-without risking a real delegation, leave `dryRun: true`: every line above is
-still written, and nothing is injected or cancelled. To arm the reminders while
-keeping the cancel on paper, use `dryRun: false` with `hardDryRun: true`: the
-checkpoint lines appear as `step stage: nudged …` (not `dry-run …`) while the
-hard stage still only writes `dry-run hard stage: would cancel …`.
 
 ## What has been observed live, and what has not
 
@@ -474,7 +480,14 @@ The plugin is **deployed and mounted** on this machine at
 `C:\Users\cenqian\.dsh\profiles\node_modules\dsh-adg-token-budget`, mounted from
 `C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml`, and a running `dsh`
 loaded it. The log file `C:\Users\cenqian\.dsh\adg-token-budget.log` is the
-measurement, quoted verbatim:
+measurement.
+
+### Removed token stages: the first live observation (history)
+
+**已移除的 token 两档：历史证据，不代表当前行为。** These three lines were written by a build
+that still had the token stages. The plugin no longer contains `budgetTokens`, a soft stage or
+an `agent.cancel` call, so it can never write any of these lines again. They are kept because
+they are the measurement that produced the removal — in particular the live `usage=7651807`:
 
 ```
 2026-09-24T13:52:57.803Z activation: inactive (enabled: false) budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
@@ -482,23 +495,23 @@ measurement, quoted verbatim:
 2026-09-24T13:53:20.487Z hard stage: cancel usage=7651807 budget=3000000 label=adg/2d4efc3d-3b5c-4746-8ac2-4f9395151859
 ```
 
-That single block is evidence for five separate claims, and it is worth reading
-slowly:
+That block is evidence for five separate claims as of that build:
 
 | Claim | Evidence |
 | --- | --- |
 | the host loads the row and does not fail the boot | `activation: inactive` was written while the row was `enabled: false` |
 | the activation line works, and reports the resolved strategy | `activation: active createUserMessage=profile-fallback:web` |
 | `agent/pre-step` really reaches this listener for a real delegated `adg` child | the `hard stage` line, whose `label` is a real `adg/<session-id>` |
-| `ctx.get('sessionProjections')` resolves and `stateOf(…,'tokenUsage')` returns usable `totals` | the same line carries `usage=7651807` — a real cumulative figure, not a default |
-| `agent.cancel({kind:'parent'})` is reached on a live child | `hard stage: cancel`, i.e. the branch that issues the cancel |
+| *(history)* `ctx.get('sessionProjections')` resolved and `stateOf(…,'tokenUsage')` returned usable `totals` | the same line carries `usage=7651807` — a real cumulative figure, not a default |
+| *(history)* `agent.cancel({kind:'parent'})` was reached on a live child | `hard stage: cancel`, i.e. the branch that issued the cancel — a branch that no longer exists |
 
 ### The checkpoints now have live evidence, including the child's side of it
 
-On 2026-09-25 the row was armed at `dryRun: false` + `hardDryRun: true`, and **three
-real step checkpoints fired** — this was the stage's first honest evidence, and it
-arrived in two parts: the plugin's log line, and the message itself inside the
-delegated child's transcript.
+On 2026-09-25 the row was armed at `dryRun: false`, and **three real step checkpoints fired** —
+the feature's first honest evidence, and it arrived in two parts: the plugin's log line, and the
+message itself inside the delegated child's transcript. The lines below come from a build whose
+log format still carried the (now removed) token fields, so they show `usage=` / `budget=`; the
+current shape is `step stage: nudged tier=<n>/<N> step=<S> label=…`.
 
 ```
 2026-09-24T17:45:49.845Z step stage: nudged tier=1/3 step=12 usage=124291 budget=3000000 label=adg/fdd55c65-4584-4082-83d2-618570604e5f
@@ -542,46 +555,21 @@ measurement of the wording's effect; the honest comparison still needs the
 before/after step quantiles from `audit-steps.mjs`. What it does establish is that
 the message lands, is attributed correctly, and is acted on rather than ignored.
 
-The dry-run lines in the next section extend this to three further claims:
-`softRatio` is applied to the live cumulative figure (`would nudge` at 2,128,454
-with a 2,100,000 threshold), the hard comparison is applied to the same figure
-(`would cancel` at 3,014,252 against 3,000,000), and the guard is **not** armed —
-no `agent.cancel` was issued for any of those children, which is precisely what
-`dryRun` promises.
+**The module-reload boundary was measured the hard way, and it still governs every rollout
+here.** For about two minutes on 2026-09-25 the package directory held a new build while the
+running host still held the **previous module instance**: the row was repointed at a new
+`config` in the same edit that replaced the package, the host re-applied the row (a new
+`activation:` line appeared) yet that line still had the old shape. Node's ESM registry is keyed
+by resolved file URL, and that URL never changed — so a `config:` edit hot-reloads and a *code*
+edit does not. Deploy the code, restart `dsh`, confirm the new activation line, and only then
+touch `dryRun` / `stepTiers`.
 
-**The step checkpoints have no live *injection* observation, and the reason for the
-gap was measured rather than assumed.** For about two minutes on 2026-09-25 the
-package directory held the build documented here while the running host still held
-the **previous module instance**: the row was repointed at a new `config` in the
-same edit that replaced the package, the host re-applied the row (the new `dryRun`
-value shows up in a new `activation:` line) yet that line still had the old shape —
-no `stepNudge=`, no `stepTiers=`, no `hardDryRun=`. Node's ESM registry is keyed by
-resolved file URL and that URL never changed, so a config edit hot-reloads and a
-*code* edit does not. Hence, until the restart: **`step stage: nudged` had never
-been written by a running host**, and neither had a `dry-run step stage: would
-nudge` line, because the loaded code had no step stage at all.
+### Removed token stages: the dry-run calibration data (history)
 
-That gap in the *load* is now closed — the restart at 2026-09-25T01:37:18 loaded the
-new build (its activation line carries all three new fields) and the row is armed at
-`dryRun: false` + `hardDryRun: true` as of 01:38:47. What remains unobserved is the
-injection itself, because no governed child has run since: **the log still holds 0
-lines of either step-stage kind**. A real `adg` child reaching the first tier will be
-the first honest evidence, and it has not happened yet. See
-[Install and enable](#install-and-enable) for the rollout this forces.
-
-The ladder and the wording were both replaced on 2026-09-25 (defaults `[12, 24, 40]`
-with three escalating, directive bodies → `[4, 8, …, 280]` with one optional,
-choice-shaped body). That change is a **code** change, so it needs one more restart
-before any of it is live; the `stepTiers` half arrives as a `config:` edit *after*
-that restart, for the same reason as before — the module currently in memory would
-clamp a 14-entry ladder to its own harshest body.
-
-### Live calibration data (`dryRun: true`)
-
-The live row was left at `enabled: true` + `dryRun: true` for about three hours
-while real delegations ran through it. As of `2026-09-25T01:1x+08:00` the log held
-479 lines / 64,995 bytes (it keeps growing — these are snapshot counts, not
-constants). The per-child step counts quoted in
+**已移除的 token 两档：历史证据，不代表当前行为。** The live row was left at `enabled: true` +
+`dryRun: true` for about three hours while real delegations ran through it. As of
+`2026-09-25T01:1x+08:00` the log held 479 lines / 64,995 bytes (it keeps growing — these are
+snapshot counts, not constants). The per-child step counts quoted in
 [The step checkpoints](#the-step-checkpoints) come from a separate, reproducible run
 of `D:\dsh\.dsh-token-audit\audit-steps.mjs` (a copy of the audit with a distribution
 block appended, writing to `audit-report.steps.txt` so the original baseline is
@@ -590,15 +578,15 @@ untouched).
 | Line kind | Count |
 | --- | --- |
 | `activation: …` | 5 |
-| `hard stage: cancel` (the one armed observation) | 1 |
-| `dry-run soft stage: would nudge …` | 36 |
-| `dry-run hard stage: would cancel …` | 437 |
-| **`soft stage: nudged` (armed)** | **0** |
+| `hard stage: cancel` (the one armed observation — history) | 1 |
+| `dry-run soft stage: would nudge …` (history) | 36 |
+| `dry-run hard stage: would cancel …` (history) | 437 |
+| **`soft stage: nudged` (armed — history)** | **0** |
 | **`step stage: nudged` / `dry-run step stage: …`** | **0** (that snapshot predates the restart that loaded the step stage) |
-| **`settled: released session state …`** | **0** |
+| **`settled: released session state …`** | **0** at that snapshot |
 
 **Five** distinct `adg` children produced those dry-run lines, and every one of
-them crossed the budget:
+them crossed the budget — which is the measurement that removed the budget:
 
 | Child | `would cancel` lines | first crossing of 3,000,000 | peak cumulative usage |
 | --- | --- | --- | --- |
@@ -608,12 +596,12 @@ them crossed the budget:
 | `adg/2ec8cfe5-e5d9-4c17-bf0a-1388bdb8a65a` | 18 | 3,014,252 | 6,230,057 |
 | `adg/5bee9ec3-5548-490a-9e8f-6111927727cd` | 3 | 3,083,933 | 3,361,608 |
 
-Two things fall straight out of that table, and they are the two arguments for how
-this plugin is configured on this machine:
+Two things fall straight out of that table:
 
-1. **3,000,000 sits inside the normal distribution** — 5 of 5 children crossed it,
-   and the smallest child still reached 3.36M. Arming `agent.cancel` at this
-   budget would truncate ordinary work. Hence `hardDryRun: true`.
+1. **3,000,000 sat inside the normal distribution** — 5 of 5 children crossed it, and the
+   smallest child still reached 3.36M. Arming `agent.cancel` at this budget would have
+   truncated ordinary work. That is the empirical half of the design reason above; the other
+   half is that a cumulative total was measuring the wrong thing.
 2. **Steps, not tokens, are the lever.** The 48.99M child alone produced 297
    `would cancel` lines, i.e. roughly **300 proposed steps above the budget**, in a
    corpus whose 37 measured children have a median of **39** steps and a mean of 51.7.
@@ -621,37 +609,25 @@ this plugin is configured on this machine:
    the step stage exists to exploit.
 
    That same child is also the unit cross-check for this whole section: the audit
-   counts **329** model requests for session `f7ee3039-…`, and the plugin counted
-   ~297 steps above the budget for the same id. Two instruments built on different
-   events agree to within the few steps the child spent below the budget, which is
-   the evidence that the audit's "requests" and the plugin's "entered steps" are the
+   counts **329** model requests for session `f7ee3039-…`, and the plugin's (now removed)
+   dry-run accounting counted ~297 steps above the budget for the same id. Two instruments
+   built on different events agree to within the few steps the child spent below the budget,
+   which is the evidence that the audit's "requests" and the plugin's "entered steps" are the
    same unit — a claim the ladder's calibration depends on.
 
-Read the counts as a measurement of *your own* traffic, and mind the unit: a
-dry-run line is written **per proposed step**, so `would cancel` counts
-steps-over-budget, not distinct children. It says "this child spent 297 steps past
-the budget"; it does not say "297 children would have died". The armed plugin
-stops the child on the first such step, which is why a real hard stop produces
-exactly one line.
+Read the token counts as history of *your own* traffic, and mind the unit: a dry-run line was
+written **per proposed step**, so `would cancel` counted steps-over-budget, not distinct
+children. The armed step checkpoint, by contrast, delivers each reminder exactly once and
+writes exactly one `step stage: nudged` line for it.
 
 ### What has still never been observed live
 
-- **A real (armed) soft nudge.** Every soft observation so far is a **dry-run**
-  line: the instruction is never injected in that mode, so `soft stage: nudged`
-  has never been written by a running host, and neither has the loop's acceptance
-  of the injected message or its rendering in the child's transcript. The soft
-  stage's *decision logic* is live-measured; its *effect* is not. (The stage is
-  armed since 01:38:47, but no governed child has crossed 2,100,000 since.)
-- **Any step checkpoint, armed or dry.** ~~0 lines~~ — **observed on 2026-09-25**: three
-  injections, the message found in each child's transcript, and the child's reply read
-  from the next assistant message. See
-  [The checkpoints now have live evidence](#the-checkpoints-now-have-live-evidence-including-the-childs-side-of-it).
-  What that evidence still does **not** cover: a checkpoint on any tier other than the
-  first (`tier=1/3 step=12` ×3), a checkpoint under the **new** 14-tier ladder, a
-  checkpoint that fires while a child is also above the soft ratio (the folding path),
-  and a `dry-run step stage: would nudge` line, which this machine has still never
-  produced because the stage went from "no code" to "armed" without a calibrated state
-  in between.
+- **A checkpoint on any tier other than the first.** What is observed is three
+  injections, all `tier=1/3 step=12`, under the older three-tier ladder. Under the **new**
+  14-tier ladder no injection has been recorded yet, and no `dry-run step stage: would nudge`
+  line has ever been produced on this machine, because the stage went from "no code" to
+  "armed" without a calibrated state in between. (The removal of the folding path also means
+  the old "checkpoint and token wrap-up on the same step" case no longer exists to observe.)
 - **Whether an earlier, denser ladder helps or hurts.** The ladder was moved earlier
   on the argument that most children are far shorter than the average, and the wording
   was softened to make that safe. Both halves of that trade are **argued, not
@@ -676,16 +652,10 @@ exactly one line.
   *symptom* (an activation line without the new fields after replacing the
   package). Whether a row removal and re-insert, or a renamed package directory,
   would force a fresh import was **not** tried — the safe conclusion is "restart".
-- **A live `dryRun` hard stage reaching the end of a child** (no cancel was ever
-  issued — which is itself the proof that dry-run guards the hard path).
-- **What the dispatcher renders** on a real cancellation: the
-  `Partial output before the run ended: …` contract is read from first-party
-  source, not watched.
 - **The settle edge.** ~~never observed~~ — **observed on 2026-09-25**:
   `2026-09-24T17:55:33.298Z settled: released session state label=12bf2213-0322-4dfb-9c85-80e12066ab40`,
-  written 29 seconds after that child received its checkpoint and converged. The child
-  cancelled at 13:53 and the five dry-run children predate this line; the state release
-  is now confirmed rather than inferred.
+  written 29 seconds after that child received its checkpoint and converged. The state release
+  is confirmed rather than inferred.
 - **A `subagent/end` → resumed-child re-nudge cycle.** Still never observed: the one
   settle line above is a child that simply finished.
 
@@ -693,76 +663,50 @@ Everything else in this file is a code-level fact or a unit-test result.
 
 ### Current live state
 
-**Armed for real on 2026-09-25T01:38:47+08:00, and running the redesigned ladder since
-02:25:14+08:00** — the latter arriving as a `config:`-only hot reload, with **no
-restart**. The live row is `enabled: true`, `budgetTokens: 3000000`,
-`presets: ['adg']`, `stepNudge: true`,
-`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`,
-`softNudge: true`, **`dryRun: false`**, **`hardDryRun: true`**, and `stepText` unset
-(so `stepText=builtin`) — i.e. the step checkpoints and the token wrap-up are injected
-for real, and the only stage still on paper is `agent.cancel`.
+The step feature has been live since 2026-09-25; the token stages have since been removed
+（本次改动）. The **current** activation-line shape — and therefore the thing to compare a live
+line against — is:
 
-The restart is what made the arming safe, and the activation lines are the whole
-story. Before the restart, with the new package already on disk:
+```
+activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+```
+
+A live row written before this change still carries the five removed keys — on this machine
+that is `budgetTokens: 3000000`, `presets: ['adg']`, `stepNudge: true`,
+`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`, `softNudge: true`,
+`dryRun: false`, `hardDryRun: true`, `stepText` unset. The new build **ignores** the removed
+ones and runs the surviving options (`enabled`, `presets`, `stepNudge`, `stepTiers`, `stepText`,
+`dryRun`); no error, no warning, no effect from the legacy keys.
+
+The earlier activation lines below are **history**: every one of them was written by a build
+that still carried the token stages, which is why they end with `cacheReadWeight=… softNudge=…`
+and, in the later ones, `hardDryRun=…`. A line with those fields — or without `stepText=` —
+means the **old module** is still the one in memory:
 
 ```
 2026-09-24T17:12:18.463Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true dryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
-```
-
-Read its tail against the source of `activationLine`: it stops after `softNudge=…`.
-That line was written by a reload that had the new `config` and the **old module** —
-which is why `dryRun` had to stay `true` (the old build ignores `hardDryRun`, so
-turning `dryRun` off would have armed its cancel). After the restart, the same row
-was re-applied by the new build:
-
-```
-2026-09-24T17:37:18.586Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=true hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
-2026-09-24T17:38:47.549Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
-```
-
-That pair shows the 17:37 restart had loaded the *first* build of the step stage. The
-redesign needed a second restart, and the three lines below are how it landed —
-note that only the last one is a hot reload, which is exactly the boundary this
-project keeps documenting:
-
-```
-2026-09-24T18:18:22.774Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
-2026-09-24T18:23:27.177Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
 2026-09-24T18:25:14.773Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
 ```
 
-The 18:18 line is the new code proving itself (`stepText=` is the field only this
-build writes) while the ladder was still the old one; the 18:25 line is the same
-process, with the ladder changed, **without a restart**. One caveat that comes with
-any of these reloads: re-applying the row starts a fresh residency epoch, so a child
-that is mid-run has its step count and its once-per-epoch flags reset. Its next step
-is counted as step 1 again, and it can be reminded for a tier it had already spent.
-That is inherent to the state being per-application rather than per-session-log.
+Read the 17:12 line's tail against the source of `activationLine`: it stops after
+`softNudge=…`, i.e. it is the old shape, written by a reload that had the new `config` and the
+**old module**. The 18:25 line is a later build proving itself (`stepText=` appeared) with the
+redesigned ladder arriving as a `config:`-only hot reload, **no restart** — and it still ends
+in `hardDryRun=true`, because at that point the hard stage still existed. One caveat that comes
+with any of these reloads: re-applying the row starts a fresh residency epoch, so a child that
+is mid-run has its step count and its fired tiers reset. Its next step is counted as step 1
+again, and it can be reminded for a tier it had already spent. That is inherent to the state
+being per-application rather than per-session-log.
 
-The 17:37 line is the new build proving itself: `stepNudge=`, `stepTiers=[12, 24, 40]`
-and `hardDryRun=` are present, so the step stage exists, `stepTiers` parsed into
-three tiers rather than falling back, and `hardDryRun` parsed as true. The 17:38
-line is the config-only hot reload that followed — **no restart**, which is the
-other half of the contrast above.
+The lesson the lines encode is unchanged and is why the current shape above matters: the
+`activation:` line is the only place the host states which build and which config it is
+actually running.
 
-What this does *not* prove: that any reminder has been injected. Load-time parsing
-and arming are now measured; the injection still is not (see the previous section).
+## History: what 3,000,000 would have done (removed token stages)
 
-One sample of the dry-run decisions that produced the table above, including the
-first line this machine ever wrote above a budget and the last line the runaway
-child wrote:
-
-```
-2026-09-24T14:11:23.331Z dry-run soft stage: would nudge usage=2185852 budget=3000000 label=adg/973aca1b-820c-4c6f-9877-8f75ac134725
-2026-09-24T14:12:35.408Z dry-run hard stage: would cancel usage=3065764 budget=3000000 label=adg/973aca1b-820c-4c6f-9877-8f75ac134725
-2026-09-24T14:32:48.510Z dry-run soft stage: would nudge usage=2128454 budget=3000000 label=adg/f7ee3039-24a6-4f7e-94c9-b120670f2289
-2026-09-24T14:34:32.852Z dry-run hard stage: would cancel usage=3121660 budget=3000000 label=adg/f7ee3039-24a6-4f7e-94c9-b120670f2289
-2026-09-24T15:10:53.160Z dry-run hard stage: would cancel usage=48992135 budget=3000000 label=adg/f7ee3039-24a6-4f7e-94c9-b120670f2289
-```
-
-## Calibration: what 3,000,000 would have done
-
-The distribution below is measured, from
+**已移除的 token 两档：历史证据，不代表当前行为。** Nothing in this section is current
+behaviour: the budget, the soft stage and the cancel were removed, and this section is the
+measurement that justified removing them. The distribution below is measured, from
 `D:\dsh\.dsh-token-audit\audit-report.txt` (32 `adg` sessions / 983 requests) plus
 a full re-read of all 22 audited child sessions (the report's own top-15 table is
 sorted by `in+out` and only lists 13 of them, so the extremes have to be
@@ -772,19 +716,21 @@ recomputed to be quoted):
 | --- | --- |
 | average child session | **1,734,486** (≈1.73M) |
 | largest child session in the audited snapshot | **5,217,983** (≈5.22M) = `228433 + 42094 + 4947456` |
-| heaviest **observed** implementation delegation (live hard cancel above) | **7,651,807** (≈7.65M) |
+| heaviest **observed** implementation delegation (history: the live hard cancel quoted above) | **7,651,807** (≈7.65M) |
 | audited children at or above 3,000,000 | **5 of 22** |
 
 The five children at or above the default budget in that snapshot were, in
 descending order: 5,217,983 · 4,455,097 · 4,070,916 · 3,904,800 · 3,236,397.
 The next one down is 2,204,189, so the boundary is not close.
 
-**Read that as: a 3,000,000 budget sits well inside the distribution and WILL
-curtail legitimate work.** One child in four of the audited set was already over
-it, the average child is 1.73M, and the heaviest real delegation observed burned
-2.5× the budget. It guards the tail only at a higher number; correlating budget
-with "acceptable cancellations" means picking a number above the bulk of your own
-traffic, not above the average.
+**That is the finding that removed the budget: a 3,000,000 threshold sits well inside the
+distribution and WILL curtail legitimate work.** One child in four of the audited set was
+already over it, the average child is 1.73M, and the heaviest real delegation observed burned
+2.5× the budget. It would have guarded the tail only at a higher number — and correlating a
+budget with "acceptable cancellations" means picking a number above the bulk of your own
+traffic, which is a number that, by construction, cuts ordinary output. The alternative this
+plugin took instead is to remind on **steps**, which cost nothing to get wrong because the
+child may disregard them.
 
 Two framing notes worth holding on to before reading those numbers as a forecast:
 
@@ -795,28 +741,21 @@ Two framing notes worth holding on to before reading those numbers as a forecast
   removed: truncating tool output and compacting early traded information for
   tokens rather than removing work. So the corpus measures the current preset —
   but it predates this plugin being armed, so none of it was produced with the
-  step checkpoints or the token stages actually firing.
+  step checkpoints actually firing.
 - **The corpus keeps growing.** A re-read of the same session directory after
   this documentation pass found 32 children (up from 22), a maximum of 17,022,627
   and an average of 3,942,185 — every number in the table is a floor. The live
   dry-run traffic in the previous section went further still: 5 of 5 governed
   children crossed the 3,000,000 budget, and one reached **48,992,135**.
 
-That is exactly why `dryRun` exists: **calibrate against your own traffic before
-arming.** With `dryRun: true`, every soft/hard decision the plugin would make is
-written to `logFile` and nothing is injected or cancelled, so the file becomes a
-measurement of your own distribution. Arm only once the line count at your
-chosen budget is a number you can live with — and remember that the count is in
-*steps*, not children (see the unit note above).
-
 **This machine's own dry-run snapshot is blunter than the audited corpus**, and it
 is the reason the live row is not armed at 3,000,000: 5 of 5 governed children
-crossed the budget (3.36M at the smallest, 48.99M at the largest), the runaway
-child alone spent ~300 steps above the budget, and `soft stage: nudged` stayed at
-0 because everything was dry. The full table is in
-[Live calibration data](#live-calibration-data-dryrun-true). **If your own log
-looks like that, raise `budgetTokens` first, and arm the reminders
-(`dryRun: false` + `hardDryRun: true`) before you ever arm the cancel.**
+crossed the budget (3.36M at the smallest, 48.99M at the largest), and the runaway
+child alone spent ~300 steps above the budget. The full table is in
+[Removed token stages: the dry-run calibration data](#removed-token-stages-the-dry-run-calibration-data-history).
+That is why calibration is now a **step** measurement: with `dryRun: true` the file tells you
+which step each of your children would have been reminded on, and there is no destructive
+threshold left to pick.
 
 ## Tests
 
@@ -825,80 +764,57 @@ cd D:\dsh\adg-multi-agent\plugin\dsh-adg-token-budget
 node --test test
 ```
 
-**71 tests, 71 passing, 0 failing.** No dependencies beyond `node:test` and
-`node:assert`, so the suite runs in a checkout that has no `node_modules` at all.
-They cover: config normalization for every wrong type, including the step
-checkpoints and their fallback/clamp/sort/dedupe rules and the `stepText` reader
-(blank/unusable → built-in body, over-long → truncated); the shape of the default
-ladder (early, dense, still reaching the tail, ascending, gaps never zero); the pure
-decision helpers directly (`decide` and `dueStepTier`); the top-level, foreign-preset,
+The suite has no dependencies beyond `node:test` and `node:assert`, so it runs in a
+checkout that has no `node_modules` at all. It covers the surviving feature end to end:
+config normalization for every wrong type, including the tier reader's
+fallback/clamp/sort/dedupe/bound rules and the `stepText` reader (blank/unusable → built-in
+body, over-long → truncated); the default ladder's shape (early, dense, still reaching the
+tail, ascending, gaps never zero); the pure decision helpers directly (`dueStepTier`,
+`delegationDepthOf`, `isDelegatedChild`, `presetIsGoverned`); the top-level, foreign-preset,
 and absent-preset filters; the out-of-contract depth guard at both the helper and the
-listener level; the below-threshold passthrough and the zero-allocation property
-of `stepNudge: false`; the soft stage's call-`next()`-first ordering,
-single-nudge rule, and downstream-`reject` handling; the once-per-session flag
-being consumed only after delivery; the step checkpoints firing exactly once per
-tier on the tier step, per child, counting only entered steps, keeping the body flat
-across tiers, adding its closing sentence only on the last tier, and logging every
+listener level; the zero-allocation pass-through of `stepNudge: false`; the checkpoints firing
+exactly once per tier on the tier step, per child, counting only entered steps, keeping the
+body flat across tiers, adding its closing sentence only on the last tier, and logging every
 branch; the choice wording itself (optional, may be disregarded, both branches named,
 decision requested, no order to stop exploring); a configured `stepText` reaching the
 child and replacing the built-in body entirely; the activation line reporting
-`stepText=builtin|custom`; the "at most one message per step" rule
-and which trigger wins; `stepNudge: false` and `softNudge: false`; the hard
-stage's single `cancel({kind:'parent'})` and `reject` with no `next()`;
-`hardDryRun` arming the reminders while leaving the cancel dry; missing/broken/
-absent projection data (where the checkpoints still work); a thrown `stateOf`; a
-downstream listener that throws after delegating, and the fact that this plugin
-does not turn it into a pass-through; `cacheReadWeight` flipping a case across
-each threshold; `dryRun` for every stage, including that it consumes no flag but
-does count steps; the load-time activation line in both the enabled and the
-disabled case; a hostile logger and an unwritable `logFile`; and the per-session
-map being released on both `subagent/end` and disposal.
+`stepText=builtin|custom`; `dryRun` logging every due checkpoint while consuming no tier and
+still counting steps; the delegation-first ordering, and a downstream failure being rethrown
+rather than turned into a pass-through; a hostile logger and an unwritable `logFile`; and the
+per-session map being released on both `subagent/end` and disposal.
 
 ### Mutation verification (what the suite would NOT catch)
 
 A passing suite is only evidence if it *fails* when the behaviour it pins is
 broken. Every mutation below was applied to a **fresh copy** (never to this
-checkout), one behaviour per copy, followed by the suite:
+checkout), one behaviour per copy, followed by the suite. The rows below target the
+**surviving** feature, and every one of them is caught by at least one assertion. The removed
+token stages had their own pass — `dryRun`-hard, `dryRun`-soft, the one-shot flag, the
+soft/hard comparison, `hardDryRun` and the folding rule — and those mutations are history now
+that the code they mutated is gone.
 
-| # | Mutation | Failing tests |
+| # | Mutation | Caught? |
 | --- | --- | --- |
-| D1a | allow a second `next()` (remove the `call.called` guard) | **0 — not caught** |
-| D1b | do not rethrow when `call.failed` (swallow a downstream failure, return a decision) | 2 |
-| D1b-inner | neuter the inner `call.failed` rethrow only | **0 — not caught** |
-| D1b-all | neuter **both** rethrows (the failure becomes a silent pass-through, `next()` runs twice) | 1 |
-| D2 | remove the `WeakSet` dedupe of same-context applies | 1 |
-| D3 | consume the one-shot flag before the nudge can be appended | 1 |
-| D3-early | consume it even when nothing was delivered | 1 |
-| dryRun-hard | make the hard stage cancel anyway | 1 |
-| dryRun-soft | make the soft stage inject anyway | 3 |
-| dryRun-flag | make `dryRun` consume the one-shot flag | 2 |
-| B2-activation | skip the activation line | 1 |
-| B2-logger | remove the `try`/`catch` around the `warn`/`info` sinks | **0 — not caught** |
-| B2-logfile | remove the `try`/`catch` around the `logFile` append | **0 — not caught** |
-| D5-header | remove `Number.isSafeInteger`/`>= 0` on the header depth | 2 |
-| D5-runtime | remove `Number.isSafeInteger`/`>= 0` on the runtime depth | 1 |
-| **M1** | count a step the downstream listener rejected | 3 |
-| **M2** | let a fired tier fire again (`dueStepTier` ignores `firedTiers`) | 5 |
-| **M3** | inject both reminders when both triggers are due | 1 |
-| **M4** | let the step checkpoint win over the token wrap-up | 2 |
-| **M5** | make `hardDryRun` cancel anyway | 1 |
-| **M6** | let `stepNudge: false` still count steps | 3 |
-| **M7** | evaluate the tier one step early (off-by-one) | 14 |
-| **M8** | treat every decision as an entry, so rejected steps count | 4 |
-| **M9** | stop sorting the tier list | 1 |
-| **M10** | stop de-duplicating the tier list | 1 |
-| **M11** | drop the closing sentence from the last tier | 2 |
-| **M12** | return `[]` instead of the fallback tiers for unusable input | 4 |
-| **M13** | invert the clause that lets a child disregard the reminder | 1 |
-| **M14** | make `dryRun` inject after all | 5 |
-| **M15** | ignore a configured `stepText` and always use the built-in body | 2 |
-| **M16** | stop truncating an over-long `stepText` | 1 |
-| **M17** | report `stepText=builtin` even when a custom body is set | 1 |
-
-The fifteen `D*` rows are the pre-existing table (run under
-`%TEMP%\adg-token-budget-mutations\`); the seventeen `M*` rows are the step
-feature's own pass, run under `D:\dsh\.adg-step-mutations\` with
-`node --test --test-isolation=none test`, and **every one of them is caught**.
+| **M1** | count a step the downstream listener rejected | yes |
+| **M2** | let a fired tier fire again (`dueStepTier` ignores `firedTiers`) | yes |
+| **M6** | let `stepNudge: false` still count steps | yes |
+| **M7** | evaluate the tier one step early (off-by-one) | yes |
+| **M8** | treat every decision as an entry, so rejected steps count | yes |
+| **M9** | stop sorting the tier list | yes |
+| **M10** | stop de-duplicating the tier list | yes |
+| **M11** | drop the closing sentence from the last tier | yes |
+| **M12** | return `[]` instead of the fallback tiers for unusable input | yes |
+| **M13** | invert the clause that lets a child disregard the reminder | yes |
+| **M14** | make `dryRun` inject after all | yes |
+| **M15** | ignore a configured `stepText` and always use the built-in body | yes |
+| **M16** | stop truncating an over-long `stepText` | yes |
+| **M17** | report `stepText=builtin` even when a custom body is set | yes |
+| **D1b** | do not rethrow when `call.failed` (swallow a downstream failure, return a decision) | yes |
+| **D1b-all** | neuter **both** rethrows (the failure becomes a silent pass-through, `next()` runs twice) | yes |
+| **D2** | remove the `WeakSet` dedupe of same-context applies | yes |
+| **D5-header** | remove `Number.isSafeInteger`/`>= 0` on the header depth | yes |
+| **D5-runtime** | remove `Number.isSafeInteger`/`>= 0` on the runtime depth | yes |
+| **B2-activation** | skip the activation line | yes |
 
 M13 is the mutation that matters most for this feature's promise. The earlier
 wording made that promise by permitting the one **必需** action; this wording makes
@@ -915,15 +831,17 @@ the words that reach the child: dropping the custom body, dropping its length ca
 lying about it in the activation line are each caught by exactly the assertion that
 exists for them.
 
-Four mutations from the older table are **not caught**, stated plainly rather than
+Four mutations are **not caught**, stated plainly rather than
 buried:
 
-1. **D1a** — the second-`next()` guard is unreachable by construction, and no
+1. **D1a** (`allow a second next()`: remove the `call.called` guard) — the guard is
+   unreachable by construction, and no
    test drives a second call, so removing it changes nothing observable. The
    invariant "`next()` is called at most once" is instead enforced by the
    structure of the handler (one `callNext()` per path) and by D1b-all being
    caught.
-2. **D1b-inner** — after the inner rethrow is removed, execution still reaches
+2. **D1b-inner** (neuter the inner `call.failed` rethrow only) — after the inner rethrow is
+   removed, execution still reaches
    the *second* line of defence (the `if (call.called) throw error` after it), so
    the error still propagates and the mutant is not reached. Only D1b-all, which
    removes both, is caught.
