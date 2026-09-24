@@ -786,12 +786,16 @@ it, the average child is 1.73M, and the heaviest real delegation observed burned
 with "acceptable cancellations" means picking a number above the bulk of your own
 traffic, not above the average.
 
-Two reasons the picture is *pessimistic* rather than optimistic, both worth
-holding on to:
+Two framing notes worth holding on to before reading those numbers as a forecast:
 
-- **The preset-side caps (the 5 knobs in the repository README's "三组预算旋钮")
-  only take effect after a `dsh` restart.** The corpus above was produced before
-  they took effect, so it measures the old, fatter traffic.
+- **The preset-side shape of the audited traffic is the one that ships now.** The
+  five knob overrides described in the repository README were reverted to the
+  plugins' factory defaults (pruner 8192/4096/1024, compaction 0.8 + 0.16,
+  `tool-web` 200000 / 8 / 4) and the persona-side read/report budgets were
+  removed: truncating tool output and compacting early traded information for
+  tokens rather than removing work. So the corpus measures the current preset —
+  but it predates this plugin being armed, so none of it was produced with the
+  step checkpoints or the token stages actually firing.
 - **The corpus keeps growing.** A re-read of the same session directory after
   this documentation pass found 32 children (up from 22), a maximum of 17,022,627
   and an average of 3,942,185 — every number in the table is a floor. The live

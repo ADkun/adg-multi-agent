@@ -13,7 +13,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 |---|---|
 | `id` | 行标识，约定 `agent-<name>` |
 | `config.toolName` | 模型看到的委派工具名，约定 `agent_<name>`，**必须全局唯一** |
-| `config.persona` | 这个智能体的职责、能力边界、越界时怎么做、输出要求，以及最后一行**成本纪律**（照抄现有专家行） |
+| `config.persona` | 这个智能体的职责、能力边界、越界时怎么做、输出要求，以及最后一行**收敛纪律**（照抄现有专家行） |
 | `config.toolFilter.allow` | 它被允许使用的工具白名单 —— 这是**真实的能力边界**，不是提示 |
 | `config.backgroundMode` | 保持 `continuable`（后台接续干活，结果以通知回到调度者） |
 
@@ -39,10 +39,10 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 5. **跑自检**：在仓库里 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过）；
    改的是**已安装**的那一份就传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
    它会检查行尾/末尾换行/BOM、专家行字段齐全、toolName 唯一且形如 `agent_<name>`、
-   `allow` 里只有已注册的工具名、没有通用委派行、调度名册与专家行双向一致，以及三组 token 预算
-   旋钮（共 5 个键）的取值、结构与约束（`compaction-basic` 的两个 ratio、`tool-result-pruner` 的
-   三段字符数、`tool-web` 的 `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries`），
-   并打印 `预算：...` 与 `裁剪后实际吐出：...` 两行摘要。注意它是**逐行文本扫描器，不是 YAML
+   `allow` 里只有已注册的工具名、没有通用委派行、调度名册与专家行双向一致，以及承载三组体积旋钮的
+   那三行（`compaction-basic` / `tool-result-pruner` / `tool-web`）**结构完好、且没有被写回不合法的
+   覆盖值**，并打印 `体积旋钮（生效值）：...` 与 `裁剪后实际吐出（按生效配置算）：...` 两行摘要。
+   注意它**不钉死取值**（本 preset 一律用插件出厂默认值），而且**只是逐行文本扫描器，不是 YAML
    解析器**：它保证这些硬约束在文本上没被破坏，但证明不了文件能被 YAML 解析、也证明不了插件
    真的挂载 —— 那要按下面「校验与生效」做一次真实挂载。
 6. 写入 preset 目录可能在工作区之外，若被沙箱拒绝，按提示升级重试同一条命令一次即可。
@@ -81,25 +81,24 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   `attachments` 服务（base 组合里恒有）、`disabled` 的 codex/claude-code 行同理。自检对这类
   名字只给「提示」；真在缺条件的部署上用到，那一次委派会抛错而不是挂载失败。
 - **有 `pwsh` 的专家要同时给 `job_list` / `job_output` / `job_kill`**，否则后台跑起来的任务取不回来。
-- **新专家的 persona 必须继承「成本纪律」那一行。** 每个专家 persona 的最后一行都是同一句话的
-  本地化版本（先 `grep` 定位再按需 `read`；`offset/limit` 分段读、禁止整读大文件；同一文件不重复读；
-  工具结果被截断时收窄查询而不是重复重取；证据足够即停止探查；**回给调度者的结论控制在 2000 字符内**
-  并附 `path:line` 或 URL 证据，不要回贴原始工具输出或正文）。复制现有专家行时**把这行一起复制**，
-  不要漏掉；对**没有 `grep`** 的专家（如纯联网的 `agent_search`）按它的工具改措辞，别让它引用自己没有的
-  工具。依据（94.1M token 里 cache-read 占 91%、输出只占 1% 的实测）见 README「token 成本纪律」。
-- **不要抬任何预算旋钮。** 三组预算旋钮共 5 个键：`compaction-basic` 的 `thresholdRatio` /
-  `retainRatio`、`tool-result-pruner` 的 `thresholdChars` / `headChars` / `tailChars`、`tool-web` 的
-  `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries` 都是压上下文体积的闸门，
-  加一个智能体**不需要**动它们。抬高的前提是**用户明确要求**，并且抬高前后各跑一次
-  `node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"` 做对比
-  （拿不出对比数字就不要改）。同理不要顺手加 `maxTokens` / `agentOptions` / `reasoningEffort`：
+- **新专家的 persona 必须继承「收敛纪律」那一行。** 每个专家 persona 的最后一行都是同一句话：
+  "收到步数检查点提醒时按提醒里的二选一自己判断：产出够用就收敛汇报，确实还有必需工作就继续做
+  并说明理由 —— 不要为了回应提醒而砍掉必需的工作。" 复制现有专家行时**把这行一起复制**，
+  不要漏掉。**不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
+  "结论控制在 N 字符内"、"禁止整读大文件"之类）：那一层纪律已整体撤销 —— 截断与提前压缩会把
+  工具已经取到的事实切掉，写在 persona 里的预算提示会把注意力从"把事情做对"挪到"别写太多"，
+  净效果是更差的结论。省 token 交给插件（步数检查点 + 两档预算），见 README「token 成本纪律」。
+- **不要给那三行体积旋钮加回覆盖值。** `compaction-basic` / `tool-result-pruner` / `tool-web` 三行
+  刻意不写压缩阈值、单条工具结果截断、`fetchMaxOutputChars` / `searchMaxResults` /
+  `searchMaxQueries`，一律用插件出厂默认值 —— 加一个智能体**不需要**动它们，而且"靠截断省 token"
+  那套口径已整体撤销（见 README「为什么撤销 preset 侧的体积闸门」）。确实要覆盖时，取值得落在插件
+  会接受的范围内，并在同一个提交里给出对比数据（`node D:\dsh\.dsh-token-audit\audit-run.mjs
+  "C:\Users\cenqian\.dsh\sessions"` 前后各跑一次，拿不出对比数字就不要改）；自检会把覆盖过的键
+  标成「已覆盖」。同理不要顺手加 `maxTokens` / `agentOptions` / `reasoningEffort`：
   输出只占账单 1%，压它只损伤质量；`reasoningEffort` 在手工声明的路由上会让每次委派直接报
   `UNSUPPORTED_REASONING_EFFORT`。也不要给专家行加 `maxDepth`：它是"经这一行创建的子代理深度上限"，
   写 `0` 会让**每一次** `agent_*` 委派以 `subagent depth 1 exceeds maxDepth 0` 失败。
-  改完跑 `node tools/check-preset.mjs` —— 这 5 个键的取值在自检里是**逐个钉住**的
-  （`tools/check-preset.mjs` 的 `EXPECTED_BUDGET`）：偏离期望值就 ERROR，连"改回插件默认值"
-  和"挪到一个看着还行的中间值"都算偏离。真要改，就在同一个提交里改 `EXPECTED_BUDGET`、
-  重跑上面的审计，并让用户确认。
+  改完跑 `node tools/check-preset.mjs`。
 
 ## 本技能从哪来
 

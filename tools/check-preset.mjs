@@ -11,14 +11,19 @@
 //      "这次委派必然抛错"的情形；
 //   5. 不存在通用 `subagent` / `subagent_fork` 委派行；
 //   6. 文件顶部调度 persona 的名册与专家行一一对应（双向，不能只加行不改名册）；
-//   7. 三组 token 预算旋钮（共 5 个键）没有被静默改回默认值/改坏：
-//      `compaction-basic` 的 thresholdRatio / retainRatio（必须都在 (0,1]，且
-//      retainRatio < thresholdRatio，否则插件加载时直接抛错）、`tool-result-pruner` 的
-//      thresholdChars / headChars / tailChars（正整数，且 head + marker + tail ≤ threshold，
-//      否则同样抛错）、`tool-web` 的 fetchMaxOutputChars / searchMaxResults /
-//      searchMaxQueries（正整数，且 fetchMaxOutputChars ≤ 200000，> 60000 只提示）。
-//      取值还必须等于下面的 EXPECTED_BUDGET，行的 name/disabled/config 结构也要对。
-//      依据见 README「token 成本纪律」。
+//   7. 三组体积旋钮（共 8 个键）**刻意不被覆盖**，且承载它们的三行结构完好：
+//      `compaction-basic` 的 thresholdRatio / retainRatio、`tool-result-pruner` 的
+//      thresholdChars / headChars / tailChars、`tool-web` 的 fetchMaxOutputChars /
+//      searchMaxResults / searchMaxQueries —— 本 preset 一律用插件出厂默认值
+//      （0.8+0.16 / 8192+4096+1024 / 200000+8+4），不再靠截断工具结果与提前压缩省 token
+//      （省 token 是 host-plane 插件 `dsh-adg-token-budget` 的事，见 README「token 成本纪律」）。
+//      因此这里**不再钉死取值**，只保留两类检查：
+//      （a）三行必须存在、`name:` 正确、没被 `disabled` 关掉、同一个 id 不重复 ——
+//          这几条坏了是整块能力消失或跑的根本不是那个插件；
+//      （b）万一有人重新写回某个键（或在 `config:` 之外写），它必须落在插件会接受的
+//          范围里：两个 ratio 在 (0,1] 且 retainRatio < thresholdRatio；pruner 正整数且
+//          head + marker + tail ≤ threshold；tool-web 正整数且 fetchMaxOutputChars ≤ 200000
+//          （> 60000 只提示）。不合法的那一行会在挂载时直接抛错。
 //
 // 用法：
 //   node tools/check-preset.mjs                                  # 校验仓库里的 preset/
@@ -234,24 +239,28 @@ else {
   }
 }
 
-// ── 7. token 预算旋钮 ──────────────────────────────────────────────────────
+// ── 7. 体积旋钮（刻意不覆盖，只守结构与合法性）─────────────────────────────
 // 纯文本扫描，不解析 YAML：按 `- id:` 定位目标行，再把行内 `key: value` 按缩进栈收成
-// 「路径 → 值」。路径能分辨"直挂 config 下"与"嵌得更深/提到同级"，这是 F4 那些守卫的前提。
+// 「路径 → 值」。路径能分辨"直挂 config 下"与"嵌得更深/提到同级"，这是下面结构守卫的前提。
 
 /**
- * 本 preset 的预算取值是**实测后定死的**，不是"落在合法区间里就行"。
- * 三个插件都有默认值（compaction-basic 0.8/0.16、pruner 8192/4096/1024、
- * tool-web 200000/8/4）：只要 config 写错位置或漏写，运行期就**静默**回落到那些默认值，
- * 所以这里逐个钉住，任何偏差都是 ERROR：
- *   - 把某个键改回插件默认值 → ERROR；
- *   - 只想把某个键挪进"我觉得还算小"的区间（如 fetchMaxOutputChars 写 90000）→ 也 ERROR，
- *     因为这里是单值比较，不区分往哪边调。
- * 真要改：在同一个提交里改这个常量，并重跑 README「怎么重新测量」里的 token 审计。
+ * 三个插件各自的**出厂默认值**（抄自已安装包的源码；换插件版本时同步这里）：
+ *   - `@deepseek-ai/dsh-compaction-basic`            `lib/index.js:15-17`：thresholdRatio 0.8、
+ *     retainRatio 0.16；
+ *   - `@deepseek-ai/dsh-compaction-tool-result-pruner` `lib/index.js:10-14`：8192 / 4096 / 1024；
+ *   - `@deepseek-ai/dsh-tool-web`                    `lib/index.js:844-852`：fetchMaxOutputChars 200000、
+ *     searchMaxResults 8、searchMaxQueries 4。
+ * 本 preset **不覆盖**这些键，所以这张表只在报告里当对照，不参与判错。
+ * 这里刻意**不再钉死 preset 里的取值**：早期版本把"单条工具结果超 4096 字符就砍中间、"
+ * "窗口用到 60% 就压缩"固化成了成本口径，实测代价是工具已经取到的事实被切掉、模型只能重取
+ * 或猜 —— 那个取舍已撤销（见 README「token 成本纪律」）。现在只守两类事实：
+ *   （a）行结构完好：行在、包名对、没 disabled、id 不重复；
+ *   （b）**万一有人重新写回某个键**，取值必须在插件会接受的范围内，否则那一行挂载即抛错。
  */
-const EXPECTED_BUDGET = {
-  compaction: { thresholdRatio: 0.6, retainRatio: 0.12 },
-  pruner: { thresholdChars: 4096, headChars: 2048, tailChars: 768 },
-  web: { fetchMaxOutputChars: 24000, searchMaxResults: 5, searchMaxQueries: 3 },
+const FACTORY_DEFAULTS = {
+  compaction: { thresholdRatio: 0.8, retainRatio: 0.16 },
+  pruner: { thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
+  web: { fetchMaxOutputChars: 200000, searchMaxResults: 8, searchMaxQueries: 4 },
 }
 
 /**
@@ -261,33 +270,34 @@ const EXPECTED_BUDGET = {
  *   headChars + codePointLength(PRUNE_MARKER) + tailChars > thresholdChars → 抛错
  * 这里必须照抄这个算式：只看 `head + tail` 会漏掉那 39 个字符（2048+2010=4058 < 4096
  * 曾经因此蒙混过关，而真实吐出是 4058+39=4097 > 4096）。
- * 另注：运行期允许 headChars / tailChars 为 0（assertNonNegativeInteger），
- * 但本 preset **刻意要求正整数** —— 留 0 头或 0 尾等于把中间段整段丢掉，不是本仓库的口径。
+ * 另注：运行期允许 headChars / tailChars 为 0（assertNonNegativeInteger）；本 preset 不覆盖
+ * 这些键，所以下面只在"有人写回某个键"时才要求正整数 —— 留 0 头或 0 尾等于把中间段整段丢掉，
+ * 那种覆盖不该通过自检。
  */
 const PRUNER_MARKER_CHARS = 39
 
 /**
- * 预算行的结构守卫。每一条都对应一种"看起来配了、其实没生效"的绕法：
+ * 体积旋钮所在行的结构守卫。每一条都对应一种"看起来配了、其实没生效"（或反过来
+ * "看起来没配、其实整块能力没了"）的绕法：
  *   1. `name:` 必须是期望的包名 —— 只认 `id:` 的话，`id: tool-web` 换个 `name:` 照样通过，
- *      但真正跑的是别的插件，预算根本没落到 tool-web 上（运行期不报错，只用默认值）；
- *   2. 行内出现 `disabled: true` → ERROR —— 被禁用的行不挂载，预算随行一起消失；
+ *      但真正跑的是别的插件（运行期不报错，只用别的默认值）；
+ *   2. 行内出现 `disabled: true` → ERROR —— 被禁用的行不挂载，该插件的能力整块消失；
  *   3. 同一个期望 id 命中多行 → ERROR —— 诱饵/重复行让"到底哪一行生效"不可判定
  *      （id 按树唯一，重复 id 本身就是坏配置）；
- *   4. 每个预算键必须**直挂**在同级 `config:` 下、缩进恰好比 `config:` 深一级 ——
+ *   4. 万一某个旋钮键被写回，它必须**直挂**在同级 `config:` 下、缩进恰好比 `config:` 深一级 ——
  *      嵌得更深运行期要么拒绝这条配置、要么忽略它，提到与 `name:` 同级则根本进不了插件的
- *      config；（两种都会静默用默认值）；
+ *      config（两种都会静默用默认值，而写的人以为它生效了）；
  *   5. `config:` 块里出现不认识的键 → ERROR 并点名 —— 三个插件都校验自己的键集
  *      （compaction-basic 与 pruner 的 validateKeys/键集检查对未知名直接抛错），
  *      拼错的键会让整行挂载失败，而不是被忽略。
- * 期望包名与期望值都从 EXPECTED_BUDGET 生成，避免两处各写一遍。
+ * 期望包名写在各 spec 上；取值只用来对照报告里的出厂默认值（FACTORY_DEFAULTS），不参与判错。
  */
 const EXPECTED_ROWS = [
   {
     label: '`compaction` 组 compaction-basic',
     idPrefix: 'compaction-basic',
     name: '@deepseek-ai/dsh-compaction-basic',
-    budgetKeys: Object.keys(EXPECTED_BUDGET.compaction),
-    expected: EXPECTED_BUDGET.compaction,
+    budgetKeys: Object.keys(FACTORY_DEFAULTS.compaction),
     // 该插件 BASIC_COMPACT_CONFIG_KEYS 的全部键（lib/index.js:15-34）。
     allowedKeys: [
       'thresholdRatio',
@@ -302,25 +312,21 @@ const EXPECTED_ROWS = [
       'auto',
     ],
     missingRow: '`compaction` 组里找不到 `compaction-basic` 行：它决定这个 preset 的 agent 会不会压缩上下文',
-    deletedConfig: '没有任何预算 config，等于用插件默认值（0.8 / 0.16）——这不是本 preset 的成本口径',
   },
   {
     label: '`compaction` 组 tool-result-pruner',
     idPrefix: 'tool-result-pruner',
     name: '@deepseek-ai/dsh-compaction-tool-result-pruner',
-    budgetKeys: Object.keys(EXPECTED_BUDGET.pruner),
-    expected: EXPECTED_BUDGET.pruner,
-    // 该插件 CONFIG_KEYS（lib/index.js:15-19）就是这三个预算键。
+    budgetKeys: Object.keys(FACTORY_DEFAULTS.pruner),
+    // 该插件 CONFIG_KEYS（lib/index.js:15-19）就是这三个旋钮键。
     allowedKeys: ['thresholdChars', 'headChars', 'tailChars'],
     missingRow: '`compaction` 组里找不到 `tool-result-pruner` 行：单条工具结果不会被裁剪，上下文体积会失控',
-    deletedConfig: '没有任何预算 config，等于用插件默认值（8192 / 4096 / 1024）——这不是本 preset 的成本口径',
   },
   {
     label: '顶层 tool-web',
     idPrefix: 'tool-web',
     name: '@deepseek-ai/dsh-tool-web',
-    budgetKeys: Object.keys(EXPECTED_BUDGET.web),
-    expected: EXPECTED_BUDGET.web,
+    budgetKeys: Object.keys(FACTORY_DEFAULTS.web),
     // 该插件 Config 的全部键（lib/index.js:845-853）。
     allowedKeys: [
       'search',
@@ -331,8 +337,7 @@ const EXPECTED_ROWS = [
       'searchTimeoutMs',
       'fetchMaxOutputChars',
     ],
-    missingRow: '找不到 `tool-web` 行：联网工具的抓取上限就无处声明',
-    deletedConfig: '没有任何预算 config，等于用插件默认值（200000 / 8 / 4）——这不是本 preset 的成本口径',
+    missingRow: '找不到 `tool-web` 行：联网工具的抓取能力整块消失',
   },
 ]
 
@@ -410,9 +415,6 @@ function ratioOf(row, key) {
   return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : undefined
 }
 
-/** 该行存在、但一个期望的预算键都没有**直挂**在 config 下（config 整段被删或写错位置）。 */
-const noBudget = (row, keys) => keys.every((key) => directPath(row, key) === undefined)
-
 for (const spec of EXPECTED_ROWS) {
   const matched = rowsOf(spec.idPrefix)
   if (matched.length === 0) {
@@ -421,20 +423,20 @@ for (const spec of EXPECTED_ROWS) {
   }
   const row = matched[0]
   // 命中多行时，"哪一行才是生效的那一行"本身就不可判定，所以只报结构性的 name/disabled，
-  // 不再对第一条做取值比较（否则只会叠一串"缺失"的次生错误，掩盖真正的原因）。
+  // 不再对第一条做取值比较（否则只会叠一串次生错误，掩盖真正的原因）。
   const duplicated = matched.length > 1
   if (duplicated) {
     fail(`${spec.label}：id 以 ${spec.idPrefix} 开头的行命中 ${matched.length} 条（第 ${matched.map((item) => item.line).join(' / ')} 行）——同一个期望行只允许一条，重复/诱饵行会让"哪一行生效"不可判定`)
   }
 
-  // 守卫 2：被 disabled 关掉的行不挂载，预算也就没了。
+  // 守卫 2：被 disabled 关掉的行不挂载，该插件的能力整块消失。
   if (row.rootScalars.get('disabled') === 'true') {
-    fail(`第 ${row.line} 行 ${row.id}：这一行被 disabled: true 关掉了——预算随行一起消失、根本不会挂载，等于回到插件默认值`)
+    fail(`第 ${row.line} 行 ${row.id}：这一行被 disabled: true 关掉了——该插件不会挂载，它承载的能力整块消失`)
   }
   // 守卫 1：id 对了但包名被换掉 = 跑的是别的插件。
   const rowName = row.rootScalars.get('name')
   if (rowName !== spec.name) {
-    fail(`第 ${row.line} 行 ${row.id}：name 应为 ${spec.name}，实际 ${rowName ?? '（缺失）'}——id 对了但包名不对，跑起来的是别的插件，预算不会生效`)
+    fail(`第 ${row.line} 行 ${row.id}：name 应为 ${spec.name}，实际 ${rowName ?? '（缺失）'}——id 对了但包名不对，跑起来的是别的插件`)
   }
   if (duplicated) {
     for (const item of matched.slice(1)) {
@@ -452,7 +454,7 @@ for (const spec of EXPECTED_ROWS) {
     if (!rest.includes(' > ')) configKeys.add(rest)
   }
 
-  // 守卫 4：预算键存在但没直挂 config 下 → 指出它到底写在哪了。
+  // 守卫 4：旋钮键存在但没直挂 config 下 → 指出它到底写在哪了。
   for (const key of spec.budgetKeys) {
     if (directPath(row, key) !== undefined) continue
     const found = [...row.paths.keys()].find((path) => path === key || path.endsWith(` > ${key}`))
@@ -464,23 +466,24 @@ for (const spec of EXPECTED_ROWS) {
     )
   }
 
-  // 守卫：期望值逐个钉住（单值比较：往任何方向偏都是 ERROR）。
+  // 取值检查：**只在有人写回某个键时**进行，而且只查"插件会不会接受"，
+  // 不再与任何期望值比较 —— 本 preset 的口径就是"不覆盖，用出厂默认值"。
   for (const key of spec.budgetKeys) {
-    const expected = spec.expected[key]
-    const actual = key === 'thresholdRatio' || key === 'retainRatio' ? ratioOf(row, key) : positiveIntegerOf(row, key)
+    const isRatio = key === 'thresholdRatio' || key === 'retainRatio'
+    const actual = isRatio ? ratioOf(row, key) : positiveIntegerOf(row, key)
     if (actual === undefined) {
-      fail(`第 ${row.line} 行 ${row.id}：${key} 缺失或不是数字——期望 ${expected}（缺失时插件用默认值，本 preset 的成本口径就失效了）`)
+      const written = directPath(row, key) === undefined ? undefined : row.paths.get(`config > ${key}`)
+      if (written !== undefined && written !== null) {
+        fail(`第 ${row.line} 行 ${row.id}：${key} = ${written} 不是${isRatio ? '小数' : '十进制正整数'}——插件加载时会拒绝这个值，整行挂载失败`)
+      }
       continue
     }
     if (key === 'fetchMaxOutputChars' && actual > 200000) {
-      fail(`第 ${row.line} 行 ${row.id}：fetchMaxOutputChars ${actual} 超过 200000（tool-web 的默认上限，超过它等于放弃这道闸）`)
+      fail(`第 ${row.line} 行 ${row.id}：fetchMaxOutputChars ${actual} 超过 200000（tool-web 的出厂上限）——插件加载时会拒绝，整行挂载失败`)
       continue
     }
-    if (actual !== expected) {
-      fail(`第 ${row.line} 行 ${row.id}：${key} 实际 ${actual}，期望 ${expected}——这些上限是实测后定死的决策；真要改，请在同一个提交里改 tools/check-preset.mjs 的 EXPECTED_BUDGET 并重跑 token 审计`)
-    }
     if (key === 'fetchMaxOutputChars' && actual > 60000) {
-      warn(`第 ${row.line} 行 ${row.id}：fetchMaxOutputChars ${actual} 偏大（> 60000），单次抓取就可能挤掉一大块上下文`)
+      warn(`第 ${row.line} 行 ${row.id}：显式覆盖了 fetchMaxOutputChars=${actual}（> 60000）——本 preset 的口径是不覆盖（出厂 200000）；压小单次抓取会把工具已经取到的事实切掉`)
     }
   }
 
@@ -489,10 +492,6 @@ for (const spec of EXPECTED_ROWS) {
     if (spec.allowedKeys.includes(key)) continue
     const lineNo = row.pathLines.get(`config > ${key}`) ?? row.line
     fail(`第 ${lineNo} 行 ${row.id}：config 里的 "${key}" 不是 ${spec.name} 认识的键——插件校验键集时会直接抛 unknown key，整行挂载失败`)
-  }
-
-  if (noBudget(row, spec.budgetKeys)) {
-    warn(`第 ${row.line} 行 ${row.id}：${spec.deletedConfig}`)
   }
 }
 
@@ -512,17 +511,16 @@ if (compactionRow !== undefined) {
   }
 }
 
-// pruner 的算式必须带上标记长度（F1）。
+// pruner 的算式必须带上标记长度（只看 head + tail 会漏掉那 39 个字符）。
 const prunerRow = rowsOf('tool-result-pruner')[0]
-let prunerEmitted
 if (prunerRow !== undefined) {
   const thresholdChars = positiveIntegerOf(prunerRow, 'thresholdChars')
   const headChars = positiveIntegerOf(prunerRow, 'headChars')
   const tailChars = positiveIntegerOf(prunerRow, 'tailChars')
   if (thresholdChars !== undefined && headChars !== undefined && tailChars !== undefined) {
-    prunerEmitted = headChars + PRUNER_MARKER_CHARS + tailChars
-    if (prunerEmitted > thresholdChars) {
-      fail(`第 ${prunerRow.line} 行 ${prunerRow.id}：headChars + 标记(${PRUNER_MARKER_CHARS}) + tailChars = ${prunerEmitted} 超过 thresholdChars ${thresholdChars}——插件加载时会抛 headChars + marker + tailChars (...) must be at most thresholdChars`)
+    const emitted = headChars + PRUNER_MARKER_CHARS + tailChars
+    if (emitted > thresholdChars) {
+      fail(`第 ${prunerRow.line} 行 ${prunerRow.id}：headChars + 标记(${PRUNER_MARKER_CHARS}) + tailChars = ${emitted} 超过 thresholdChars ${thresholdChars}——插件加载时会抛 headChars + marker + tailChars (...) must be at most thresholdChars`)
     }
   }
 }
@@ -532,12 +530,25 @@ const webRow = rowsOf('tool-web')[0]
 const shown = (row, key) => {
   const path = row === undefined ? undefined : directPath(row, key)
   const value = path === undefined ? undefined : row.paths.get(path)
-  return value === undefined || value === null ? '缺失' : value
+  return value === undefined || value === null ? undefined : value
+}
+/** 出厂默认值按键名铺平，用于"没覆盖时报告生效值"。 */
+const FACTORY_BY_KEY = Object.assign({}, ...Object.values(FACTORY_DEFAULTS))
+/** 生效值 = 写了就用写的（标注"已覆盖"），没写就是插件出厂默认值（标注"默认"）。 */
+const effective = (row, key) => {
+  const overridden = shown(row, key)
+  return overridden === undefined ? `${FACTORY_BY_KEY[key]}（默认）` : `${overridden}（已覆盖）`
 }
 console.log(`校验对象：${target}`)
 console.log(`专家行 ${rows.length} 个：${rows.map((row) => `${row.toolName ?? row.id}[${row.allow.length}]`).join('  ')}`)
-console.log(`预算：compaction ${shown(compactionRow, 'thresholdRatio')}/${shown(compactionRow, 'retainRatio')} | pruner ${shown(prunerRow, 'thresholdChars')}/${shown(prunerRow, 'headChars')}/${shown(prunerRow, 'tailChars')} | fetchMaxOutputChars ${shown(webRow, 'fetchMaxOutputChars')}/${shown(webRow, 'searchMaxResults')}/${shown(webRow, 'searchMaxQueries')}`)
-console.log(`裁剪后实际吐出：head ${shown(prunerRow, 'headChars')} + 标记 ${PRUNER_MARKER_CHARS} + tail ${shown(prunerRow, 'tailChars')} = ${prunerEmitted ?? '?（预算键缺失，无法计算）'}，threshold ${shown(prunerRow, 'thresholdChars')}`)
+console.log(`体积旋钮（生效值）：compaction ${effective(compactionRow, 'thresholdRatio')}/${effective(compactionRow, 'retainRatio')} | pruner ${effective(prunerRow, 'thresholdChars')}/${effective(prunerRow, 'headChars')}/${effective(prunerRow, 'tailChars')} | tool-web ${effective(webRow, 'fetchMaxOutputChars')}/${effective(webRow, 'searchMaxResults')}/${effective(webRow, 'searchMaxQueries')}`)
+const effectivePruner = {
+  head: Number(shown(prunerRow, 'headChars') ?? FACTORY_DEFAULTS.pruner.headChars),
+  tail: Number(shown(prunerRow, 'tailChars') ?? FACTORY_DEFAULTS.pruner.tailChars),
+  threshold: Number(shown(prunerRow, 'thresholdChars') ?? FACTORY_DEFAULTS.pruner.thresholdChars),
+}
+console.log(`裁剪后实际吐出（按生效配置算）：head ${effectivePruner.head} + 标记 ${PRUNER_MARKER_CHARS} + tail ${effectivePruner.tail} = ${effectivePruner.head + PRUNER_MARKER_CHARS + effectivePruner.tail}，threshold ${effectivePruner.threshold}`)
+console.log('本 preset 不覆盖任何体积旋钮；上面标「已覆盖」的键都是后来加回去的，请确认是有意为之。')
 for (const message of warnings) console.log(`WARN  ${message}`)
 for (const message of errors) console.log(`ERROR ${message}`)
 if (errors.length > 0) {
