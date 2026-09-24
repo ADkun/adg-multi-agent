@@ -456,18 +456,25 @@ with a 2,100,000 threshold), the hard comparison is applied to the same figure
 no `agent.cancel` was issued for any of those children, which is precisely what
 `dryRun` promises.
 
-**The step checkpoints have no live observation at all — and the reason is
-measured, not assumed.** The package directory now holds the build documented
-here, but the running host still holds the **previous module instance**: on
-2026-09-25 the row was repointed at a new `config` in the same edit that replaced
-the package, the host re-applied the row (the new `dryRun` value shows up in a new
-`activation:` line) yet that line still had the old shape — no `stepNudge=`, no
-`stepTiers=`, no `hardDryRun=`. Node's ESM registry is keyed by resolved file URL
-and that URL never changed, so a config edit hot-reloads and a *code* edit does
-not. Hence: **`step stage: nudged` has never been written by a running host**,
-and neither has a `dry-run step stage: would nudge` line, because the loaded code
-has no step stage at all. See [Install and enable](#install-and-enable) for the
-rollout this forces.
+**The step checkpoints have no live *injection* observation, and the reason for the
+gap was measured rather than assumed.** For about two minutes on 2026-09-25 the
+package directory held the build documented here while the running host still held
+the **previous module instance**: the row was repointed at a new `config` in the
+same edit that replaced the package, the host re-applied the row (the new `dryRun`
+value shows up in a new `activation:` line) yet that line still had the old shape —
+no `stepNudge=`, no `stepTiers=`, no `hardDryRun=`. Node's ESM registry is keyed by
+resolved file URL and that URL never changed, so a config edit hot-reloads and a
+*code* edit does not. Hence, until the restart: **`step stage: nudged` had never
+been written by a running host**, and neither had a `dry-run step stage: would
+nudge` line, because the loaded code had no step stage at all.
+
+That gap in the *load* is now closed — the restart at 2026-09-25T01:37:18 loaded the
+new build (its activation line carries all three new fields) and the row is armed at
+`dryRun: false` + `hardDryRun: true` as of 01:38:47. What remains unobserved is the
+injection itself, because no governed child has run since: **the log still holds 0
+lines of either step-stage kind**. A real `adg` child reaching step 12 will be the
+first honest evidence, and it has not happened yet. See
+[Install and enable](#install-and-enable) for the rollout this forces.
 
 ### Live calibration data (`dryRun: true`)
 
@@ -483,7 +490,7 @@ constants):
 | `dry-run soft stage: would nudge …` | 36 |
 | `dry-run hard stage: would cancel …` | 437 |
 | **`soft stage: nudged` (armed)** | **0** |
-| **`step stage: nudged` / `dry-run step stage: …`** | **0** (the loaded build has no step stage) |
+| **`step stage: nudged` / `dry-run step stage: …`** | **0** (that snapshot predates the restart that loaded the step stage) |
 | **`settled: released session state …`** | **0** |
 
 **Five** distinct `adg` children produced those dry-run lines, and every one of
@@ -522,15 +529,19 @@ exactly one line.
   line: the instruction is never injected in that mode, so `soft stage: nudged`
   has never been written by a running host, and neither has the loop's acceptance
   of the injected message or its rendering in the child's transcript. The soft
-  stage's *decision logic* is live-measured; its *effect* is not.
-- **Any step checkpoint, armed or dry.** The loaded build predates the step stage,
-  and the replacement build is still waiting for a restart. Its evidence is the
-  suite and the mutation pass, nothing more.
+  stage's *decision logic* is live-measured; its *effect* is not. (The stage is
+  armed since 01:38:47, but no governed child has crossed 2,100,000 since.)
+- **Any step checkpoint, armed or dry.** The build that has it is loaded and the
+  row is armed, but no governed child has passed step 12 since the restart, so the
+  log holds **0** lines of either step-stage kind. Until one appears, the evidence
+  for this stage is the suite and the mutation pass, nothing more.
 - **That an injected reminder changes a child's behaviour.** This is the whole
   point of the feature and it is unmeasured: no line in this file, and no test,
   can show that a child which receives `【收敛检查点 …】` converges faster. The
   test-verified guardrails (the 必需 clause, the 汇报 clause, one message per step)
   bound what the reminder is allowed to *say*; they do not measure what it *does*.
+  Watching this needs a before/after step count on comparable delegations — which
+  is exactly what the `step stage: nudged` lines plus the audit rerun would give.
 - **The module-reload boundary from the inside.** What was measured is the
   *symptom* (an activation line without the new fields after replacing the
   package). Whether a row removal and re-insert, or a renamed package directory,
@@ -550,22 +561,38 @@ Everything else in this file is a code-level fact or a unit-test result.
 
 ### Current live state
 
-The live row is `enabled: true`, `budgetTokens: 3000000`, `presets: ['adg']`,
-`stepNudge: true`, `stepTiers: [12, 24, 40]`, `softNudge: true`, `dryRun: true`,
-`hardDryRun: true`. **`dryRun: true` is not the intended end state — it is the only
-safe state while the old module is loaded**, because that build has never heard of
-`hardDryRun` and would arm the cancel the moment `dryRun` went false (see
-[Install and enable](#install-and-enable)). Its activation line, which is the last
-line of the log:
+**Armed for real on 2026-09-25T01:38:47+08:00, after the restart that loaded this
+build.** The live row is `enabled: true`, `budgetTokens: 3000000`,
+`presets: ['adg']`, `stepNudge: true`, `stepTiers: [12, 24, 40]`, `softNudge: true`,
+**`dryRun: false`**, **`hardDryRun: true`** — i.e. the step checkpoints and the token
+wrap-up are injected for real, and the only stage still on paper is `agent.cancel`.
+
+The restart is what made this safe, and the pair of activation lines is the whole
+story. Before the restart, with the new package already on disk:
 
 ```
 2026-09-24T17:12:18.463Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true dryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
 ```
 
-Read the tail of that line against the source of `activationLine`: it stops after
-`softNudge=…`. The three fields this build adds (`stepNudge=`, `stepTiers=`,
-`hardDryRun=`) are the check that the new code is finally loaded — flip `dryRun` to
-`false` only after they appear.
+Read its tail against the source of `activationLine`: it stops after `softNudge=…`.
+That line was written by a reload that had the new `config` and the **old module** —
+which is why `dryRun` had to stay `true` (the old build ignores `hardDryRun`, so
+turning `dryRun` off would have armed its cancel). After the restart, the same row
+was re-applied by the new build:
+
+```
+2026-09-24T17:37:18.586Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=true hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-24T17:38:47.549Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+```
+
+The 17:37 line is the new build proving itself: `stepNudge=`, `stepTiers=[12, 24, 40]`
+and `hardDryRun=` are present, so the step stage exists, `stepTiers` parsed into
+three tiers rather than falling back, and `hardDryRun` parsed as true. The 17:38
+line is the config-only hot reload that followed — **no restart**, which is the
+other half of the contrast above.
+
+What this does *not* prove: that any reminder has been injected. Load-time parsing
+and arming are now measured; the injection still is not (see the previous section).
 
 One sample of the dry-run decisions that produced the table above, including the
 first line this machine ever wrote above a budget and the last line the runaway

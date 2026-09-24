@@ -83,6 +83,11 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 （`activation: inactive (enabled: false) …`），所以"装上了"这件事看得见 ——
 见 [怎么确认它已经武装](#怎么确认它已经武装)。
 
+**本次交付就是按这个顺序做的，三步都有日志为证**：01:37:18 重启后宿主重新加载了包，激活行出现
+`stepNudge=true stepTiers=[12, 24, 40] … hardDryRun=true`（新代码在跑）；01:38:47 只改了
+`dryRun: false`，**没有重启**，新的激活行就生效了（config 热重载）。反过来那次"同时改代码和 config"
+在 17:10:28 短暂真武装过旧硬档两分钟，日志显示窗口内 `hard stage: cancel` 计数没有增加。
+
 ## 专家名册与 Marvis 对应关系
 
 名册分两组：前五个参考腾讯 Marvis 的专项 Agent 划分（PM + File / Computer / App / Browser /
@@ -332,15 +337,18 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 > 被调到」四件事**已经是实测**。后来那一行被切成 `dryRun: true`，用户自己的真实委派又走了几百行 dry-run
 > 判定，**一行 `agent.cancel` 都没发** —— 这既证明比较逻辑按真实账单在跑，也证明 `dryRun` 真的不动作。
 >
-> **② 步数检查点：代码完成、测试与变异验证齐全，但还没有在真机上注入过一条。**
+> **② 步数检查点：代码与测试齐全，2026-09-25 01:37 重启后已确认新代码真的加载、01:38:47 已武装，
+> 但还没有在真机上注入过一条。**
 > 68 个单元测试（mock 的 cordis 上下文与假 agent）、14 个针对性变异全部被测试抓住、
-> 包已部署到真机路径并与仓库逐字节一致；但**运行中的 dsh 仍持有旧模块实例**（见
-> [装完必须重启 dsh](#装完必须重启-dsh)）—— 实测：热重载只重放了 config，激活行仍是旧形状。
-> 所以"第 12 步那条中文提醒真的进了子代理的转写、且它因此收敛了"这件事**一次都没观测过**，
-> 现在只能说到"按测试与变异验证，这条路径的实现是被钉住的"。
+> 包已部署到真机路径并与仓库逐字节一致；重启后的激活行出现了 `stepNudge=true stepTiers=[12, 24, 40]`
+> 与 `hardDryRun=true` 三个新字段，说明**加载与解析都已实测**（为什么必须重启见
+> [装完必须重启 dsh](#装完必须重启-dsh)：热重载只重放 config，不会重新 import 已加载的模块）。
+> 但**"第 12 步那条中文提醒真的进了子代理的转写、且它因此收敛了"仍然一次都没观测过**：
+> 重启之后还没有受管子代理跑到第 12 步，所以日志里 `step stage:` 那两类行都还是 0 行。
+> 现在能说到"实现被测试与变异钉住、加载与武装已实测"。
 >
-> **③ 真实账单侧的 dry-run 观测（这是最有价值的一段）。** 快照时 `logFile` 里已经有 6 个真实
-> `adg` 子代理走过判定（都 ≥ 300 万，其中 2 个 ≥ 1000 万，最大 **48,992,135**），
+> **③ 真实账单侧的 dry-run 观测（这是最有价值的一段）。** 快照时 `logFile` 里已经有 5 个真实
+> `adg` 子代理走过判定（**5 个全部** ≥ 300 万，最大 **48,992,135**），
 > `would cancel` 437 行、`would nudge` 36 行，而 `soft stage: nudged` 与 `settled:` 都是 **0 行**。
 > 这是**旧代码**的校准数据，也正是"默认 300 万落在正常分布内部、不能按它武装硬档"的直接证据
 > （见 [默认预算 300 万是怎么定的](#默认预算-300-万是怎么定的)）。
@@ -612,16 +620,23 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
   `dsh-adg-token-budget: apply failed (…); the token budget is inactive` **就是坏消息**：
   插件降级成 no-op（profile 照常启动，这正是「永不抛」的设计）；同理
   `context has no event API; the token budget is inactive`。
-- **真实触发行为**：`hard stage: cancel` 已经在真机观测到（上面第 3 行）；`dryRun: true` 下
+- **真实触发行为**：`hard stage: cancel` 已经在真机观测到（上面第 3 行）；`dryRun: true` 期间
   硬档与软档的判定行也在真机观测到过（`dry-run soft stage: would nudge …` /
-  `dry-run hard stage: would cancel …`，且没有发出任何 cancel）；**真软档、以及新加的步数检查点
-  都还没有**，见 [现在的证据到哪为止](#现在的证据到哪为止)。
+  `dry-run hard stage: would cancel …`，且没有发出任何 cancel）；**真软档与步数检查点的注入
+  都还没有**——它们在 2026-09-25 01:38:47 起已武装，但还没有受管子代理越过 210 万或走到第 12 步。
+  见 [现在的证据到哪为止](#现在的证据到哪为止)。
 
-**最容易误判的一点：**在 `dryRun: true` 下，"第 12 步提醒"在日志里长得像
+**当前这一行是武装状态**（`enabled: true`、`dryRun: false`、`hardDryRun: true`、
+`stepTiers: [12, 24, 40]`），加载那一半已经实测：重启后 01:37:18 的激活行里出现了
+`stepNudge=true stepTiers=[12, 24, 40] … hardDryRun=true`，说明**新代码真的在跑、
+`stepTiers` 解析成了三档而不是回落默认**。所以现在只要真机日志里出现 `step stage: nudged …`，
+那条提醒就确实被注入了一次 —— 那将是这个功能的第一条端到端证据，目前还没有。
+
+**最容易误判的一点：**"第 12 步提醒"在**校准期**的日志里长得像
 `dry-run step stage: would nudge tier=1/3 step=12 usage=… label=…` ——
 **它证明的是计数到了、不是消息发出去了**。要区分"提醒真的注入"和"只是记账"，
 看行首那三个词：`step stage: nudged …` / `soft stage: nudged …` 是真的注入了，
-带 `dry-run` 前缀的都是没注入的。
+带 `dry-run` 前缀的都是没注入的。武装之后这条判断仍然适用：只有 `nudged` 那一种算注入。
 
 ### 现在的证据到哪为止
 
@@ -639,7 +654,7 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 | `dryRun` 真的不动作 | **实测**：437 行 `would cancel` + 36 行 `would nudge`，**0 次** dry-run 期发出的 `agent.cancel` |
 | `agent.cancel({kind:'parent'})` 会被调用 | **实测**（`hard stage: cancel` 那一支）；**调度者怎么渲染部分输出未观测** |
 | **真软档**（`soft stage: nudged`）在真机上发生 | **未观测** —— 所有软档行都是 dry-run 的，消息从未真正注入 |
-| **步数检查点**（`step stage: nudged`）在真机上发生 | **未观测** —— 新代码已部署、`adg` preset 已挂载校验通过，但运行中的宿主仍持有旧模块实例；这条路径现在的证据只有单元测试与变异验证 |
+| **步数检查点**（`step stage: nudged`）在真机上发生 | **未观测**（**但加载与武装已实测**）：重启后的激活行带三个新字段，证明新代码在跑、`stepTiers: [12, 24, 40]` 解析成三档；只是重启后还没有受管子代理走到第 12 步，所以日志里 `step stage:` 的两类行都是 0 行 |
 | 注入的收尾指令被循环接受并出现在子代理的转写里 | **未观测**（依赖上两条） |
 | `settled: released session state …` / 恢复的子代理被再次提醒 | **未观测** |
 | `adg` preset 改动后能组合 | **实测**（把改好的文件部署到 `.agent-presets/adg/` 之后重跑的那一次）：`resolve('adg')` → `broken` 为空、`standingKeyFor('adg')` → mounted OK、`compositionInventory()` → 34 行 / 10 个 `tool-subagent` 模块行里 **8 行启用** / `tool-subagent-fork` 0 行（行数不变是预期的：这次改的是 persona 文本与政策，不是行的增删） |
