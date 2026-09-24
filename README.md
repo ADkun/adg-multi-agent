@@ -102,6 +102,15 @@ node tools/check-preset.mjs
 
 通过（exit 0）之后重启 dsh 即可生效。
 
+自检还会核对四个 token 预算旋钮的取值与约束（`compaction-basic` 的两个 ratio、
+`tool-result-pruner` 的三段字符数、`tool-web` 的 `fetchMaxOutputChars`），并且会打印一行摘要：
+
+```
+预算：compaction 0.6/0.12 | pruner 4096/2048/768 | fetchMaxOutputChars 24000
+```
+
+依据与实测数字见 [token 成本纪律](#token-成本纪律这些上限是怎么来的)。
+
 ## 设计要点（为什么这么做）
 
 - **刻意删掉了通用的 `subagent` / `subagent_fork` 行。** 子代理会继承父代理的整套
@@ -131,6 +140,90 @@ node tools/check-preset.mjs
 - **有 `pwsh` 的专家一律同时给 `job_list` / `job_output` / `job_kill`。** 工具的指导段落
   会讲后台任务，只给 `pwsh` 不给收集工具会让"后台跑了但取不回来"。
 
+## token 成本纪律（这些上限是怎么来的）
+
+这一节的每个数字都是**实测**的，不是估算。测量基线：32 个 Adg 会话、983 次模型请求。
+
+| 观测量 | 实测值 |
+|---|---|
+| 总 token | **94.1M** = 未缓存输入 8.0M + 输出 0.9M + cache-read **85.1M** |
+| cache-read 占提示 token | **91%** |
+| 输出占总花费 | **1%** |
+| 调度智能体 / 专家 | **55.9M（59%）/ 38.2M（41%）**，22 个子代理 |
+| 每个子代理 | ≈**1.73M** token |
+| 子代理内部工具结果 | `web_fetch` **3.5M 字符 / 369 次**（平均 9,477，被截在 50,000 附近）；`read` 1.68M 字符 / 321 次（平均 5,222）；`grep` 705k 字符 / 171 次 |
+
+**成本驱动因素是「上下文体积 × 步数」**：每一步都要把整段上下文重发一遍，所以 91% 的提示 token
+是 cache-read —— 便宜的单价换不来小体积，体积本身就是账单。
+
+**策略因此只有两条：压上下文体积 + 压步数。**
+
+**刻意没有做的事：**不给任何请求设 `maxTokens`，也不设 `reasoningEffort`。理由是输出只占账单的
+**1%**，压它对账单几乎无影响，却会直接损伤回答质量（被截断、推理不足导致返工，反而增加步数）。
+在这份 composition 里这两类键一律不出现 —— 改预设的人不要"顺手补上"。
+
+刻意没做的第二件事：**没有**在本 preset 里再加一行 `spill-policy`。`spill-policy` 是**宿主plane**
+的行（`dsh-base\cordis.patch.yml`，`maxInlineBytes: 50000`），而 web 组合并没有把它 disabled
+（web-app 的 patch 里 `spill` 零命中），所以它**本来就对 Adg 会话生效**。它注册的是一个
+`{ prepend: true }` 的 `tools/post-execute` 监听器，再加一行就是同一条瀑布上叠第二个监听器 ——
+重复施加没有验证过，id 按树唯一、也不会报错，只会**静默叠加**。而真正的大头 `web_fetch` 已经被
+`tool-web.fetchMaxOutputChars` 直接压住了，所以这一行没有净收益。（另注：`spill-policy` 的
+model-facing 那一路**显式跳过 `read`**，所以它本来也管不到 `read` 那 1.68M 字符。）
+
+### 四个预算旋钮
+
+| 旋钮 | 旧值 | 新值 | 为什么 |
+|---|---|---|---|
+| `compaction-basic.thresholdRatio` | 未设（插件默认 **0.8**） | **0.6** | 窗口用到 60% 就压缩，而不是等到 80%；早压一次，后面每一步都少发一大截 |
+| `compaction-basic.retainRatio` | 未设（插件默认 **0.16**） | **0.12** | 逐字保留的最近上下文从 16% 降到 12%，把省下的额度让给摘要 |
+| `tool-result-pruner.thresholdChars` / `headChars` / `tailChars` | **8192 / 4096 / 1024** | **4096 / 2048 / 768** | 单条工具结果超过 4096 字符就砍中间（留头 2048 + 尾 768）。工具结果里 grep/read 的平均值都在 5k 上下，8192 的阈值等于几乎不裁 |
+| `tool-web.fetchMaxOutputChars` | 未设（插件默认 **200000**） | **24000** | 一次 `web_fetch` 的模型可见正文上限压到 24k；`web_fetch` 是子代理里最大的单一上下文来源（3.5M 字符 / 369 次） |
+| `tool-web.searchMaxResults` / `searchMaxQueries` | 未设（插件默认 **8 / 4**） | **5 / 3** | 一次检索返回的条数与接受的查询数都收窄，减少"搜一堆再逐个读"的冲动 |
+
+约束（写错了插件会在挂载时直接抛错，不是静默生效）：
+
+- 两个 ratio 必须在 `(0, 1]`，且 `retainRatio < thresholdRatio`；
+- pruner 要满足 `headChars + 标记 + tailChars ≤ thresholdChars`（标记本身约 35 字符）；
+- `fetchMaxOutputChars` 必须是正整数；它同时截断"转换的源字符数"和"返回文本"，被截断时会附加一行
+  可见的 `(Content truncated. ...)` 脚注，所以这不是静默丢内容。
+
+这些约束已经被 `tools/check-preset.mjs` 静态挡住（见下面「怎么验证改动」）。
+
+### persona 层的读写/汇报纪律
+
+旋钮只能压单条结果的体积，压不住"读了一堆不需要的东西"和"把整页正文贴回来"。这部分靠 persona：
+
+- **调度智能体**（`persona.prefix` 的「委派预算」一节）：派发前先估算能不能自己答完；同一目标只派一个
+  专家，真正独立才并行且**一次最多 2 个**；委派 prompt 必须自带**读取预算**（可读哪些路径、最多读几个
+  文件、优先 `grep` 定位而非整读、需要片段用 `offset/limit`、同一文件不读第二遍、证据足够立即停止探查）；
+  要求专家交付**有界结论**（结论 + 证据 + 未解决项），不要原始工具输出；不要让两个专家重复核同一件事；
+  够了就直接交付，不要为"确认"再派一个专家；长任务一次派发让专家自己收敛，不要多轮往返。
+  （关键是第 3 条：**专家看不到调度者的上下文，读取预算只能写在 prompt 里。**）
+- **八个专家**：每条 persona 末尾都追加了一行成本纪律 —— 先 `grep` 定位再按需 `read`；用 `offset/limit`
+  分段读，禁止整读大文件；同一文件（或同一 URL）不重复读/抓；工具结果被截断时收窄查询而不是重复重取；
+  证据足够即停止探查；**回给调度者的结论控制在 2000 字符内**（附 `path:line` 或 URL 证据），不要回贴
+  原始工具输出或正文。`agent_search` / `agent_browser` 是联网向的措辞（"优先用搜索摘要定位，只对确需的
+  URL 取正文；同一 URL 不重复抓取"），因为它们没有 `grep`。
+
+### 怎么重新测量
+
+改动前后都要量，否则无法判断旋钮是帮忙还是添乱：
+
+```powershell
+node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
+```
+
+它会把报告写到同目录的 `audit-report.txt`（覆盖上一次）。重点看 `=== sessions by preset ===` 里
+`adg` 那一行的 `input` / `cache` / `output` / `requests`，以及每个子代理的 `toolChars`。
+
+> 为什么有 `audit-run.mjs` 这个副本：原始的 `audit.js` 在 ESM 作用域里用了 `require`，直接跑会报错；
+> `.mjs` 那份是改好的可执行版本。
+
+**测完对比时注意：**上面的基线是**改动之前**的 32 个会话。新值生效后要重新跑一次，用同一口径
+（同样按 preset 分组的 `input + output + cache`）对比，不要拿单次会话的绝对值下结论。
+
+**改这些数字不会立即生效 —— 必须重启 dsh**（见「装完必须重启 dsh」）。
+
 ## 目录结构
 
 ```
@@ -142,15 +235,17 @@ skills/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
 tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
-                        # 通用委派行、调度名册与专家行双向一致
+                        # 通用委派行、调度名册与专家行双向一致，以及四个
+                        # token 预算旋钮的取值与约束
 install.ps1             # Windows 安装脚本
 install.sh              # macOS / Linux 安装脚本
 ```
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，只有两处实质改动：
-  `persona` 增加调度名册与分派规则；`delegation` 组由通用委派行换成专家行。
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是三处：
+  `persona` 增加调度名册、分派规则与委派预算；`delegation` 组由通用委派行换成专家行；
+  `compaction` / `tool-web` 三行加上 token 预算（出厂值见 [token 成本纪律](#token-成本纪律这些上限是怎么来的)）。
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、
   `@deepseek-ai/dsh-skill-filesystem`、`@deepseek-ai/dsh-tool-subagent-control` 等）。
 - 新增/删除/修改智能体后需要重启 dsh 才生效，这是 preset 挂载机制决定的，不是缺陷。

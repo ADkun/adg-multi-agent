@@ -10,7 +10,13 @@
 //      （bash / read_image）与策略越界（workflow / ralph）只给提示 —— 判错只留给
 //      "这次委派必然抛错"的情形；
 //   5. 不存在通用 `subagent` / `subagent_fork` 委派行；
-//   6. 文件顶部调度 persona 的名册与专家行一一对应（双向，不能只加行不改名册）。
+//   6. 文件顶部调度 persona 的名册与专家行一一对应（双向，不能只加行不改名册）；
+//   7. 三个 token 预算旋钮没有被静默改回默认值/改坏：
+//      `compaction-basic` 的 thresholdRatio / retainRatio（必须都在 (0,1]，且
+//      retainRatio < thresholdRatio，否则插件加载时直接抛错）、`tool-result-pruner` 的
+//      thresholdChars / headChars / tailChars（正整数，且 head + tail < threshold，
+//      否则同样抛错）、`tool-web` 的 fetchMaxOutputChars（正整数且 ≤ 200000，
+//      > 60000 只提示）。这三行的依据见 README「token 成本纪律」。
 //
 // 用法：
 //   node tools/check-preset.mjs                                  # 校验仓库里的 preset/
@@ -216,9 +222,123 @@ else {
   }
 }
 
+// ── 7. token 预算旋钮 ──────────────────────────────────────────────────────
+// 这几行都没有 `- id:` 之外的形状要求，所以按 `id` 前缀定位，再取它缩进更深的
+// `key: value` 行作为 config。纯文本扫描，不解析 YAML。
+/** 收集目标行之后缩进更深的 `key: value`（到下一个同级或更浅的 `- ` 行为止）。 */
+function budgetRow(idPrefix) {
+  for (const [index, line] of lines.entries()) {
+    const start = /^(\s*)- id: (\S+)\s*$/.exec(line)
+    if (start === null || !start[2].startsWith(idPrefix)) continue
+    const rowIndent = indentOf(line)
+    const scalars = new Map()
+    let hasConfig = false
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const inner = lines[cursor]
+      if (inner.trim() === '') continue
+      const innerIndent = indentOf(inner)
+      if (innerIndent <= rowIndent) break
+      if (/^\s*- /.test(inner)) break
+      const entry = /^(\s+)([A-Za-z][A-Za-z0-9]*):\s*(\S.*)$/.exec(inner)
+      if (entry === null) continue
+      if (entry[2] === 'config') {
+        hasConfig = true
+        continue
+      }
+      scalars.set(entry[2], entry[3].trim())
+    }
+    return { id: start[2], line: index + 1, scalars, hasConfig }
+  }
+  return undefined
+}
+
+/** 取一个小数：`0.6` / `.6` 都算，其它形状返回 undefined（交由调用方报错）。 */
+function ratioOf(row, key) {
+  const raw = row?.scalars.get(key)
+  if (raw === undefined) return undefined
+  return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(raw) ? Number(raw) : undefined
+}
+
+/** 取一个十进制正整数：`4096` 算，`4_096` / `4.0` / `1e3` 不算（与 YAML 十进制字面量对齐）。 */
+function positiveIntegerOf(row, key) {
+  const raw = row?.scalars.get(key)
+  if (raw === undefined) return undefined
+  return /^\+?\d+$/.test(raw) ? Number(raw) : undefined
+}
+
+/** 该行存在、但一个预算键都没写（说明有人把 config 整段删了，等于回到默认值）。 */
+function noBudget(row, keys) {
+  return row !== undefined && keys.every((key) => !row.scalars.has(key))
+}
+
+const compactionRow = budgetRow('compaction-basic')
+if (compactionRow === undefined) {
+  fail('`compaction` 组里找不到 `compaction-basic` 行：它决定这个 preset 的 agent 会不会压缩上下文')
+} else {
+  const thresholdRatio = ratioOf(compactionRow, 'thresholdRatio')
+  const retainRatio = ratioOf(compactionRow, 'retainRatio')
+  if (thresholdRatio === undefined) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：thresholdRatio 缺失或不是数字（必须落在 (0,1]，如 0.6）`)
+  } else if (!(thresholdRatio > 0 && thresholdRatio <= 1)) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：thresholdRatio ${thresholdRatio} 超出 (0,1]——插件加载时会抛 must be a number in (0, 1]`)
+  }
+  if (retainRatio === undefined) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：retainRatio 缺失或不是数字（必须落在 (0,1]，如 0.12）`)
+  } else if (!(retainRatio > 0 && retainRatio <= 1)) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：retainRatio ${retainRatio} 超出 (0,1]——插件加载时会抛 must be a number in (0, 1]`)
+  }
+  if (thresholdRatio !== undefined && retainRatio !== undefined && retainRatio >= thresholdRatio) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：retainRatio ${retainRatio} 必须小于 thresholdRatio ${thresholdRatio}（否则插件加载时抛 retainRatio must be less than the resolved thresholdRatio）`)
+  }
+  if (noBudget(compactionRow, ['thresholdRatio', 'retainRatio'])) {
+    warn(`第 ${compactionRow.line} 行 ${compactionRow.id}：没有任何预算 config，等于用插件默认值（0.8 / 0.16）——这不是本 preset 的成本口径`)
+  }
+}
+
+const prunerRow = budgetRow('tool-result-pruner')
+if (prunerRow === undefined) {
+  fail('`compaction` 组里找不到 `tool-result-pruner` 行：单条工具结果不会被裁剪，上下文体积会失控')
+} else {
+  const budgets = {}
+  for (const key of ['thresholdChars', 'headChars', 'tailChars']) {
+    const value = positiveIntegerOf(prunerRow, key)
+    if (value === undefined) {
+      fail(`第 ${prunerRow.line} 行 ${prunerRow.id}：${key} 缺失或不是正整数`)
+      continue
+    }
+    if (value <= 0) fail(`第 ${prunerRow.line} 行 ${prunerRow.id}：${key} ${value} 必须为正整数`)
+    budgets[key] = value
+  }
+  const { thresholdChars, headChars, tailChars } = budgets
+  if (thresholdChars !== undefined && headChars !== undefined && tailChars !== undefined && headChars + tailChars >= thresholdChars) {
+    fail(`第 ${prunerRow.line} 行 ${prunerRow.id}：headChars + tailChars (${headChars + tailChars}) 必须小于 thresholdChars ${thresholdChars}——留不出被砍掉的中间段，插件加载时会抛 headChars + marker + tailChars must be at most thresholdChars`)
+  }
+  if (noBudget(prunerRow, ['thresholdChars', 'headChars', 'tailChars'])) {
+    warn(`第 ${prunerRow.line} 行 ${prunerRow.id}：没有任何预算 config，等于用插件默认值（8192 / 4096 / 1024）——这不是本 preset 的成本口径`)
+  }
+}
+
+const webRow = budgetRow('tool-web')
+if (webRow === undefined) {
+  fail('找不到 `tool-web` 行：联网工具的抓取上限就无处声明')
+} else {
+  const fetchMaxOutputChars = positiveIntegerOf(webRow, 'fetchMaxOutputChars')
+  if (fetchMaxOutputChars === undefined) {
+    fail(`第 ${webRow.line} 行 ${webRow.id}：fetchMaxOutputChars 缺失或不是正整数——缺失时 tool-web 用默认 200000，一次抓取就能灌满上下文`)
+  } else if (fetchMaxOutputChars > 200000) {
+    fail(`第 ${webRow.line} 行 ${webRow.id}：fetchMaxOutputChars ${fetchMaxOutputChars} 超过 200000（tool-web 的默认上限，超过它等于放弃这道闸）`)
+  } else if (fetchMaxOutputChars > 60000) {
+    warn(`第 ${webRow.line} 行 ${webRow.id}：fetchMaxOutputChars ${fetchMaxOutputChars} 偏大（> 60000），单次抓取就可能挤掉一大块上下文`)
+  }
+  if (noBudget(webRow, ['fetchMaxOutputChars'])) {
+    warn(`第 ${webRow.line} 行 ${webRow.id}：没有 fetchMaxOutputChars，等于用 tool-web 默认值 200000——这不是本 preset 的成本口径`)
+  }
+}
+
 // ── 报告 ───────────────────────────────────────────────────────────────────
 console.log(`校验对象：${target}`)
 console.log(`专家行 ${rows.length} 个：${rows.map((row) => `${row.toolName ?? row.id}[${row.allow.length}]`).join('  ')}`)
+console.log(`预算：compaction ${compactionRow?.scalars.get('thresholdRatio') ?? '缺失'}/${compactionRow?.scalars.get('retainRatio') ?? '缺失'} | pruner ${prunerRow?.scalars.get('thresholdChars') ?? '缺失'}/${prunerRow?.scalars.get('headChars') ?? '缺失'}/${prunerRow?.scalars.get('tailChars') ?? '缺失'} | fetchMaxOutputChars ${webRow?.scalars.get('fetchMaxOutputChars') ?? '缺失'}`)
 for (const message of warnings) console.log(`WARN  ${message}`)
 for (const message of errors) console.log(`ERROR ${message}`)
 if (errors.length > 0) {
