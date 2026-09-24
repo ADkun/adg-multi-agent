@@ -145,60 +145,71 @@ export const NUDGE_TEXT = [
 ].join('\n')
 
 /**
- * The step-checkpoint bodies, in escalation order.
+ * The built-in step-checkpoint body: a choice, not an order.
  *
- * A configured `stepTiers` list longer than this reuses the last body, which is
- * why the checkpoint ordinal ("第 N 个检查点，共 M 个") is built separately in
- * `stepNudgeText` rather than baked in here.
+ * This is deliberately *not* an instruction to stop. The measured distribution
+ * of delegated children (median 39 steps, but a p10 of 6 and a quarter of them
+ * at 14 or fewer) says most children are shorter than the average — which is
+ * exactly the case for asking the question early. But an early checkpoint can
+ * only be safe if it cannot push a child into under-delivering, so the body
+ * does three things and no more:
  *
- * Every body is written to protect the result, not just to save tokens. Each one
- * tells the child to (a) stop *non-essential* exploration, (b) still do the one
- * remaining action if it is **required** for the delivery, and (c) hand back what
- * it has *not* verified rather than guessing. A checkpoint that only said "stop
- * now" would trade tokens for a worse answer, which is the one trade this
- * feature is not allowed to make.
+ * 1. says outright that it is optional and may be ignored, so continuing costs
+ *    the child nothing;
+ * 2. names both options symmetrically — converge now, or keep working and
+ *    disregard the reminder — and leaves the choice to the task;
+ * 3. asks for one sentence naming the choice, which is the only reason the
+ *    message can change anything at all: it forces a decision the child would
+ *    otherwise not stop to make.
+ *
+ * What it must never do is trade the result for tokens, which is why the
+ * converge branch still asks for what was *not* verified. The suite pins all
+ * three properties, and the wording is overridable through `stepText` for
+ * operators who want to tune it without a new package.
  */
-export const STEP_NUDGE_TEXTS = Object.freeze([
-  [
-    '请先做一次收敛判断，再决定下一步做什么：',
-    '- 已有的证据如果已经足以回答委派任务，就立刻停止探索、直接汇报，不要再做"更完整"的补充检索。',
-    '- 如果还剩**对交付必需**的关键动作没做完，就只做那一个，做完立刻汇报；不要顺手扩大范围。',
-    '- 这条提醒不是让你放弃必要的验证，而是不要为了完整继续加步数 —— 每一步都要重发整段上下文，步数本身就是成本。',
-  ].join('\n'),
+export const STEP_CHOICE_BODY = [
+  '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
+  '- **收敛**：如果现有产出已经能回答委派目标，就收尾汇报——交付了什么、还有哪些部分没有验证。',
+  '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
+  '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
+].join('\n')
 
-  [
-    '你已经超出常规委派规模，现在请收敛：',
-    '- 停止一切非必需的新探索：不新开调查线，不重复读同一文件或同一 URL，不为"再确认一下"重跑命令。',
-    '- 委派要求的核心交付如果已经能给出，就直接汇报；只有当某一步是交付**必需**、而且你已经知道它是哪一步时，才做那一步。',
-    '- 汇报格式：结论 + 每条证据（path:line 或 URL）+ 未解决项 + 你明确没有验证过的部分。',
-  ].join('\n'),
-
-  [
-    '这已经远超常规委派规模，请立即停止探索并汇报：',
-    '- 不要再调用探索类工具（检索、读取、抓取、命令），除非某个已确认必需的动作只差最后一步。',
-    '- 用你手上的证据给出结论。宁可结论不完整，也要明确写出"哪些没验证、卡在哪里"。',
-    '- 汇报格式：结论 + 每条证据（path:line 或 URL）+ 未解决项。',
-  ].join('\n'),
-])
+/**
+ * The sentence the built-in body adds on the last tier only.
+ *
+ * The ladder stops reminding after this one, so a child that keeps going gets
+ * asked to commit to a bound. It is information for the child, not pressure:
+ * there is nothing left to escalate to.
+ */
+export const STEP_LAST_TAIL = [
+  '',
+  '这是本轮的最后一个检查点，后面不会再提醒。如果选择继续，请顺便写一句预计还需要多少步、以及完成标准是什么。',
+].join('\n')
 
 /**
  * Build the Nth convergence reminder.
  *
  * The count is included because a concrete number is what makes the checkpoint
- * actionable ("this is step 24"), and the escalation index picks the body. The
- * builder is pure and total: out-of-contract input falls back to the first body
- * with a zero count instead of throwing inside a live step.
+ * actionable ("this is step 12"), and the ordinal tells the child how many
+ * checkpoints it has passed. The builder is pure and total: out-of-contract
+ * input falls back to the first tier with a zero count instead of throwing
+ * inside a live step.
  *
- * @param {{ tierIndex?: number, tierCount?: number, stepCount?: number }} input - where the checkpoint sits and how many steps the child took.
+ * A `body` replaces the built-in text *entirely*, including the last-tier
+ * sentence — a custom body is the operator's wording, and appending to it would
+ * be editing it.
+ *
+ * @param {{ tierIndex?: number, tierCount?: number, stepCount?: number, body?: string|null }} input - where the checkpoint sits, how many steps the child took, and an optional custom body.
  * @returns {string} the message text.
  */
 export function stepNudgeText(input) {
   const tierIndex = Number.isInteger(input?.tierIndex) && input.tierIndex >= 0 ? input.tierIndex : 0
-  const tierCount = Number.isInteger(input?.tierCount) && input.tierCount >= 1 ? input.tierCount : STEP_NUDGE_TEXTS.length
+  const tierCount = Number.isInteger(input?.tierCount) && input.tierCount >= 1 ? input.tierCount : 1
   const stepCount = typeof input?.stepCount === 'number' && Number.isFinite(input.stepCount)
     ? Math.max(0, Math.round(input.stepCount))
     : 0
-  const body = STEP_NUDGE_TEXTS[Math.min(tierIndex, STEP_NUDGE_TEXTS.length - 1)]
+  const custom = typeof input?.body === 'string' && input.body.trim() !== '' ? input.body : undefined
+  const body = custom ?? (tierIndex >= tierCount - 1 ? STEP_CHOICE_BODY + STEP_LAST_TAIL : STEP_CHOICE_BODY)
   return `【收敛检查点 ${tierIndex + 1}／${tierCount}】调度代理提醒：这是你的第 ${stepCount} 步。\n\n${body}`
 }
 
@@ -516,6 +527,10 @@ export function activationLine(config, strategy) {
     `softNudge=${config.softNudge}`,
     `stepNudge=${config.stepNudge}`,
     `stepTiers=[${config.stepTiers.join(', ')}]`,
+    // A custom body is a wording change with no other visible trace, and a
+    // mistyped `stepText` key would silently fall back to the built-in one. The
+    // marker is one word rather than the text itself: the line stays one line.
+    `stepText=${config.stepText === null ? 'builtin' : 'custom'}`,
     `dryRun=${config.dryRun}`,
     `hardDryRun=${config.hardDryRun}`,
     `logFile=${logFile}`,
@@ -793,7 +808,7 @@ export function apply(ctx, rawConfig) {
             logger.log(`dry-run step stage: would not nudge (softNudge: false, would log once) ${tierSummary}`)
           } else if (!entered) {
             logger.log(`dry-run step stage: would not nudge (decision kind=${kind}) ${tierSummary}`)
-          } else if (buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount })) === undefined) {
+          } else if (buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount, body: config.stepText })) === undefined) {
             logger.log(`dry-run step stage: would not nudge (nudge construction failed) ${tierSummary}`)
           } else {
             logger.log(`dry-run step stage: would nudge ${tierSummary}`)
@@ -830,13 +845,15 @@ export function apply(ctx, rawConfig) {
           logger.log(`step stage (no nudge configured) ${tierSummary}`)
         } else if (delivered) {
           // One reminder per step: this checkpoint rides the token wrap-up that
-          // was just appended, and the tier is consumed because the child has
-          // been told to converge.
+          // was just appended. The tier is consumed even though the checkpoint
+          // text was not sent, because the wrap-up already told the child to
+          // converge — sending a second, softer message on the same step would
+          // spend the same per-step cost to contradict it.
           markTierFired(key, tierIndex)
           logger.log(`step stage: folded into the token wrap-up ${tierSummary}`)
         } else {
           const message = entered
-            ? buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount }))
+            ? buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount, body: config.stepText }))
             : undefined
           if (message === undefined) {
             logger.log(`step stage (no nudge injected: ${entered ? 'nudge construction failed' : `decision kind=${kind}`}) ${tierSummary}`)

@@ -86,11 +86,11 @@
 
 | 看哪里 | 期望看到什么 |
 |---|---|
-| `logFile`（安装脚本写的是 `$DSH_HOME/adg-token-budget.log`） | **加载期就有第一行**：`activation: active createUserMessage=<解析策略> budgetTokens=… softThreshold=… softRatio=… presets=[…] cacheReadWeight=… softNudge=… stepNudge=… stepTiers=[…] dryRun=… hardDryRun=… logFile=…`；`enabled: false` 时写的是 `activation: inactive (enabled: false) …`（同样是"宿主确实加载过"的证据） |
+| `logFile`（安装脚本写的是 `$DSH_HOME/adg-token-budget.log`） | **加载期就有第一行**：`activation: active createUserMessage=<解析策略> budgetTokens=… softThreshold=… softRatio=… presets=[…] cacheReadWeight=… softNudge=… stepNudge=… stepTiers=[…] stepText=builtin\|custom dryRun=… hardDryRun=… logFile=…`；`enabled: false` 时写的是 `activation: inactive (enabled: false) …`（同样是"宿主确实加载过"的证据） |
 | `logFile`（决策行） | 只有**事件**才写：步数检查点（`step stage: nudged tier=… step=…`）、软档（`soft stage: nudged …`）、硬档（`hard stage: cancel …`）、dry-run 判定、`settled: released session state …`、至多一次的 `no budget data: passing through the token stages …`。**普通放行（PASS）一步什么都不写**，所以文件不会膨胀 |
 | 宿主日志（加载期） | `dsh-adg-token-budget: activation: active createUserMessage=…`；**出现** `apply failed (…); the token budget is inactive` 就是降级成 no-op 了 |
 | 宿主日志（第一次决策时，一次） | `dsh-adg-token-budget: first decision: …` |
-| 行为（检查点） | 受管子代理走到第 12/24/40 步时会收到一条 `【收敛检查点 n／N】调度代理提醒：这是你的第 N 步。…`；想最快看到，把 `stepTiers` 临时改成 `[1, 2]` |
+| 行为（检查点） | 受管子代理走到阶梯上的某一步时会收到一条 `【收敛检查点 n／N】调度代理提醒：这是你的第 N 步。…`，正文是一条**可选**提醒（自己选"收敛汇报"还是"继续"）。想最快看到，把 `stepTiers` 临时改成 `[1, 2]`；想连措辞都自己认，用 `stepText` 写一句——**这两件都只是 `config:` 改动，热重载、不用重启** |
 | 行为（硬档） | 用一次**超过预算的委派**（临时把 `budgetTokens` 调小）看：调度者收到的那份结果以 `Partial output before the run ended: …` 结尾 —— 只在 `dryRun: false` **且** `hardDryRun: false` 时才可能发生 |
 
 **本机的实测证据**（`C:\Users\cenqian\.dsh\adg-token-budget.log`，逐字引用）：
@@ -127,12 +127,18 @@
 - **真软档（`soft stage: nudged`）从来没在真机上出现过。** 上面那次唯一的硬停是"从软阈值以下直接跳到硬阈值以上"
   （`usage=7651807` 对 300 万的预算）。之后的软档行**全都是 dry-run 的**，消息从未真正注入过：
   注入的消息有没有被循环接受、有没有出现在子代理的转写里，都**未观测**。
-- **步数检查点连 dry-run 行都没有。** 本次交付的代码是新的，但**运行中的宿主仍持有旧模块实例** ——
+- **步数检查点连 dry-run 行都没有。** 交付的代码是新的，但**运行中的宿主仍持有旧模块实例** ——
   已实测：把包换掉、同时把行指向新 `config` 之后，宿主重新 `apply` 了这一行（新激活行里 `dryRun` 变了），
   但**激活行没有 `stepNudge=` / `stepTiers=` / `hardDryRun=` 三个字段**，说明加载的还是旧代码。
   Node 的 ESM registry 按文件 URL 缓存，URL 没变。**所以：部署代码 → 重启 dsh → 确认激活行出现
-  那三个字段 → 才动 `dryRun`。** 在那之前把 `dryRun` 设成 `false` 是危险的：旧代码不认识
-  `hardDryRun`，会把硬档真武装（本次已经踩到过这个组合，见第 3 节）。
+  那三个字段 → 才动 `dryRun` / `stepTiers`。** 在那之前把 `dryRun` 设成 `false` 是危险的：
+  旧代码不认识 `hardDryRun`，会把硬档真武装（本次已经踩到过这个组合，见第 3 节）。
+  同理，**阶梯也要等重启之后再改**：旧模块把第 3 档之后全部映射到它最硬的那段正文，
+  先改 `stepTiers` 会得到一个"每一步都用最硬措辞提醒"的窗口。
+- **更早更密的阶梯 + 选择式措辞有没有用，完全未观测。** 分布（37 个子代理，中位数 39 步、p10 只有 6）
+  与成本（214 条提醒约占总账单 0.25%）都是实测的；"收到检查点的子代理是否更早收敛"没有证据。
+  量法：`node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"`
+  前后各跑一次，比 p50/p75/p90，不要比均值。
 - **注入的提醒是否真的让子代理收敛得更快**，以及 `settled: released session state …`、
   **调度者怎么渲染部分输出**、**恢复的子代理会不会被再次提醒**，全部未观测。
 - dry-run 的行是**每一步**写一行，所以那个行数是"超预算的步数"，不是"子代理个数"。

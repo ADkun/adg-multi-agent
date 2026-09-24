@@ -17,9 +17,14 @@ on every proposed step of every governed child, on two independent triggers:
 
 | Stage | Trigger | Action |
 | --- | --- | --- |
-| **step** | the child is entering its `stepTiers[n]`-th step | call `next()` first, then append the nth convergence reminder to the returned `{kind:'enter'}` decision's `messages` — at most once per tier per residency epoch |
+| **step** | the child is entering its `stepTiers[n]`-th step | call `next()` first, then append the nth convergence reminder to the returned `{kind:'enter'}` decision's `messages` — at most once per tier per residency epoch. The reminder is an **optional choice** (converge, or continue and disregard it), never a stop order |
 | **soft** | `usage >= budgetTokens * softRatio` | call `next()` first, then append one wrap-up instruction to the returned `{kind:'enter'}` decision's `messages` — at most once per residency epoch |
 | **hard** | `usage >= budgetTokens` | `agent.cancel({kind:'parent'})` **and** return `{kind:'reject'}` — without calling `next()` |
+
+The two reminder stages differ in kind, and the difference is deliberate: the **step**
+checkpoint is early, frequent, and ignorable, because being early and frequent is only
+safe if the child may say "no, I still have work"; the **soft** wrap-up is late,
+one-shot, and directive, because it fires on money already spent.
 
 At most **one** reminder message is appended per step. When the soft stage and a
 step checkpoint fall on the same step the soft wrap-up wins — it is the more
@@ -43,8 +48,9 @@ enter — so a broken projection disables the token stages, not the checkpoints.
 ## The step checkpoints
 
 The step trigger is the one lever a dispatcher cannot pull itself. The dispatcher
-owns the *policy*: its persona tells it to put a convergence target in every
-delegation prompt. But it cannot see how many steps a running child has taken.
+owns the *policy*: its persona tells it to put a convergence scale in every
+delegation prompt (as a reference, explicitly not a hard bound). But it cannot see how
+many steps a running child has taken.
 Polling for it would re-send the dispatcher's own context — the largest in the run
 (59% of the audited `adg` bill) — once per poll, costing far more than the
 reminder saves, and a background child is not observable step-by-step in the
@@ -59,31 +65,66 @@ in the same per-session state as the token flags and is released on
 `subagent/end`, so a resumed child starts a fresh epoch — the same residency rule
 the token soft stage uses.
 
-The default tiers are **12 / 24 / 40**, calibrated against the audited corpus: the
-22 delegated `adg` children in `D:\dsh\.dsh-token-audit\audit-report.txt` averaged
-**23.4** model requests each (range 10..54). The first checkpoint therefore lands
-near half of an average child and only the long tail reaches the third. The point
-is to cut the tail, not to hurry the middle.
+The default ladder is
+**4 / 8 / 12 / 18 / 24 / 32 / 42 / 55 / 72 / 95 / 125 / 165 / 215 / 280** — early and
+dense through step 24, then widening geometrically. It is calibrated against the
+measured *distribution* of delegated children rather than their average, because the
+average was the wrong anchor. Re-running `audit-steps.mjs` over the live session logs
+(37 delegated `adg` sessions, 1,913 child steps) gives:
+
+| statistic | value |
+| --- | --- |
+| min / p10 / p25 | 1 / 6 / 14 |
+| median / mean | **39** / 51.7 |
+| p75 / p90 / max | 61 / 103 / **329** |
+
+So a ladder anchored on the mean asks its first question after a quarter of the
+population has already finished, and 6 of 37 children are done inside 6 steps. With
+this ladder **34 of 37** children see at least one checkpoint, a median child sees 6,
+and the 329-step runaway sees all 14. Two earlier ladders are kept here as the
+comparison that produced this one:
+
+| ladder | children reached | messages injected | child steps after the 1st checkpoint | steps after the last tier |
+| --- | --- | --- | --- | --- |
+| `[12, 24, 40]` | 30/37 | 71 | 79.5% | 872 |
+| `[4, 8, …, 280]` | 34/37 | 214 | 92.6% | 49 |
+
+The literal reminder cost is what makes the denser ladder affordable: each message is
+~180 characters and is re-sent once per later step, so all 214 messages across the
+whole corpus add up to roughly **0.5M token-equivalents** of input against ~205M spent
+by those same children — about 0.25%. The lever is the 92.6% of steps that now run
+*after* a child has been asked whether it is done.
 
 Three details exist specifically so that the checkpoints do not make answers
 worse:
 
-- **Every reminder still permits the work that is required.** Each body tells the
-  child to stop *non-essential* exploration, to still perform the one remaining
-  action if it is **必需** for the delivery, and to report what it has **not**
-  verified rather than guessing. A checkpoint that only said "stop now" would
-  trade tokens for a worse answer, which is the one trade this feature is not
-  allowed to make: the unit test `stepNudgeText escalates, reuses its last body,
-  and is total` pins that every body contains a 必需 clause and a 汇报 clause, so
-  a future edit cannot quietly turn them into "stop".
-- **The escalation is real but bounded.** Three bodies ship; the third is reused
-  for any later tier while the header still reports the child's real ordinal.
-  Each body is ~200–300 characters and is injected at most once per tier per
-  epoch, so a child pays roughly three extra messages in total — a rounding error
-  against the millions a runaway child spends.
+- **Every reminder is a choice, not an order.** The body says outright that it is
+  optional, that it may be **直接无视**, names both branches symmetrically
+  (converge and report — or keep working without trimming the plan), and leaves the
+  decision to the task. The only thing it requires is that the child say which branch
+  it picked. The suite pins each of those clauses
+  (`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is
+  total`), plus the negative: the body must not contain an order to stop exploring.
+  This is the property that makes an early, dense ladder safe. A checkpoint that said
+  "stop now" would trade tokens for a worse answer, which is the one trade this feature
+  is not allowed to make.
+- **The converging branch still has to be honest.** It asks for what was delivered
+  *and what was not verified*, so converging early produces a report with holes named
+  rather than holes hidden.
+- **The bodies do not escalate.** Only the last tier adds a sentence, and that
+  sentence is information (the reminders stop here; if you continue, say how many
+  steps and what "done" means), not mounting pressure. A dense ladder whose messages
+  got firmer every four steps would be a coercion engine; the unit test compares the
+  body across tiers to keep it flat.
 - **`stepNudge: false` turns them off completely**, counting included, and
   restores the token stage's zero-allocation pass-through. The checkpoints are a
   separate switch from `softNudge`, which is the master switch for injection.
+
+The wording is also the part most likely to be tuned, so it is overridable: a
+`stepText` in `config:` replaces the built-in body entirely, and because `config:`
+hot-reloads, a wording change needs neither a new package nor a dsh restart. The
+activation line reports `stepText=builtin` or `stepText=custom`, so a mistyped key is
+visible instead of silent.
 
 The **soft** instruction (in Chinese, because the delegated experts it addresses
 work in Chinese) tells the child that it is near its budget, that it must stop
@@ -166,7 +207,8 @@ default instead of failing the profile load.
 | `cacheReadWeight` | `1` | Multiplier on `cacheReadTokens`, clamped to `[0, 100]`. Fractional values are kept as written. |
 | `softNudge` | `true` | Master switch for injection. `false` makes **both** reminder triggers log once instead of injecting a message (`soft stage (no nudge configured)` / `step stage (no nudge configured)`), and keeps the hard cap. The single log line IS the one-shot action, so it consumes the flag. |
 | `stepNudge` | `true` | Whether the step checkpoints run. `false` disables them completely — no counting, no injection, no per-session allocation for them — leaving the token stages exactly as they were. |
-| `stepTiers` | `[12, 24, 40]` | The step numbers a checkpoint fires on, ascending and de-duplicated. A bare number reads as a one-tier list. At most 16 tiers are honoured. An unusable value (`[]`, `'x'`, `[0]`) falls back to this default rather than silently switching the checkpoints off; use `stepNudge: false` for that. |
+| `stepTiers` | `[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]` | The step numbers a checkpoint fires on, ascending and de-duplicated. A bare number reads as a one-tier list. At most 16 tiers are honoured. An unusable value (`[]`, `'x'`, `[0]`) falls back to this default rather than silently switching the checkpoints off; use `stepNudge: false` for that. Early and dense on purpose: see [The step checkpoints](#the-step-checkpoints) for the distribution this ladder is fitted to and why the average was the wrong anchor. |
+| `stepText` | `null` | Optional wording for a step checkpoint, replacing the built-in body entirely — including the sentence the built-in adds on the last tier. Blank or unusable values fall back to the built-in body rather than leaving the checkpoint wordless; anything over 4000 characters is truncated. This key exists so that tuning the wording is a `config:` edit (hot-reloaded) instead of a new package plus a dsh restart. The activation line reports `stepText=builtin` or `stepText=custom`, which is how a mistyped key becomes visible. |
 | `dryRun` | `false` | Calibration switch. Computes and logs **every** decision it would make — the soft nudge, the step checkpoints and the hard cancel — and takes no action: no message is injected, `agent.cancel` is never called, and the hard stage still delegates through `next()`. It also **consumes no once-per-epoch flag**, so arming the same session afterwards still delivers every reminder. It *does* count steps, because that count is what a checkpoint is calibrated against. |
 | `hardDryRun` | `false` | Calibration switch for the destructive stage only. With `dryRun` off, the hard stage logs `dry-run hard stage: would cancel …` and delegates through, while the reminders are injected for real. This is the "arm the reminders, keep the cancels on paper" setting. Ignored while `dryRun` is on, which already covers every stage. |
 | `logFile` | `null` | Absolute path; when set, the activation line plus one line per decision *event* is appended (see below). A relative path disables file logging with a warning. |
@@ -183,7 +225,7 @@ stays small even for a child that runs hundreds of steps. The complete list is:
 
 | Event | Line |
 | --- | --- |
-| load | `activation: active createUserMessage=<strategy> budgetTokens=… softThreshold=… softRatio=… presets=[…] cacheReadWeight=… softNudge=… stepNudge=… stepTiers=[…] dryRun=… hardDryRun=… logFile=…` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible |
+| load | `activation: active createUserMessage=<strategy> budgetTokens=… softThreshold=… softRatio=… presets=[…] cacheReadWeight=… softNudge=… stepNudge=… stepTiers=[…] stepText=builtin|custom dryRun=… hardDryRun=… logFile=…` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible |
 | load | a registration note (`registration skipped: this context already applied the plugin`, `warning: N registration(s) are already active …`) |
 | soft | `soft stage: nudged …`, `soft stage (no nudge configured) …`, or `soft stage (no nudge injected: …) …` — at most once per residency epoch unless nothing was delivered |
 | step | `step stage: nudged tier=<n>/<N> step=<n> usage=… budget=… label=…`, or `step stage: folded into the token wrap-up …` when the soft stage took the same step, or `step stage (no nudge configured) …`, or `step stage (no nudge injected: …) …` — at most once per tier per residency epoch unless nothing was delivered |
@@ -406,11 +448,13 @@ a `LICENSE` file that actually exists, which `npm pack --dry-run --json` lists.
 3. **The first decision** is echoed once to `ctx.logger.info` as
    `dsh-adg-token-budget: first decision: …`, so the host log shows activity
    without one line per step.
-4. **Behaviour — the checkpoints.** A governed child at step 12 / 24 / 40
-   receives a `【收敛检查点 …】` message it did not get before; the cheapest way to
-   see one is to set `stepTiers: [1, 2]` on a scratch profile, where the first
-   checkpoint lands on the child's first step. `step stage: nudged …` appears in
-   `logFile` at the same moment.
+4. **Behaviour — the checkpoints.** A governed child at any of the `stepTiers`
+   steps receives a `【收敛检查点 …】` message it did not get before, offering the
+   choice between converging and continuing. The cheapest way to see one is to set
+   `stepTiers: [1, 2]` on a scratch profile, where the first checkpoint lands on the
+   child's first step — or to set `stepText` to a sentence you will recognise, which
+   needs no restart at all. `step stage: nudged …` appears in `logFile` at the same
+   moment.
 5. **Behaviour — the token stages.** A governed child that crosses the ratio
    should wrap up and report instead of starting another investigation, and one
    that crosses the budget should come back to the dispatcher as a cancelled run
@@ -472,16 +516,27 @@ That gap in the *load* is now closed — the restart at 2026-09-25T01:37:18 load
 new build (its activation line carries all three new fields) and the row is armed at
 `dryRun: false` + `hardDryRun: true` as of 01:38:47. What remains unobserved is the
 injection itself, because no governed child has run since: **the log still holds 0
-lines of either step-stage kind**. A real `adg` child reaching step 12 will be the
-first honest evidence, and it has not happened yet. See
+lines of either step-stage kind**. A real `adg` child reaching the first tier will be
+the first honest evidence, and it has not happened yet. See
 [Install and enable](#install-and-enable) for the rollout this forces.
+
+The ladder and the wording were both replaced on 2026-09-25 (defaults `[12, 24, 40]`
+with three escalating, directive bodies → `[4, 8, …, 280]` with one optional,
+choice-shaped body). That change is a **code** change, so it needs one more restart
+before any of it is live; the `stepTiers` half arrives as a `config:` edit *after*
+that restart, for the same reason as before — the module currently in memory would
+clamp a 14-entry ladder to its own harshest body.
 
 ### Live calibration data (`dryRun: true`)
 
 The live row was left at `enabled: true` + `dryRun: true` for about three hours
 while real delegations ran through it. As of `2026-09-25T01:1x+08:00` the log held
 479 lines / 64,995 bytes (it keeps growing — these are snapshot counts, not
-constants):
+constants). The per-child step counts quoted in
+[The step checkpoints](#the-step-checkpoints) come from a separate, reproducible run
+of `D:\dsh\.dsh-token-audit\audit-steps.mjs` (a copy of the audit with a distribution
+block appended, writing to `audit-report.steps.txt` so the original baseline is
+untouched).
 
 | Line kind | Count |
 | --- | --- |
@@ -511,10 +566,17 @@ this plugin is configured on this machine:
    and the smallest child still reached 3.36M. Arming `agent.cancel` at this
    budget would truncate ordinary work. Hence `hardDryRun: true`.
 2. **Steps, not tokens, are the lever.** The 48.99M child alone produced 297
-   `would cancel` lines, i.e. roughly **300 proposed steps above the budget**,
-   against an audited corpus average of **23.4 requests per child** (range 10..54).
-   Three checkpoints are a rounding error beside 49M tokens — which is exactly what
+   `would cancel` lines, i.e. roughly **300 proposed steps above the budget**, in a
+   corpus whose 37 measured children have a median of **39** steps and a mean of 51.7.
+   Fourteen checkpoints are a rounding error beside 49M tokens — which is exactly what
    the step stage exists to exploit.
+
+   That same child is also the unit cross-check for this whole section: the audit
+   counts **329** model requests for session `f7ee3039-…`, and the plugin counted
+   ~297 steps above the budget for the same id. Two instruments built on different
+   events agree to within the few steps the child spent below the budget, which is
+   the evidence that the audit's "requests" and the plugin's "entered steps" are the
+   same unit — a claim the ladder's calibration depends on.
 
 Read the counts as a measurement of *your own* traffic, and mind the unit: a
 dry-run line is written **per proposed step**, so `would cancel` counts
@@ -532,16 +594,27 @@ exactly one line.
   stage's *decision logic* is live-measured; its *effect* is not. (The stage is
   armed since 01:38:47, but no governed child has crossed 2,100,000 since.)
 - **Any step checkpoint, armed or dry.** The build that has it is loaded and the
-  row is armed, but no governed child has passed step 12 since the restart, so the
-  log holds **0** lines of either step-stage kind. Until one appears, the evidence
+  row is armed, but no governed child has passed the first tier since the restart, so
+  the log holds **0** lines of either step-stage kind. Until one appears, the evidence
   for this stage is the suite and the mutation pass, nothing more.
+- **Whether an earlier, denser ladder helps or hurts.** The ladder was moved earlier
+  on the argument that most children are far shorter than the average, and the wording
+  was softened to make that safe. Both halves of that trade are **argued, not
+  measured**: what is measured is the distribution the ladder is fitted to (37
+  children) and the fact that a checkpoint costs ~0.25% of the child bill. Whether a
+  child that receives nine checkpoints converges in fewer steps than the same child
+  would have without them is exactly the question the audit rerun below is for.
 - **That an injected reminder changes a child's behaviour.** This is the whole
   point of the feature and it is unmeasured: no line in this file, and no test,
   can show that a child which receives `【收敛检查点 …】` converges faster. The
-  test-verified guardrails (the 必需 clause, the 汇报 clause, one message per step)
+  test-verified guardrails (the choice clauses, one message per step)
   bound what the reminder is allowed to *say*; they do not measure what it *does*.
-  Watching this needs a before/after step count on comparable delegations — which
-  is exactly what the `step stage: nudged` lines plus the audit rerun would give.
+  Watching this needs a before/after step count on comparable delegations: run
+  `node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"`
+  (the audit plus a per-child distribution block) before and after, and compare the
+  quantiles rather than the mean. That script prints
+  `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`, the sorted list, a
+  histogram, and what each candidate tier would have fired on.
 - **The module-reload boundary from the inside.** What was measured is the
   *symptom* (an activation line without the new fields after replacing the
   package). Whether a row removal and re-insert, or a renamed package directory,
@@ -667,18 +740,24 @@ cd D:\dsh\adg-multi-agent\plugin\dsh-adg-token-budget
 node --test test
 ```
 
-**68 tests, 68 passing, 0 failing.** No dependencies beyond `node:test` and
+**71 tests, 71 passing, 0 failing.** No dependencies beyond `node:test` and
 `node:assert`, so the suite runs in a checkout that has no `node_modules` at all.
 They cover: config normalization for every wrong type, including the step
-checkpoints and their fallback/clamp/sort/dedupe rules; the pure decision helpers
-directly (`decide` and `dueStepTier`); the top-level, foreign-preset, and
-absent-preset filters; the out-of-contract depth guard at both the helper and the
+checkpoints and their fallback/clamp/sort/dedupe rules and the `stepText` reader
+(blank/unusable → built-in body, over-long → truncated); the shape of the default
+ladder (early, dense, still reaching the tail, ascending, gaps never zero); the pure
+decision helpers directly (`decide` and `dueStepTier`); the top-level, foreign-preset,
+and absent-preset filters; the out-of-contract depth guard at both the helper and the
 listener level; the below-threshold passthrough and the zero-allocation property
 of `stepNudge: false`; the soft stage's call-`next()`-first ordering,
 single-nudge rule, and downstream-`reject` handling; the once-per-session flag
 being consumed only after delivery; the step checkpoints firing exactly once per
-tier on the tier step, per child, counting only entered steps, escalating through
-their bodies, and logging every branch; the "at most one message per step" rule
+tier on the tier step, per child, counting only entered steps, keeping the body flat
+across tiers, adding its closing sentence only on the last tier, and logging every
+branch; the choice wording itself (optional, may be disregarded, both branches named,
+decision requested, no order to stop exploring); a configured `stepText` reaching the
+child and replacing the built-in body entirely; the activation line reporting
+`stepText=builtin|custom`; the "at most one message per step" rule
 and which trigger wins; `stepNudge: false` and `softNudge: false`; the hard
 stage's single `cancel({kind:'parent'})` and `reject` with no `next()`;
 `hardDryRun` arming the reminders while leaving the cancel dry; missing/broken/
@@ -719,26 +798,37 @@ checkout), one behaviour per copy, followed by the suite:
 | **M4** | let the step checkpoint win over the token wrap-up | 2 |
 | **M5** | make `hardDryRun` cancel anyway | 1 |
 | **M6** | let `stepNudge: false` still count steps | 3 |
-| **M7** | evaluate the tier one step early (off-by-one) | 13 |
+| **M7** | evaluate the tier one step early (off-by-one) | 14 |
 | **M8** | treat every decision as an entry, so rejected steps count | 4 |
 | **M9** | stop sorting the tier list | 1 |
 | **M10** | stop de-duplicating the tier list | 1 |
-| **M11** | always inject the first checkpoint body (no escalation) | 2 |
+| **M11** | drop the closing sentence from the last tier | 2 |
 | **M12** | return `[]` instead of the fallback tiers for unusable input | 4 |
-| **M13** | drop the "必需" (required-work) clause from a checkpoint body | 1 |
+| **M13** | invert the clause that lets a child disregard the reminder | 1 |
 | **M14** | make `dryRun` inject after all | 5 |
+| **M15** | ignore a configured `stepText` and always use the built-in body | 2 |
+| **M16** | stop truncating an over-long `stepText` | 1 |
+| **M17** | report `stepText=builtin` even when a custom body is set | 1 |
 
 The fifteen `D*` rows are the pre-existing table (run under
-`%TEMP%\adg-token-budget-mutations\`); the fourteen `M*` rows are the step
+`%TEMP%\adg-token-budget-mutations\`); the seventeen `M*` rows are the step
 feature's own pass, run under `D:\dsh\.adg-step-mutations\` with
 `node --test --test-isolation=none test`, and **every one of them is caught**.
 
-M13 is the mutation that matters most for this feature's promise: it removes the
-sentence that tells a child to still do the one remaining action it **needs** for
-the delivery. It is caught by exactly one assertion — `stepNudgeText escalates,
-reuses its last body, and is total` checks that every body contains both a 必需
-clause and a 汇报 clause — which is the point: that assertion exists so a future
-edit cannot quietly turn "converge" into "stop".
+M13 is the mutation that matters most for this feature's promise. The earlier
+wording made that promise by permitting the one **必需** action; this wording makes
+it by sanctioning "no" outright, so the mutation now inverts the clause that says the
+reminder may be **直接无视**. If that clause is gone, the message still *names* both
+branches while quietly withdrawing one of them — an order wearing a choice's clothes,
+which is exactly the failure mode a dense early ladder cannot afford. It is caught by
+exactly one assertion (the positive match on that clause, with the negative match
+`doesNotMatch(/立即停止/)` guarding the other direction), which is the point: that
+assertion exists so a future edit cannot turn "converge or continue" into "stop".
+
+M15–M17 cover the `stepText` path, which is new surface with no behaviour other than
+the words that reach the child: dropping the custom body, dropping its length cap, and
+lying about it in the activation line are each caught by exactly the assertion that
+exists for them.
 
 Four mutations from the older table are **not caught**, stated plainly rather than
 buried:

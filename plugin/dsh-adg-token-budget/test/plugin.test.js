@@ -27,10 +27,11 @@ import {
   isDelegatedChild,
   presetIsGoverned,
 } from '../src/budget.js'
-import { DEFAULT_CONFIG, MAX_STEP_TIERS, normalizeConfig } from '../src/config.js'
+import { DEFAULT_CONFIG, MAX_STEP_TEXT_CHARS, MAX_STEP_TIERS, normalizeConfig } from '../src/config.js'
 import {
   NUDGE_TEXT,
-  STEP_NUDGE_TEXTS,
+  STEP_CHOICE_BODY,
+  STEP_LAST_TAIL,
   activationLine,
   apply,
   createNudgeFactory,
@@ -425,9 +426,10 @@ test('normalizeConfig fills every key from defaults for unusable input', () => {
     assert.equal(config.cacheReadWeight, DEFAULT_CONFIG.cacheReadWeight)
     assert.equal(config.softNudge, true)
     assert.equal(config.stepNudge, true)
-    assert.deepEqual(config.stepTiers, [12, 24, 40])
+    assert.deepEqual(config.stepTiers, DEFAULT_CONFIG.stepTiers)
     assert.equal(config.dryRun, false)
     assert.equal(config.hardDryRun, false)
+    assert.equal(config.stepText, null)
     assert.equal(config.logFile, null)
   }
   // A non-positive budget is a typo, not a hair trigger: it falls back to the
@@ -468,7 +470,7 @@ test('normalizeConfig clamps out-of-range numbers', () => {
 test('normalizeConfig reads the step checkpoints and the hard-stage switch', () => {
   const defaults = normalizeConfig({})
   assert.equal(defaults.stepNudge, true)
-  assert.deepEqual(defaults.stepTiers, [12, 24, 40])
+  assert.deepEqual(defaults.stepTiers, DEFAULT_CONFIG.stepTiers)
   assert.equal(defaults.hardDryRun, false)
 
   // A bare number reads as a one-tier list, the way `presets: adg` reads as a
@@ -485,14 +487,45 @@ test('normalizeConfig reads the step checkpoints and the hard-stage switch', () 
   assert.equal(normalizeConfig({ hardDryRun: 1 }).hardDryRun, false)
 })
 
+test('the default ladder is early and dense, and reaches into the tail', () => {
+  const tiers = DEFAULT_CONFIG.stepTiers
+  // Early: a quarter of the measured children finish by step 14, so the first
+  // checkpoint has to be well before that to be a question rather than a
+  // post-mortem.
+  assert.equal(tiers[0], 4)
+  assert.ok(tiers.indexOf(24) !== -1 || tiers.some((tier) => tier <= 24))
+  // Dense where the children actually are: at least four checkpoints by step 24.
+  assert.ok(tiers.filter((tier) => tier <= 24).length >= 4)
+  // ... and still checking the tail, where the multi-million-token children are:
+  // the measured maximum is 329 steps.
+  assert.ok(tiers[tiers.length - 1] >= 280)
+  // Ascending and unique, which the decision helper depends on.
+  for (let index = 1; index < tiers.length; index += 1) assert.ok(tiers[index] > tiers[index - 1])
+  // A checkpoint every step would be noise and cost; the gaps have to stay
+  // meaningful even in the dense head of the ladder.
+  for (let index = 1; index < tiers.length; index += 1) assert.ok(tiers[index] - tiers[index - 1] >= 4)
+})
+
+test('normalizeConfig reads a custom step body and refuses to be left wordless', () => {
+  assert.equal(normalizeConfig({}).stepText, null)
+  assert.equal(normalizeConfig({ stepText: '  自定义  ' }).stepText, '自定义')
+  assert.equal(normalizeConfig({ stepText: '' }).stepText, null)
+  assert.equal(normalizeConfig({ stepText: '   ' }).stepText, null)
+  assert.equal(normalizeConfig({ stepText: 7 }).stepText, null)
+  assert.equal(normalizeConfig({ stepText: null }).stepText, null)
+  // Too long is truncated rather than rejected: it still says what it says.
+  const long = normalizeConfig({ stepText: 'x'.repeat(MAX_STEP_TEXT_CHARS + 500) }).stepText
+  assert.equal(long.length, MAX_STEP_TEXT_CHARS)
+})
+
 test('unusable step tiers fall back to the defaults, not to "off"', () => {
   const junk = [undefined, null, [], 'x', [0], [-1], [Number.NaN], [Number.POSITIVE_INFINITY], ['12'], [{}], [null]]
   for (const stepTiers of junk) {
-    assert.deepEqual(normalizeConfig({ stepTiers }).stepTiers, [12, 24, 40], JSON.stringify(stepTiers))
+    assert.deepEqual(normalizeConfig({ stepTiers }).stepTiers, DEFAULT_CONFIG.stepTiers, JSON.stringify(stepTiers))
   }
   // Turning them off is `stepNudge: false` — a deliberate switch, not a typo the
   // plugin has to guess at.
-  assert.deepEqual(normalizeConfig({ stepNudge: false }).stepTiers, [12, 24, 40])
+  assert.deepEqual(normalizeConfig({ stepNudge: false }).stepTiers, DEFAULT_CONFIG.stepTiers)
 })
 
 test('normalizeConfig bounds how many tiers it will honour', () => {
@@ -705,8 +738,12 @@ test('apply always writes exactly one activation line, enabled or not', (t) => {
   assert.match(enabledLines[0], /^\d{4}-\d{2}-\d{2}T[\d:.]+Z activation: active createUserMessage=\S+/)
   assert.match(
     enabledLines[0],
-    /budgetTokens=3000000 softThreshold=2100000 softRatio=0\.7 presets=\[adg\] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=\[12, 24, 40\] dryRun=false hardDryRun=false logFile=/,
+    /budgetTokens=3000000 softThreshold=2100000 softRatio=0\.7 presets=\[adg\] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=\[/,
   )
+  // The rendered ladder is asserted from the default rather than transcribed, so
+  // a deliberate tier change does not need this test edited to match it.
+  assert.ok(enabledLines[0].includes(`stepTiers=[${DEFAULT_CONFIG.stepTiers.join(', ')}]`), enabledLines[0])
+  assert.match(enabledLines[0], /stepText=builtin dryRun=false hardDryRun=false logFile=/)
   // The same line goes through the host log, so "the host loaded it" is visible
   // without opening the file.
   assert.ok(enabledCtx.infos.some((line) => line.includes('activation: active')), enabledCtx.infos.join(' | '))
@@ -769,9 +806,15 @@ test('activationLine reports the resolved configuration on one line', () => {
   )
   assert.match(line, /^activation: active createUserMessage=module-fallback:web /)
   assert.match(line, /budgetTokens=1000 softThreshold=500 softRatio=0\.5 presets=\[adg\]/)
-  assert.match(line, /stepNudge=true stepTiers=\[5, 9\] dryRun=true hardDryRun=true logFile='D:\\x\.log'$/)
+  assert.match(line, /stepNudge=true stepTiers=\[5, 9\] stepText=builtin dryRun=true hardDryRun=true logFile='D:\\x\.log'$/)
   assert.equal(line.includes('\n'), false)
   assert.match(activationLine(normalizeConfig({ enabled: false }), undefined), /^activation: inactive \(enabled: false\) /)
+  // A custom body is reported as a marker: a mistyped key would otherwise be
+  // invisible except as wording that did not change.
+  assert.match(
+    activationLine(normalizeConfig({ stepText: '自定义' }), undefined),
+    /stepText=custom dryRun=/,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -1144,17 +1187,19 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
   assert.equal(reminder.role, 'user')
   assert.deepEqual(reminder.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
   assert.match(reminder.content[0].text, /^【收敛检查点 1／2】调度代理提醒：这是你的第 2 步。/)
-  assert.ok(reminder.content[0].text.includes(STEP_NUDGE_TEXTS[0]))
+  assert.ok(reminder.content[0].text.includes(STEP_CHOICE_BODY))
+  assert.ok(!reminder.content[0].text.includes(STEP_LAST_TAIL), 'only the last tier adds the closing sentence')
   assert.ok(Object.isFrozen(reminder), 'the injected message must be immutable like a real UserMessage')
 
   // Step 3: the same tier must not fire twice.
   assert.deepEqual((await handler({ agent }, trackedNext())).messages.length, 0)
 
-  // Step 4: tier 2, with the escalated body.
+  // Step 4: tier 2 — the last one, so the closing sentence is appended.
   const fourth = await handler({ agent }, trackedNext())
   assert.equal(fourth.messages.length, 1)
   assert.match(fourth.messages[0].content[0].text, /^【收敛检查点 2／2】调度代理提醒：这是你的第 4 步。/)
-  assert.ok(fourth.messages[0].content[0].text.includes(STEP_NUDGE_TEXTS[1]))
+  assert.ok(fourth.messages[0].content[0].text.includes(STEP_CHOICE_BODY))
+  assert.ok(fourth.messages[0].content[0].text.includes(STEP_LAST_TAIL))
 
   // Step 5: the list is exhausted, so the child is left alone.
   assert.deepEqual((await handler({ agent }, trackedNext())).messages.length, 0)
@@ -1165,6 +1210,26 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
     'step stage: nudged tier=2/2 step=4 usage=10 budget=1000000 label=adg/child-1',
   ])
   assert.deepEqual(entryFields(handler.testState.sessions.get('child-1')), { steps: 5, nudged: false, firedTiers: [0, 1] })
+})
+
+test('a configured stepText is what actually reaches the child', async (t) => {
+  const logFile = createLogFile(t)
+  const ctx = activate(
+    { budgetTokens: 1_000_000, softRatio: 0.9, stepTiers: [2], stepText: '自定义检查点正文：自己决定。', logFile },
+    { sessionProjections: fakeProjections(totalsOf(10)) },
+  )
+  const handler = listenerOf(ctx, 'agent/pre-step')
+  const agent = fakeAdgChild({ headerDepth: 1 })
+  await handler({ agent }, trackedNext())
+  const decision = await handler({ agent }, trackedNext())
+  const text = decision.messages[0].content[0].text
+  assert.ok(text.endsWith('自定义检查点正文：自己决定。'), text)
+  // A custom body replaces the built-in text entirely, closing sentence included.
+  assert.ok(!text.includes(STEP_CHOICE_BODY), text)
+  assert.ok(!text.includes(STEP_LAST_TAIL), text)
+  assert.match(text, /^【收敛检查点 1／1】调度代理提醒：这是你的第 2 步。/)
+  // The log still records the decision, not the wording.
+  assert.match(readLog(logFile), /step stage: nudged tier=1\/1 step=2 /)
 })
 
 test('only an entered step is counted, so a rejected step costs no tier', async () => {
@@ -1308,32 +1373,49 @@ test('softNudge: false logs a due checkpoint once and spends its tier', async (t
   assert.equal(decisionLines(logFile).length, 2)
 })
 
-test('stepNudgeText escalates, reuses its last body, and is total', () => {
-  const first = stepNudgeText({ tierIndex: 0, tierCount: 3, stepCount: 12 })
-  const third = stepNudgeText({ tierIndex: 2, tierCount: 3, stepCount: 40 })
-  assert.match(first, /^【收敛检查点 1／3】调度代理提醒：这是你的第 12 步。/)
-  assert.ok(first.includes(STEP_NUDGE_TEXTS[0]))
-  assert.ok(third.includes(STEP_NUDGE_TEXTS[2]))
-  assert.notEqual(first, third)
+test('stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total', () => {
+  const bodyOf = (text) => text.slice(text.indexOf('\n\n') + 2)
+  const first = stepNudgeText({ tierIndex: 0, tierCount: 3, stepCount: 4 })
+  const last = stepNudgeText({ tierIndex: 2, tierCount: 3, stepCount: 32 })
+  assert.match(first, /^【收敛检查点 1／3】调度代理提醒：这是你的第 4 步。/)
+  assert.equal(bodyOf(first), STEP_CHOICE_BODY)
+  assert.equal(bodyOf(last), STEP_CHOICE_BODY + STEP_LAST_TAIL)
 
-  // Past the supplied bodies the firmest one is reused, and the ordinal still
-  // tells the child where it is in its own escalation.
-  const ninth = stepNudgeText({ tierIndex: 8, tierCount: 9, stepCount: 99 })
-  assert.match(ninth, /^【收敛检查点 9／9】/)
-  assert.ok(ninth.includes(STEP_NUDGE_TEXTS[STEP_NUDGE_TEXTS.length - 1]))
+  // The body does not escalate across tiers. The ladder is dense on purpose, so
+  // the checkpoints must not stack into mounting pressure — only the last one
+  // says anything extra, and that extra is information, not a firmer order.
+  const middle = stepNudgeText({ tierIndex: 1, tierCount: 3, stepCount: 8 })
+  assert.equal(bodyOf(middle), STEP_CHOICE_BODY)
+  assert.match(middle, /^【收敛检查点 2／3】调度代理提醒：这是你的第 8 步。/)
+
+  // A custom body replaces the built-in text entirely, last-tier sentence
+  // included; a blank one falls back instead of leaving the checkpoint silent.
+  const custom = stepNudgeText({ tierIndex: 2, tierCount: 3, stepCount: 32, body: '自定义正文' })
+  assert.ok(custom.endsWith('自定义正文'))
+  assert.ok(!custom.includes(STEP_LAST_TAIL))
+  assert.ok(stepNudgeText({ tierIndex: 0, tierCount: 1, stepCount: 4, body: '   ' }).includes(STEP_CHOICE_BODY))
+  assert.ok(stepNudgeText({ tierIndex: 0, tierCount: 1, stepCount: 4, body: 7 }).includes(STEP_CHOICE_BODY))
 
   // Junk input cannot throw inside a live step.
-  assert.match(stepNudgeText(undefined), /^【收敛检查点 1／3】调度代理提醒：这是你的第 0 步。/)
-  assert.match(stepNudgeText({ tierIndex: -1, tierCount: 0, stepCount: Number.NaN }), /^【收敛检查点 1／3】/)
+  assert.match(stepNudgeText(undefined), /^【收敛检查点 1／1】调度代理提醒：这是你的第 0 步。/)
+  assert.match(stepNudgeText({ tierIndex: -1, tierCount: 0, stepCount: Number.NaN }), /^【收敛检查点 1／1】/)
 
-  // Every body has to protect the result, not only the budget: each one must
-  // still allow the work that is required for the delivery, and each one must
-  // ask for a report. A checkpoint that only said "stop now" would trade tokens
-  // for a worse answer.
-  for (const body of STEP_NUDGE_TEXTS) {
-    assert.match(body, /必需/, body)
-    assert.match(body, /汇报/, body)
-  }
+  // The wording is the behaviour, so the suite pins it. Each property exists
+  // because the alternative is the trade this feature is not allowed to make:
+  // an early, frequent checkpoint that pushes a child into under-delivering.
+  assert.match(STEP_CHOICE_BODY, /可选/)
+  assert.match(STEP_CHOICE_BODY, /不是停止指令/)
+  assert.match(STEP_CHOICE_BODY, /直接无视这条提醒/)
+  assert.match(STEP_CHOICE_BODY, /收敛/)
+  assert.match(STEP_CHOICE_BODY, /继续/)
+  assert.match(STEP_CHOICE_BODY, /由任务本身决定/)
+  assert.match(STEP_CHOICE_BODY, /没有验证/)
+  assert.match(STEP_CHOICE_BODY, /用一句话说明你的选择/)
+  // It must not read as an order to stop exploring: "继续" has to be a real
+  // option a child can take without penalty.
+  assert.doesNotMatch(STEP_CHOICE_BODY, /立即停止/)
+  assert.doesNotMatch(STEP_CHOICE_BODY, /不要再调用探索类工具/)
+  assert.doesNotMatch(STEP_CHOICE_BODY, /请立即停止探索并汇报/)
 })
 
 // ---------------------------------------------------------------------------

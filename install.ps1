@@ -56,11 +56,13 @@ if (-not (Test-Path -LiteralPath $patchFile)) {
     $head = @()
     if ($lines.Count -gt 1) { $head = $lines[0..($lines.Count - 2)] }
     $row = @(
-      '# token 预算守卫 + 步数收敛检查点：限制 Adg 专家子代理的累计 token，并在第 12/24/40 步各注入一次收敛提醒。',
+      '# token 预算守卫 + 步数收敛检查点：限制 Adg 专家子代理的累计 token，并按 4/8/12/…/280 的阶梯注入可选收敛提醒。',
+      '# 提醒是"自己选：收敛汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。',
       '# enabled: false 表示已挂载但不动作。改 config: 热重载立即生效；但换过 src\ 里的代码之后必须重启 dsh',
-      '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块；旧代码不认识 hardDryRun）。',
+      '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块；旧代码不认识 hardDryRun 与 stepText）。',
       '# 推荐上线顺序：enabled: true + dryRun: true 校准 → dryRun: false + hardDryRun: true（只武装提醒）',
       '# → 等 would cancel 的行与真实节省都看明白了，再考虑 hardDryRun: false。',
+      '# 想调措辞：写 stepText（config: 改动，热重载、不用重启）；激活行会写 stepText=builtin|custom。',
       '- insert:',
       '    - id: adg-token-budget',
       "      name: 'dsh-adg-token-budget'",
@@ -72,7 +74,7 @@ if (-not (Test-Path -LiteralPath $patchFile)) {
       '        cacheReadWeight: 1',
       '        softNudge: true',
       '        stepNudge: true',
-      '        stepTiers: [12, 24, 40]',
+      '        stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]',
       '        hardDryRun: true',
       "        logFile: '$(Join-Path $root 'adg-token-budget.log')'"
     )

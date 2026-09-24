@@ -20,6 +20,15 @@
  */
 export const MAX_STEP_TIERS = 16
 
+/**
+ * The longest custom `stepText` the plugin will inject.
+ *
+ * The body rides in every later request of that child, so an accidentally huge
+ * template is a per-step cost, not a one-off. Four thousand characters is far
+ * past any reminder that could still be read as a reminder.
+ */
+export const MAX_STEP_TEXT_CHARS = 4_000
+
 /** Every option with its default, as one frozen reference object. */
 export const DEFAULT_CONFIG = Object.freeze({
   /** Master switch; `false` makes `apply` register nothing at all. */
@@ -48,8 +57,26 @@ export const DEFAULT_CONFIG = Object.freeze({
   /**
    * The step numbers a checkpoint fires on, ascending. An entered step is
    * counted as the child's Nth step, and a tier of N fires on that step.
+   *
+   * Early and dense on purpose. The measured child distribution (37 delegated
+   * sessions) is min=1 p10=6 p25=14 median=39 p75=61 p90=103 max=329: most
+   * delegations are far shorter than the mean, so a ladder anchored on the
+   * average asks the question too late. These fire every 4–6 steps through step
+   * 24, then widen geometrically so a runaway keeps getting checked without
+   * every long child being interrupted on every step. A reminder costs a few
+   * dozen tokens per later step, which is why frequency is affordable here.
    */
-  stepTiers: Object.freeze([12, 24, 40]),
+  stepTiers: Object.freeze([4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]),
+  /**
+   * The wording of a step checkpoint, overriding the built-in body.
+   *
+   * `null` (the default) uses the built-in choice body. This exists because the
+   * wording is the part that gets tuned: it lives in `config:`, so a wording
+   * change hot-reloads with the row instead of needing a new package and a dsh
+   * restart. A configured body replaces the built-in one entirely, including
+   * the extra sentence the built-in adds on the last tier.
+   */
+  stepText: null,
   /**
    * Calibration switch: compute and log every decision, but take no action —
    * no message is injected and no `agent.cancel` is issued. The step is
@@ -151,6 +178,24 @@ function readNames(value, fallback) {
 }
 
 /**
+ * Read a custom step-checkpoint body.
+ *
+ * `undefined` (absent, or not a string, or blank after trimming) means "use the
+ * built-in body", which is the safe direction: a mistyped value must not leave
+ * the checkpoint silently wordless. Anything longer than
+ * `MAX_STEP_TEXT_CHARS` is truncated rather than rejected, because a body that
+ * is merely too long still says what it says.
+ *
+ * @param value - the raw value.
+ * @returns {string|null} the body to inject, or `null` for the built-in one.
+ */
+function readStepText(value) {
+  const text = readText(value)
+  if (text === undefined) return null
+  return text.length > MAX_STEP_TEXT_CHARS ? text.slice(0, MAX_STEP_TEXT_CHARS) : text
+}
+
+/**
  * Read the step-checkpoint tiers.
  *
  * A bare number reads as a one-tier list, the way `presets: adg` reads as a
@@ -204,6 +249,8 @@ export function normalizeConfig(raw) {
     softNudge: readBoolean(input.softNudge, DEFAULT_CONFIG.softNudge),
     stepNudge: readBoolean(input.stepNudge, DEFAULT_CONFIG.stepNudge),
     stepTiers: readStepTiers(input.stepTiers, DEFAULT_CONFIG.stepTiers),
+    // `null` (and any unusable value) means "use the built-in body".
+    stepText: readStepText(input.stepText),
     dryRun: readBoolean(input.dryRun, DEFAULT_CONFIG.dryRun),
     hardDryRun: readBoolean(input.hardDryRun, DEFAULT_CONFIG.hardDryRun),
     // `null` (and any unusable value) means "no file logging".

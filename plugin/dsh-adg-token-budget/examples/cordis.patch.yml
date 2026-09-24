@@ -64,10 +64,28 @@
         # The step numbers the checkpoints fire on, ascending. A bare number
         # (`stepTiers: 24`) reads as a one-tier list. Anything unusable falls back
         # to this default; use `stepNudge: false` to switch them off on purpose.
-        # Calibration for 12/24/40: the audited corpus averaged 23.4 model
-        # requests per delegated child (range 10..54), so the first checkpoint
-        # lands near half of an average child and the third only in the tail.
-        # stepTiers: [12, 24, 40]
+        # Calibration: the measured DISTRIBUTION of 37 delegated children is
+        # min 1 / p10 6 / p25 14 / median 39 / mean 51.7 / p75 61 / p90 103 / max
+        # 329 steps, so a ladder anchored on the average asks too late — a quarter
+        # of the population is already finished by step 14. This default is
+        # therefore early and dense through step 24 (every 4-6 steps), then widens
+        # geometrically. 34 of 37 children see at least one; a median child sees 6.
+        # A reminder costs a few dozen tokens per later step, which is why
+        # frequency is affordable: all 214 messages over that corpus are ~0.25% of
+        # what those children spend.
+        # stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]
+        #
+        # Optional wording for a step checkpoint, replacing the built-in body
+        # entirely (including the sentence the built-in adds on the last tier).
+        # Blank or unusable values fall back to the built-in body rather than
+        # leaving the checkpoint wordless; over 4000 characters is truncated.
+        # The built-in body is a CHOICE, not an order — it says it is optional and
+        # may be disregarded, names both branches (converge and report, or keep
+        # working without trimming the plan), and asks the child to say which it
+        # picked. An early, dense ladder is only safe because it can be ignored.
+        # This key lives in `config:`, so changing the wording hot-reloads with
+        # the row instead of needing a new package and a dsh restart.
+        # stepText: null
         #
         # Calibration switch. true computes and logs every decision it would
         # make (soft nudge, step checkpoints and hard cancel) but takes no
