@@ -1,0 +1,60 @@
+# Ready-to-paste patch entry for dsh-adg-token-budget.
+#
+# Put this in ONE of:
+#   $DSH_HOME/profiles/<profile>/cordis.patch.yml   -> that profile only
+#   $DSH_HOME/cordis.patch.yml                      -> every profile on this machine
+#
+# A profile with `patchReload: live` (the shipped `web` profile) picks the change
+# up without a restart. `enabled: false` ships on purpose: install the plugin
+# and flip this to `true` deliberately, in one step you can undo.
+#
+# Every key under `config:` is optional; the commented values are the defaults.
+
+- insert:
+    - id: adg-token-budget
+      name: 'dsh-adg-token-budget'
+      config:
+        enabled: false                   # master switch; false registers nothing at all
+        #
+        # Which delegated children this plugin governs. A child counts as
+        # delegated when its session header records delegationDepth > 0 (or its
+        # runtime AgentOptions.subagentDepth does). Both are put through
+        # Number.isSafeInteger(value) && value >= 0 first, so '1' (a string) is
+        # depth 0, not 1. A child whose header has no agentPreset is NOT
+        # governed — the plugin fails open there on purpose.
+        # presets: ['adg']
+        #
+        # Cumulative budget per child agent session. Cumulative means the whole
+        # session log: uncachedInputTokens + outputTokens
+        #   + cacheReadTokens * cacheReadWeight + cacheWriteTokens.
+        # Measured on the audit corpus: average child 1.73M, largest audited
+        # child 5.22M, heaviest observed implementation delegation 7.65M — so
+        # 3000000 already cancels ~5 of 22 audited children. Calibrate with
+        # dryRun before arming.
+        # budgetTokens: 3000000
+        #
+        # Soft stage threshold, as a fraction of budgetTokens in [0, 1].
+        # At/above it the child is told to stop exploring and report now.
+        # softRatio: 0.7
+        #
+        # Multiplier on cacheReadTokens. `1` counts every cached read as a full
+        # token (the strictest, and the default); `0` ignores cached reads
+        # entirely; a fraction discounts them.
+        # cacheReadWeight: 1
+        #
+        # Whether the soft stage injects the wrap-up instruction into the step.
+        # false = log the soft stage only, and keep the hard cap.
+        # softNudge: true
+        #
+        # Calibration switch. true computes and logs every decision it would
+        # make (soft nudge and hard cancel) but takes no action: nothing is
+        # injected, agent.cancel is never called, the hard stage still delegates
+        # through next(), and the once-per-nudge flag is not consumed — so
+        # arming afterwards still nudges. Recommended first step.
+        # dryRun: false
+        #
+        # Append the load-time activation line plus one line per decision EVENT
+        # here (soft nudge, hard stop, dry-run decision, settle, no-data note).
+        # A step that passes through writes nothing. Absolute path, or null for
+        # no file logging. Each line is prefixed with an ISO-8601 timestamp.
+        # logFile: 'D:\dsh-adg-token-budget.log'

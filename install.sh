@@ -33,7 +33,7 @@ plugin_src="$here/plugin/dsh-adg-token-budget"
 plugin_dest="$root/profiles/node_modules/dsh-adg-token-budget"
 rm -rf "$plugin_dest"
 mkdir -p "$plugin_dest"
-cp -R "$plugin_src/package.json" "$plugin_src/src" "$plugin_src/README.md" "$plugin_src/examples" "$plugin_dest/"
+cp -R "$plugin_src/package.json" "$plugin_src/src" "$plugin_src/README.md" "$plugin_src/examples" "$plugin_src/LICENSE" "$plugin_dest/"
 
 # 挂载行写进 web profile 自己的 patch 层（热重载），不动机器级的 $root/cordis.patch.yml：
 # 机器级那一层套在每个 profile 上（web / headless / sdk / 自建），而这个插件只对 adg preset 的
@@ -80,4 +80,4 @@ echo "（已挂载的 preset 不会因文件变化重新组合，不重启看不
 echo "（插件行是另一回事：web profile 的 cordis.patch.yml 热重载，改 enabled 立即生效、不用重启；"
 echo "  但插件只在 enabled: true 时才注册监听器，装好不等于已武装，见 README。）"
 echo ""
-echo "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 4 项（package.json/src/README.md/examples）；挂载行 -> $patch_note；preset 改动必须重启 dsh 才生效，插件行热重载、不用重启。"
+echo "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patch_note；preset 改动必须重启 dsh 才生效，插件行热重载、不用重启。"

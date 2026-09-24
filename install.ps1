@@ -28,7 +28,7 @@ $pluginSrc = Join-Path $here 'plugin\dsh-adg-token-budget'
 $pluginDest = Join-Path $root 'profiles\node_modules\dsh-adg-token-budget'
 if (Test-Path -LiteralPath $pluginDest) { Remove-Item -LiteralPath $pluginDest -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pluginDest | Out-Null
-foreach ($item in 'package.json', 'src', 'README.md', 'examples') {
+foreach ($item in 'package.json', 'src', 'README.md', 'examples', 'LICENSE') {
   Copy-Item -LiteralPath (Join-Path $pluginSrc $item) -Destination $pluginDest -Recurse -Force
 }
 
@@ -87,4 +87,4 @@ Write-Host "（已挂载的 preset 不会因文件变化重新组合，不重启
 Write-Host "（插件行是另一回事：web profile 的 cordis.patch.yml 热重载，改 enabled 立即生效、不用重启；"
 Write-Host "  但插件只在 enabled: true 时才注册监听器，装好不等于已武装，见 README。）"
 Write-Host ""
-Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 4 项（package.json/src/README.md/examples）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效，插件行热重载、不用重启。"
+Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效，插件行热重载、不用重启。"
