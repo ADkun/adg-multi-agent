@@ -39,9 +39,12 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 5. **跑自检**：在仓库里 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过）；
    改的是**已安装**的那一份就传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
    它会检查行尾/末尾换行/BOM、专家行字段齐全、toolName 唯一且形如 `agent_<name>`、
-   `allow` 里只有已注册的工具名、没有通用委派行、调度名册与专家行双向一致，以及四个 token 预算
-   旋钮的取值与约束（`compaction-basic` 的两个 ratio、`tool-result-pruner` 的三段字符数、
-   `tool-web` 的 `fetchMaxOutputChars`），并打印一行 `预算：...` 摘要。
+   `allow` 里只有已注册的工具名、没有通用委派行、调度名册与专家行双向一致，以及三组 token 预算
+   旋钮（共 5 个键）的取值、结构与约束（`compaction-basic` 的两个 ratio、`tool-result-pruner` 的
+   三段字符数、`tool-web` 的 `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries`），
+   并打印 `预算：...` 与 `裁剪后实际吐出：...` 两行摘要。注意它是**逐行文本扫描器，不是 YAML
+   解析器**：它保证这些硬约束在文本上没被破坏，但证明不了文件能被 YAML 解析、也证明不了插件
+   真的挂载 —— 那要按下面「校验与生效」做一次真实挂载。
 6. 写入 preset 目录可能在工作区之外，若被沙箱拒绝，按提示升级重试同一条命令一次即可。
 
 ## 校验与生效（重要，别承诺错）
@@ -84,8 +87,8 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   并附 `path:line` 或 URL 证据，不要回贴原始工具输出或正文）。复制现有专家行时**把这行一起复制**，
   不要漏掉；对**没有 `grep`** 的专家（如纯联网的 `agent_search`）按它的工具改措辞，别让它引用自己没有的
   工具。依据（94.1M token 里 cache-read 占 91%、输出只占 1% 的实测）见 README「token 成本纪律」。
-- **不要抬任何预算旋钮。** `compaction-basic` 的 `thresholdRatio` / `retainRatio`、
-  `tool-result-pruner` 的 `thresholdChars` / `headChars` / `tailChars`、`tool-web` 的
+- **不要抬任何预算旋钮。** 三组预算旋钮共 5 个键：`compaction-basic` 的 `thresholdRatio` /
+  `retainRatio`、`tool-result-pruner` 的 `thresholdChars` / `headChars` / `tailChars`、`tool-web` 的
   `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries` 都是压上下文体积的闸门，
   加一个智能体**不需要**动它们。抬高的前提是**用户明确要求**，并且抬高前后各跑一次
   `node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"` 做对比
@@ -93,7 +96,10 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   输出只占账单 1%，压它只损伤质量；`reasoningEffort` 在手工声明的路由上会让每次委派直接报
   `UNSUPPORTED_REASONING_EFFORT`。也不要给专家行加 `maxDepth`：它是"经这一行创建的子代理深度上限"，
   写 `0` 会让**每一次** `agent_*` 委派以 `subagent depth 1 exceeds maxDepth 0` 失败。
-  改完跑 `node tools/check-preset.mjs` —— 它会核对这四个旋钮的取值与约束。
+  改完跑 `node tools/check-preset.mjs` —— 这 5 个键的取值在自检里是**逐个钉住**的
+  （`tools/check-preset.mjs` 的 `EXPECTED_BUDGET`）：偏离期望值就 ERROR，连"改回插件默认值"
+  和"挪到一个看着还行的中间值"都算偏离。真要改，就在同一个提交里改 `EXPECTED_BUDGET`、
+  重跑上面的审计，并让用户确认。
 
 ## 本技能从哪来
 

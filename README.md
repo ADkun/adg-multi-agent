@@ -102,11 +102,13 @@ node tools/check-preset.mjs
 
 通过（exit 0）之后重启 dsh 即可生效。
 
-自检还会核对四个 token 预算旋钮的取值与约束（`compaction-basic` 的两个 ratio、
-`tool-result-pruner` 的三段字符数、`tool-web` 的 `fetchMaxOutputChars`），并且会打印一行摘要：
+自检还会核对三组 token 预算旋钮（共 5 个键）的取值与约束（`compaction-basic` 的两个 ratio、
+`tool-result-pruner` 的三段字符数、`tool-web` 的 `fetchMaxOutputChars` / `searchMaxResults` /
+`searchMaxQueries`），并且会打印一行摘要：
 
 ```
-预算：compaction 0.6/0.12 | pruner 4096/2048/768 | fetchMaxOutputChars 24000
+预算：compaction 0.6/0.12 | pruner 4096/2048/768 | fetchMaxOutputChars 24000/5/3
+裁剪后实际吐出：head 2048 + 标记 39 + tail 768 = 2855，threshold 4096
 ```
 
 依据与实测数字见 [token 成本纪律](#token-成本纪律这些上限是怎么来的)。
@@ -146,12 +148,24 @@ node tools/check-preset.mjs
 
 | 观测量 | 实测值 |
 |---|---|
-| 总 token | **94.1M** = 未缓存输入 8.0M + 输出 0.9M + cache-read **85.1M** |
+| 总 token | **94.1M** = 未缓存输入 8.0M + 输出 0.9M + cache-read **85.1M**（**下界**：见下） |
 | cache-read 占提示 token | **91%** |
 | 输出占总花费 | **1%** |
 | 调度智能体 / 专家 | **55.9M（59%）/ 38.2M（41%）**，22 个子代理 |
 | 每个子代理 | ≈**1.73M** token |
 | 子代理内部工具结果 | `web_fetch` **3.5M 字符 / 369 次**（平均 9,477，被截在 50,000 附近）；`read` 1.68M 字符 / 321 次（平均 5,222）；`grep` 705k 字符 / 171 次 |
+
+**这三个数字的口径要一起看，否则会读错：**
+
+- **94.1M 是下界，不是全量。** `cacheWriteTokens` 在**全部 1183 个**已记录的 usage 对象里
+  **都不存在**，所以 cache-write 只能记成 0 —— 它的含义是「provider 没上报」，**不是**「没有
+  cache 写入」。真实账单只会比 94.1M 更高。
+- **语料是活的。** 审计脚本跑的同时会话日志还在增长，报告里的计数是**某一刻的快照**，
+  两次跑出来的数字不会完全一致；对比时看比例与量级，别抠绝对值。
+- **报告内部有约 20,000 token（0.02%）的口径差。** `=== sessions by preset ===` 里 `adg`
+  那一行的**分组总计**，与 `main + sub`（`origin` 为 `user` / `subagent`）**拆分之和**对不齐：
+  有少数行既不是 `user` 也不是 `subagent` 来源，拆分口径没有覆盖它们。量级可忽略，
+  但引用数字时要说明用的是哪个口径。
 
 **成本驱动因素是「上下文体积 × 步数」**：每一步都要把整段上下文重发一遍，所以 91% 的提示 token
 是 cache-read —— 便宜的单价换不来小体积，体积本身就是账单。
@@ -170,7 +184,7 @@ node tools/check-preset.mjs
 `tool-web.fetchMaxOutputChars` 直接压住了，所以这一行没有净收益。（另注：`spill-policy` 的
 model-facing 那一路**显式跳过 `read`**，所以它本来也管不到 `read` 那 1.68M 字符。）
 
-### 四个预算旋钮
+### 三组预算旋钮（共 5 个键）
 
 | 旋钮 | 旧值 | 新值 | 为什么 |
 |---|---|---|---|
@@ -183,11 +197,40 @@ model-facing 那一路**显式跳过 `read`**，所以它本来也管不到 `rea
 约束（写错了插件会在挂载时直接抛错，不是静默生效）：
 
 - 两个 ratio 必须在 `(0, 1]`，且 `retainRatio < thresholdRatio`；
-- pruner 要满足 `headChars + 标记 + tailChars ≤ thresholdChars`（标记本身约 35 字符）；
-- `fetchMaxOutputChars` 必须是正整数；它同时截断"转换的源字符数"和"返回文本"，被截断时会附加一行
-  可见的 `(Content truncated. ...)` 脚注，所以这不是静默丢内容。
+- pruner 要满足 `headChars + 标记 + tailChars ≤ thresholdChars` —— 标记就是
+  `@deepseek-ai/dsh-compaction-tool-result-pruner` 里的 `PRUNE_MARKER`
+  （`"\n\n[... tool result middle pruned ...]\n\n"`），长度正是 **39 字符**
+  （自检里的常量 `PRUNER_MARKER_CHARS = 39`）；只看 `head + tail` 会漏掉这 39 个字符；
+- `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries` 都必须是**正整数**
+  （`tool-web` 用同一个 `assertPositiveInteger` 校验 `searchMaxResults`、`searchMaxQueries`、
+  `fetchTimeoutMs`、`searchTimeoutMs`、`fetchMaxOutputChars` 五个键），
+  且 `fetchMaxOutputChars` 不得超过插件默认上限 200000；它同时截断"转换的源字符数"和
+  "返回文本"，被截断时会附加一行可见的 `(Content truncated. ...)` 脚注，所以这不是静默丢内容。
 
-这些约束已经被 `tools/check-preset.mjs` 静态挡住（见下面「怎么验证改动」）。
+**这 5 个键的取值本身也是约束：**自检把它们**逐个钉住**（`tools/check-preset.mjs` 顶部的
+`EXPECTED_BUDGET`），任何偏差 —— 包括"改回插件默认值 0.8/0.16、8192/4096/1024、200000/8/4"
+和"挪到一个我觉得还行、但不是本口径的中间值" —— 都会 ERROR。要改就在同一个提交里改
+`EXPECTED_BUDGET` 并重跑 token 审计。
+
+### 自检到底静态挡住了什么（别把它的覆盖范围想大）
+
+`tools/check-preset.mjs` 静态挡住的是这几类（运行它的方式见「怎么加一个智能体」与
+「给 AI 的安装指令」第 5 步）：
+
+- 两个 ratio 的**取值区间** `(0,1]` 与**先后次序** `retainRatio < thresholdRatio`；
+- pruner 的**带标记算术** `headChars + 39 + tailChars ≤ thresholdChars`，以及三个数都是正整数；
+- `fetchMaxOutputChars` / `searchMaxResults` / `searchMaxQueries` 都是正整数；
+- **取值被钉住**（`EXPECTED_BUDGET`，含 `fetchMaxOutputChars > 60000` 的额外 WARN）；
+- 预算行的**结构**：`name:` 必须是那个包名、不能 `disabled: true`、同一个 id 不能出现两次、
+  每个预算键必须**直挂**在该行的 `config:` 下（不能嵌更深、也不能提到与 `name:` 同级）、
+  `config:` 里不能有插件不认识的键（插件自己的 `validateKeys` 遇到未知名会直接抛错）。
+
+**但要说清它的边界：这个自检是逐行文本扫描器，不是 YAML 解析器。** 它证明不了整份文件能被
+YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 1}`、制表符缩进等，它都看不出来），
+也证明不了插件**真的挂载**：包能不能解析、行有没有被 `disabled`/条件表达式关掉、服务有没有发布
+到全局 realm，这些只有重启后按「给 AI 的安装指令」里那套 `resolve('adg')` /
+`standingKeyFor('adg')` / `compositionInventory()` 做一次**真实挂载**才能证明。
+换句话说：自检通过 = "这些硬约束在文本上没被破坏"，**不等于** "运行期一定按这个口径生效"。
 
 ### persona 层的读写/汇报纪律
 
@@ -235,8 +278,8 @@ skills/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
 tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
-                        # 通用委派行、调度名册与专家行双向一致，以及四个
-                        # token 预算旋钮的取值与约束
+                        # 通用委派行、调度名册与专家行双向一致，以及三组
+                        # token 预算旋钮（共 5 个键）的取值、结构与约束
 install.ps1             # Windows 安装脚本
 install.sh              # macOS / Linux 安装脚本
 ```
@@ -272,6 +315,8 @@ install.sh              # macOS / Linux 安装脚本
      `agent-reviewer`，且**没有** `tool-subagent`、`tool-subagent-fork` 行。
    - 也可以直接 `node tools/check-preset.mjs` 做静态自检（零依赖，exit 0 表示通过）；
      校验已安装的那一份时传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
+     注意它只是**文本扫描器**：exit 0 不等于"文件能解析、插件已挂载"，
+     所以上面两条真实挂载的检查不能省（`resolve` / `standingKeyFor` 才是运行期证据）。
 6. 明确告诉用户：**必须重启 dsh**，之后在新建对话里选择「Adg 多智能体模式」。
 7. 如果用户还需要在**创造模式**里说「给 Adg 加一个智能体」被识别，确认第 3 步的技能已就位——
    `<dshHome>/skills` 是 `dsh-skill-filesystem` 的用户技能根（rank 400），两种模式都会扫描且热加载。
