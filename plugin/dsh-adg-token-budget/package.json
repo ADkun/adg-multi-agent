@@ -1,7 +1,7 @@
 {
   "name": "dsh-adg-token-budget",
   "version": "0.1.0",
-  "description": "DSH plugin: a two-stage cumulative token budget for delegated child agents of the 'adg' agent preset — a soft wrap-up nudge at a ratio of the budget, then a hard cancel at the budget.",
+  "description": "DSH plugin: step checkpoints plus a two-stage cumulative token budget for delegated child agents of the 'adg' agent preset — a dispatcher-attributed convergence reminder at chosen step counts, a soft wrap-up nudge at a ratio of the budget, and a hard cancel at the budget.",
   "keywords": [
     "dsh",
     "deepseek-harness",

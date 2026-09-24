@@ -634,7 +634,7 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 | `createUserMessage` 的五个解析锚点都解析到同一份模块 | **实测**（详见插件自己的 README） |
 | 行能被 dsh 加载、不报 fatal | **实测**：`activation: inactive (enabled: false)` 就是宿主加载成功后写的 |
 | `agent/pre-step` 真的走到这个监听器 | **实测**：真机 `hard stage: cancel …`，以及几百行 dry-run 判定 |
-| `sessionProjections.stateOf(…, 'tokenUsage')` 在真实子代理上返回预期的 `totals` | **实测**：`usage=7651807`、`usage=9824410` 都是真实累计值 |
+| `sessionProjections.stateOf(…, 'tokenUsage')` 在真实子代理上返回预期的 `totals` | **实测**：`usage=7651807`、`usage=9824410`、`usage=48992135` 都是真实累计值 |
 | 两档阈值的比较按真实账单在跑 | **实测**：`would nudge` 最早出现在 2,128,454（软阈值 2,100,000）、`would cancel` 最早出现在 3,014,252（硬阈值 3,000,000） |
 | `dryRun` 真的不动作 | **实测**：437 行 `would cancel` + 36 行 `would nudge`，**0 次** dry-run 期发出的 `agent.cancel` |
 | `agent.cancel({kind:'parent'})` 会被调用 | **实测**（`hard stage: cancel` 那一支）；**调度者怎么渲染部分输出未观测** |
