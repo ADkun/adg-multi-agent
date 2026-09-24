@@ -16,14 +16,24 @@
 
 配套技能 **`adg-add-agent`**：让你在**任何模式**（包括创造模式）下说一句「给 Adg 加一个智能体」就能新增专家。
 
+配套插件 **`dsh-adg-token-budget`**（第二层）：给委派出去的子代理加一条**累计 token 的硬上限** ——
+软档提醒它收尾，硬档直接取消并把它已经查到的结论交回调度者。默认 **300 万/子代理**，
+安装时先挂 `enabled: false`（不动作），确认无误再改成 `true`。见
+[第二层：子代理 token 预算的硬兜底](#第二层子代理-token-预算的硬兜底插件-dsh-adg-token-budget)。
+
 ## 安装
 
-装到两个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根）：
+装到三个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根）：
 
 | 仓库里的路径 | 安装到 |
 |---|---|
 | `preset/`（两个文件） | `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
+| `plugin/dsh-adg-token-budget/` 的 `package.json` / `src/` / `README.md` / `examples/` | `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`（**真拷贝**，`test/` 不进部署） |
+
+安装脚本还会往 `${DSH_HOME:-~/.dsh}/profiles/web/cordis.patch.yml` 补一行挂载（默认
+`enabled: false`，先备份成 `cordis.patch.yml.bak-adg-token-budget`）—— 插件那一层是什么、
+怎么开、怎么确认已武装见 [第二层：子代理 token 预算的硬兜底](#第二层子代理-token-预算的硬兜底插件-dsh-adg-token-budget)。
 
 ### 方式 A：把仓库地址交给 AI（推荐）
 
@@ -48,6 +58,11 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 composition 的行改掉，`compositionInventory()` 仍然返回旧行。所以安装完必须重启 dsh，
 重启后在新建对话里选择「Adg 多智能体模式」。
 （在重启之前，Adg 模式会用旧组合运行，不要拿它做验证。）
+
+**token 预算插件那一行不受这条约束**：它挂在 `profiles/web/cordis.patch.yml` 这个**热重载**的
+层上，改它的 `config:` 立即生效、不用重启（这是 preset 挂载机制与 patch 层的区别，不是例外）。
+但要注意 `enabled: false` 时插件**什么都不注册、什么都不写**，"装上了"这件事在日志里看不见 ——
+见 [怎么确认它已经武装](#怎么确认它已经武装)。
 
 ## 专家名册与 Marvis 对应关系
 
@@ -215,7 +230,7 @@ model-facing 那一路**显式跳过 `read`**，所以它本来也管不到 `rea
 ### 自检到底静态挡住了什么（别把它的覆盖范围想大）
 
 `tools/check-preset.mjs` 静态挡住的是这几类（运行它的方式见「怎么加一个智能体」与
-「给 AI 的安装指令」第 5 步）：
+「给 AI 的安装指令」第 7 步）：
 
 - 两个 ratio 的**取值区间** `(0,1]` 与**先后次序** `retainRatio < thresholdRatio`；
 - pruner 的**带标记算术** `headChars + 39 + tailChars ≤ thresholdChars`，以及三个数都是正整数；
@@ -267,6 +282,204 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 
 **改这些数字不会立即生效 —— 必须重启 dsh**（见「装完必须重启 dsh」）。
 
+## 第二层：子代理 token 预算的硬兜底（插件 `dsh-adg-token-budget`）
+
+上一节的 5 个旋钮压的是**上下文体积与单条结果的体积**，它们管不到「一个子代理一共烧了多少」。
+这一层补上那个总量上限：一个 **host-plane 的 cordis 插件**，挂在 `agent/pre-step` 上，
+按**子代理会话的累计用量**判两档。
+
+> **先说状态：这个插件的运行期行为还没有在真实 dsh 里观测过。**
+> 目前只有两类证据：36 个单元测试（跑在 mock 的 cordis 上下文与假 agent 上），以及从
+> **模拟的部署位置**把它 import 起来（模块解析、`package.json` 形状、`createUserMessage` 的四个解析锚点）。
+> **它没被观察过跑在一个真正启动的 dsh 里** —— 行有没有被加载、`agent/pre-step` 会不会真的走到这个监听器、
+> 子代理被硬停时调度者拿到什么，都还是**设计意图**，不是实测。确认方式与证据边界见
+> [怎么确认它已经武装](#怎么确认它已经武装) 与 [现在的证据到哪为止](#现在的证据到哪为止)。
+
+### 两档
+
+| 档 | 触发（累计用量） | 动作 |
+|---|---|---|
+| **软** | ≥ `budgetTokens × softRatio`（默认 **210 万** = 300 万 × 0.7） | 这一步照常放行（先调 `next()`），然后往这一步的消息里**追加一条收尾指令**：立刻停止探索、不要再开新的调查线、用已有证据汇报结论，并**明说哪些还没验证** |
+| **硬** | ≥ `budgetTokens`（默认 **300 万**） | `agent.cancel({ kind: 'parent' })` **并且**返回 `{ kind: 'reject' }`（**不调 `next()`**）。子代理以「取消」收场，但**它的部分结论会回到调度者** —— 委派工具会把结果附成 `Partial output before the run ended: …`；被硬停丢掉的是它没做完的计划，不是它已经查到的结论 |
+
+两个阈值都是**闭区间**（正好等于阈值就触发）。软提醒**每个子代理会话最多一次**。
+
+累计口径（插件自己算，不依赖 provider 报的账单字段）：
+
+```
+未缓存输入 + 输出 + cacheRead × cacheReadWeight + cacheWrite
+```
+
+读的是 `ctx.get('sessionProjections')` 的 `stateOf(session, 'tokenUsage')`，其 `totals` 是**整个会话日志**的累计值。
+
+只对**被委派的子代理**且 preset 命中的会话生效，三个条件按顺序判：
+
+1. `enabled` 为真；
+2. `delegationDepthOf(agent) > 0` —— 取 `session.header.delegationDepth` 与运行时 `subagentDepth` 的较大值
+   （**header 是权威且单调的**：被恢复的子代理带着全新的 options 回来，只看 `subagentDepth` 会让它当成顶层会话）。
+   顶层会话（深度 0）**永远不动**，尤其不会动调度智能体；
+3. `session.header.agentPreset` 命中 `presets`。**header 里没有 `agentPreset` 的子代理也不动** ——
+   这里**故意 fail-open**：猜错会砍掉它本来没被指向的会话。
+
+投影服务缺失、或 `tokenUsage` 读不出可用值时，这一步**原样放行**（这件事最多记一次日志）。
+**「没有预算数据」不等于「没有预算」。**
+
+### 默认预算 300 万是怎么定的
+
+对着 [token 成本纪律](#token-成本纪律这些上限是怎么来的) 那套审计口径看（同一份 `audit-report.txt` 快照，
+32 个 Adg 会话 / 983 次请求）：
+
+| 观测量 | 实测值 |
+|---|---|
+| 每个子代理会话平均 | ≈**1.73M**（`avg tokens per subagent adg session: total(input+output+cache)=1734486`） |
+| 22 个子代理会话合计 | **38.2M**（`subInput` 2,729,782 + `subOut` 351,534 + `subCache` 35,077,376） |
+| 快照里最贵的单个子代理会话 | **5.22M**（`in` 228,433 + `out` 42,094 + `cache` 4,947,456 = 5,217,983） |
+| 最贵的调度者会话（对照） | 38.4M（3,686,879 + 364,731 + 34,336,896） |
+
+**300 万落在「平均值 1.73M」与「最贵的一个 5.22M」之间**：正常的一次委派烧不到它，
+但快照里最贵的那一类委派**会被它砍掉**。也就是说这一层防的是**尾部**（一次跑飞能顶掉一整天的额度），
+不是「谁都不会被砍」—— 想只提醒不砍，就把 `budgetTokens` 抬高。
+（报告里那张 top 15 表按 `in+out` 排序、只列了 13 个子代理会话，所以「最贵 5.22M」是**下界**；
+另外 `cacheWriteTokens` 在全部 1183 个 usage 对象里都不存在，累计口径里的 cache-write 恒为 0 ——
+这是「provider 没上报」，不是「没有 cache 写入」。）
+实测发现正常委派被误砍时，先调 `budgetTokens`：`cacheReadWeight` 是唯一能改变「同一份账单算出的累计值」的键，
+`softRatio` 只决定软档在哪提醒。
+
+### 全部配置键与默认值
+
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `enabled` | `true`（**本仓库装进去的那一行是 `false`**） | 总开关。`false` 时 `apply` 直接返回：**一个监听器都不注册、一行日志都不写** |
+| `presets` | `['adg']` | 管哪些 preset 的子代理。裸字符串 `presets: adg`（YAML 标量的读法）等于单元素列表 |
+| `budgetTokens` | `3000000` | 每个子代理会话的累计预算。非正数或不可用值**回落到默认**（「停掉每个子代理的第一步」绝不是打错值的意思） |
+| `softRatio` | `0.7` | 软阈值占预算的比例，夹到 `[0, 1]`；`1` 等于关掉软档 |
+| `cacheReadWeight` | `1` | 乘在 `cacheReadTokens` 上的权重，夹到 `[0, 100]`，小数保留原样。`1` = 缓存读取按整份计（最严）；`0` = 完全不计 |
+| `softNudge` | `true` | `false` 时软档只记日志、不注入收尾指令，**硬档照旧** |
+| `logFile` | `null` | 绝对路径；设了就每条决策追加一行。**相对路径会被关掉文件日志并告警** |
+
+插件**不导出 cordis `Config` schema**：它自己手写归一化，所以打错的值回落到默认，而不是让 profile 加载失败。
+默认值也在 `plugin/dsh-adg-token-budget/examples/cordis.patch.yml` 里以注释形式列了一遍。
+
+### 挂载行放在哪、为什么不放机器级
+
+安装脚本写的是 `${DSH_HOME:-~/.dsh}/profiles/web/cordis.patch.yml` —— **web profile 自己的 patch 层**，
+不是机器级的 `${DSH_HOME:-~/.dsh}/cordis.patch.yml`。两条理由：
+
+- 机器级那一层（`dsh-windows-notifier` 就住在那里）**套在本机每一个 profile 上**：web、headless、sdk、
+  自建 profile 都会去 import 这个包。而插件只对 `adg` preset 的**子代理**生效，装到机器级等于让每个
+  profile 都多背一个包；装到 `web` 则爆炸半径就是你现在正在用、随时能重启的那一个 profile。
+- `web` 是 `patchReload: live`，所以**改 config 立即生效、不用重启** —— 这正是「先挂 `enabled: false`、
+  确认无误再改 `true`」这种两步操作能成立的前提（机器级那层同样热重载，但它的爆炸半径是全部 profile）。
+
+要改成全机生效：把同一行（`examples/cordis.patch.yml`）搬进 `${DSH_HOME:-~/.dsh}/cordis.patch.yml`。
+
+### 为什么装在 `profiles/node_modules`（而不是链到仓库）
+
+部署目标是 `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`，即**所有 profile 共享的模块解析根**
+（本机的 `dsh-windows-notifier` 也在同一位置）。这不是「看起来方便」，是 dsh 自己的解析机制：
+
+- 启动时 `ctx.baseUrl` 被设成**启动配置所在目录**（`@deepseek-ai/dsh-app-boot/lib/index.js:1529`），
+  web profile 的配置文件就在 `profiles/web/`（同目录还有 `cordis.patch.yml` / `package.json`）；
+- patch 行里的裸包名从这个 base 走 Node 的常规 `node_modules` 父级上溯
+  （`dsh-app-boot/lib/index.js:1322-1332` 的 `import()`），所以从 `profiles/web/` 上溯正好经过
+  `profiles/node_modules/`；
+- 同一份文件里写着这个共享根的作用：`$DSH_HOME/profiles/node_modules` 通过**「Node 的常规父级上溯」**
+  提供安装依赖闭包（`dsh-app-boot/lib/index.js:305-308`、`645-660`），一份拷贝服务所有 profile。
+- **真拷贝，不是 junction/symlink。** 部署后的插件独立于仓库：删掉、挪走、重命名这个仓库都不会让 dsh
+  启动失败（链过去就会）。而且 dsh 启动时的 fallback 修复只把**符号链接**当成自己拥有的条目
+  （`ownedPackageNames`，`dsh-app-boot/lib/index.js:460-466`），所以 `profiles/node_modules/` 下的普通目录
+  **不会被那次修复清掉** —— `dsh-windows-notifier` 就是实录：它在那里是普通目录，不是 junction。
+
+安装脚本**先删目标目录再拷**，所以重复执行是干净覆盖，不会留下上一个版本的残留文件。
+
+### 怎么开
+
+```yaml
+# ${DSH_HOME:-~/.dsh}/profiles/web/cordis.patch.yml
+      config:
+        enabled: true      # ← 只改这一行
+```
+
+改完**立即生效、不用重启**（这个文件是 `patchReload: live`）。但插件模块只在行被激活时才 import，
+所以「生效」的下一条证据在日志里（见下）。想小范围试：把 `budgetTokens` 调到 `20000`、
+`softRatio` 调到 `0.05`，两档都能在一两次委派里撞到。
+
+### 怎么关
+
+三种，按「关得有多彻底」排：
+
+1. **`enabled: false`** —— 插件自己的开关，`apply` 直接返回：不注册监听器、不写日志。**推荐**，
+   这也正是安装脚本写进去的默认值。
+2. **`disabled: true`**（loader 层字段，写在 `- id: adg-token-budget` 那一行同级）或**整行删掉**：连包都不 import。
+3. **还原备份** `…/profiles/web/cordis.patch.yml.bak-adg-token-budget`（安装脚本改文件前会写这份）。
+
+部署出来的插件目录本身不影响启动（没有行指向它就不会被 import）；想清干净就删
+`${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`。
+
+### 怎么确认它已经武装
+
+**插件不写「已加载」行。** 这一点必须先说清，否则会拿一个空日志当「没生效」：
+
+- **`enabled: false` 时**：`apply` 在注册任何东西之前就返回，**不注册监听器、不写任何日志**
+  （宿主日志与 `logFile` 都是空的）。「装上了」这件事本身**看不见**。
+- **`enabled: true` 时**，加载期能看到的证据是**宿主日志里的告警**（不是 `logFile`）：
+  - 正常：`dsh-adg-token-budget: createUserMessage resolved via the "…" anchor` —— 只说明消息构造走通了；
+  - `apply` 里抛了：`dsh-adg-token-budget: apply failed (…); the token budget is inactive`
+    —— **看到这句就是坏消息**：插件降级成 no-op（profile 照常启动，这正是「永不抛」的设计）；
+  - 上下文没有事件 API：`dsh-adg-token-budget: context has no event API; the token budget is inactive`。
+- **`logFile`**（安装脚本写进去的是 `${DSH_HOME:-~/.dsh}/adg-token-budget.log`；插件自己的默认值是
+  `null`，即完全不写文件）**只记决策行**，一行一条，ISO-8601 时间戳开头：
+
+  ```
+  2026-09-24T13:10:56.025Z soft stage: nudged usage=750 budget=1000 label=adg/child-1
+  2026-09-24T13:12:04.881Z hard stage: cancel usage=3120448 budget=3000000 label=adg/child-7
+  2026-09-24T13:12:05.002Z settled: released session state label=child-7
+  ```
+
+  也就是说：**`enabled: true` 之后这个文件仍然是空的，直到某个受管子代理真的越过软阈值**才出现第一行
+  （软提醒每个子代理会话最多一次，所以这文件不会膨胀）。第一行决策出现时，同一条内容也会以
+  `… token budget active (nudge via …); first decision: …` 的形式进一次宿主日志。
+- **真实触发行为得用一次「超过预算的委派」来观察**：把 `budgetTokens` 临时调小（例如 `20000`），让一个专家
+  正常干活，然后看 (a) `logFile` 里出现 `soft stage: nudged`，(b) 调度者收到的那份结果是不是以
+  `Partial output before the run ended: …` 结尾。**单元测试只覆盖决策逻辑本身**，换不来这一条证据。
+
+> **待办：**给 `enabled: true` 补一行**加载时的激活日志**（让「已武装」在 `logFile` 里直接可见）
+> 是紧随其后的一步改动，做完会更新本节。在那之前，上面那几条宿主告警就是加载期的全部信号。
+
+### 现在的证据到哪为止
+
+哪些是实测、哪些是设计意图，与上一节一个口径 —— 不写没量过的结论：
+
+| 事项 | 证据 |
+|---|---|
+| 决策逻辑（配置归一化、两档判定、筛选条件、状态释放） | **单元测试 36 个**：`cd plugin/dsh-adg-token-budget && node --test test`，只依赖 `node:test` / `node:assert`（checkout 里没有 `node_modules` 也能跑） |
+| `package.json` 形状、ESM 可 import | 从**模拟的部署位置**（`…/profiles/node_modules/dsh-adg-token-budget/src/plugin.js`）import 起来验过 |
+| `createUserMessage` 的四个解析锚点都解析到同一份模块 | **实测**（详见插件自己的 README） |
+| 行能被 dsh 加载、不报 fatal | **未观测**（要装 + 重启一次才知道） |
+| `agent/pre-step` 真的走到这个监听器 | **未观测**（监听器注册成 `{global: true}` 就是为了不让 scope 过滤把它丢掉，但没在真机上看过） |
+| `sessionProjections.stateOf(…, 'tokenUsage')` 在真实子代理上返回预期的 `totals` | **未观测** |
+| `agent.cancel({kind:'parent'})` 落到哪里、调度者怎么渲染部分输出 | **未观测** |
+| 注入的收尾指令被循环接受并出现在子代理的转写里 | **未观测** |
+
+### 安全设计（为什么它坏了也拖不垮 GUI）
+
+这不是代码风格偏好，是 cordis 的硬约束：**`apply` 抛出去、又没有声明 schema，就是 fiber 失败，
+dsh 把加载失败的行报成 fatal 启动错误**；更糟的是对一个**没挂载的服务**写死 `static inject`，
+那条 entry 会永远停在 `pending`，同样是 fatal。所以这个插件的写法是：
+
+- **`apply` 永不抛。** 整个函数体包在 try 里，任何失败都走 `ctx.logger?.warn` 并降级成 no-op。
+- **每个事件处理器都包了 try。** 预算逻辑里的 bug 只会被抓住、记一次日志、然后 `return next()` ——
+  它没法中断谁的回合。
+- **没有 `static inject`。** `ctx.get('sessionProjections')` 在处理器里**惰性**读；服务不在就原样放行。
+- **没有静态 import 任何 `@deepseek-ai/*`。** 插件是以普通目录部署在 `profiles/node_modules/` 下的，
+  需要什么就在**调用时**用 `createRequire` 解析，解析失败也都可存活（必要时回落到本地构造函数）。
+- **没有顶层副作用**，没有 `process.exit`，没有网络，除了配置的 `logFile` 不写任何文件。
+- **状态有界**：每会话状态放在按 `agent.id` 索引的 `Map` 里，只在软档真的提醒过时才建条目，
+  `subagent/end` 时释放，`ctx.effect` 的 disposer 再整体清一次。
+
+**不导出 `Config` schema** 也是安全设计的一部分（理由见本节开头那段 cordis 约束）：有 schema 的话，
+一个打错的值就会让整个 profile 加载失败。
+
 ## 目录结构
 
 ```
@@ -276,12 +489,21 @@ preset/
 skills/
   adg-add-agent/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
+plugin/
+  dsh-adg-token-budget/ # host-plane 插件：子代理累计 token 的两档硬兜底
+    package.json        # 部署单元：ESM 包，无运行期依赖
+    src/                # config.js（归一化）/ budget.js（纯判定）/ plugin.js（注册监听器）
+    examples/
+      cordis.patch.yml  # 可直接贴进 profile patch 层的挂载行（默认值都注释在里）
+    README.md           # 插件自己的说明：口径、筛选、安全设计、验证方式
+    INSTALL.md          # 部署/启用/确认/回滚的操作清单（仓库文档，不进部署）
+    test/               # 单元测试（node --test），**不进部署**
 tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # token 预算旋钮（共 5 个键）的取值、结构与约束
-install.ps1             # Windows 安装脚本
-install.sh              # macOS / Linux 安装脚本
+install.ps1             # Windows 安装脚本（preset + 技能 + 插件 + 挂载行）
+install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 ```
 
 ## 兼容性
@@ -292,8 +514,13 @@ install.sh              # macOS / Linux 安装脚本
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、
   `@deepseek-ai/dsh-skill-filesystem`、`@deepseek-ai/dsh-tool-subagent-control` 等）。
 - 新增/删除/修改智能体后需要重启 dsh 才生效，这是 preset 挂载机制决定的，不是缺陷。
+- **token 预算插件是另一条链路**：它是 host-plane 的单半边行（没有浏览器半边），挂在 `web` profile 的
+  patch 层上，`config:` 改动热重载、不用重启；部署出来的是 `profiles/node_modules/` 下的**真拷贝**，
+  所以仓库被删/被挪都不影响已经装好的 dsh。它依赖宿主本来就有的 `sessionProjections` 与 `agent/pre-step`，
+  这两样缺失时它自己降级成 no-op（见 [安全设计](#安全设计为什么它坏了也拖不垮-gui)）。
 - **`install.ps1` 带 UTF-8 BOM，是有意的，不要去掉。** Windows PowerShell 5.1 在没有 BOM 时
   会按系统 ANSI 代码页读取脚本，中文会变成乱码并直接解析失败（本仓库已实测复现并修复）。
+  这条同样适用于任何新写的、含中文的 `.ps1`。
 
 ## 给 AI 的安装指令
 
@@ -304,9 +531,25 @@ install.sh              # macOS / Linux 安装脚本
    → `${DSH_HOME:-~/.dsh}/.agent-presets/adg/`
 3. 复制 `<tempdir>/skills/adg-add-agent/SKILL.md`
    → `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md`
-4. 目标目录通常在工作区之外，写入会被沙箱拒绝一次；按提示用 `sandbox_permissions`
+4. **部署 token 预算插件**：把 `<tempdir>/plugin/dsh-adg-token-budget/` 里的
+   `package.json`、`src/`、`README.md`、`examples/` 复制到
+   `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`。
+   **`test/` 不要拷**；**先删目标目录再拷**（重复执行要干净覆盖）；**真拷贝，不要建 junction/symlink**
+   （部署出来的插件必须独立于仓库，否则仓库一删/一挪 dsh 就启动失败）。
+   目标目录是**所有 profile 共享的模块解析根**，理由见
+   [为什么装在 `profiles/node_modules`](#为什么装在-profilesnode_modules而不是链到仓库)。
+5. **补挂载行**：目标 `<dshHome>/profiles/web/cordis.patch.yml`（`<dshHome>` = `${DSH_HOME:-~/.dsh}`）。
+   - 先备份成 `cordis.patch.yml.bak-adg-token-budget`，并**在输出里说明**；
+   - 文件里**已经出现 `dsh-adg-token-budget`** → 什么都别改，只报告「挂载行已存在」（第 4 步的复制照做）；
+   - 末行**不是恰好 `[]`** → **不要猜**：放弃这次编辑，明确告诉用户「请手工把
+     `plugin/dsh-adg-token-budget/examples/cordis.patch.yml` 里的行贴进去」，第 4 步的复制照旧完成；
+   - 否则：保留原有注释头，把 `[]` 这一行换成一条 `insert:` 行（形状照 `examples/cordis.patch.yml`），
+     **`enabled: false`**（先挂上不动作，确认无误再改 `true`），`logFile` 写成 `<dshHome>` 的
+     **真实绝对路径**拼 `/adg-token-budget.log`（写成单引号 YAML 字符串）。写文件用**不带 BOM 的 UTF-8**。
+   - 最后告诉用户：**这一行热重载，改 `config:` 不用重启；但 `enabled: false` 时插件什么日志都不写。**
+6. 目标目录通常在工作区之外，写入会被沙箱拒绝一次；按提示用 `sandbox_permissions`
    升级重试同一条命令（用户会在界面上批准）。
-5. 校验：挂一个注入 `agentPresets` 的临时插件（见技能 `editing-cordis-compositions`），
+7. 校验：挂一个注入 `agentPresets` 的临时插件（见技能 `editing-cordis-compositions`），
    - `await resolve('adg')` 的 `broken` 必须为空；
    - `await standingKeyFor('adg')` 走一次真实挂载（能报出包解析不到、配置非法、行未激活、
      服务发布到全局 realm 四类错误）；
@@ -317,6 +560,9 @@ install.sh              # macOS / Linux 安装脚本
      校验已安装的那一份时传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
      注意它只是**文本扫描器**：exit 0 不等于"文件能解析、插件已挂载"，
      所以上面两条真实挂载的检查不能省（`resolve` / `standingKeyFor` 才是运行期证据）。
-6. 明确告诉用户：**必须重启 dsh**，之后在新建对话里选择「Adg 多智能体模式」。
-7. 如果用户还需要在**创造模式**里说「给 Adg 加一个智能体」被识别，确认第 3 步的技能已就位——
+   - 插件那半边它**完全没覆盖**：插件能不能 import、行有没有激活，只能按
+     [怎么确认它已经武装](#怎么确认它已经武装) 看宿主日志与 `logFile`。
+8. 明确告诉用户：**必须重启 dsh**，之后在新建对话里选择「Adg 多智能体模式」。
+   （插件那一行不用等重启，但它的运行期行为**还没被观测过**，所以别把"装了"说成"已经生效"。）
+9. 如果用户还需要在**创造模式**里说「给 Adg 加一个智能体」被识别，确认第 3 步的技能已就位——
    `<dshHome>/skills` 是 `dsh-skill-filesystem` 的用户技能根（rank 400），两种模式都会扫描且热加载。

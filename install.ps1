@@ -1,9 +1,14 @@
-﻿# 安装 Adg 多智能体模式 preset + 配套技能到本机 dsh 用户根。
+﻿# 安装 Adg 多智能体模式 preset + 配套技能 + token 预算插件到本机 dsh 用户根。
 # 用法： powershell -ExecutionPolicy Bypass -File .\install.ps1
+# 注意：本文件必须保留 UTF-8 BOM —— Windows PowerShell 5.1 在没有 BOM 时会按系统 ANSI
+# 代码页读取脚本，中文变成乱码并直接解析失败（本仓库已实测复现，见 README「兼容性」）。
 $ErrorActionPreference = 'Stop'
 
 $root = $env:DSH_HOME
 if (-not $root) { $root = Join-Path $HOME '.dsh' }
+# 插件要求 logFile 是绝对路径（相对路径会被它关掉文件日志），所以这里先把 DSH_HOME 归一成绝对路径。
+if (-not [System.IO.Path]::IsPathRooted($root)) { $root = Join-Path (Get-Location).Path $root }
+$root = [System.IO.Path]::GetFullPath($root)
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $presetDest = Join-Path $root '.agent-presets\adg'
@@ -14,9 +19,72 @@ Copy-Item (Join-Path $here 'preset\preset.yml') (Join-Path $presetDest 'preset.y
 Copy-Item (Join-Path $here 'preset\agent.cordis.yml') (Join-Path $presetDest 'agent.cordis.yml') -Force
 Copy-Item (Join-Path $here 'skills\adg-add-agent\SKILL.md') (Join-Path $skillDest 'SKILL.md') -Force
 
+# 插件装到 profiles\node_modules：这是所有 profile 共享的模块解析根 —— 从 profile 目录
+# （web 的 cordis.yml 就在 profiles\web\）按 Node 的常规父级 node_modules 上溯正好走到这里，
+# 所以一份拷贝对所有 profile 都可用（本机的 dsh-windows-notifier 也在这个位置）。
+# 真拷贝，不是 junction/symlink：部署后的插件独立于仓库，删掉或挪走仓库都不会让 dsh 启动失败。
+# 先删后拷：重复执行会干净覆盖，不留下上一层版本的残留（test\ 不进部署）。
+$pluginSrc = Join-Path $here 'plugin\dsh-adg-token-budget'
+$pluginDest = Join-Path $root 'profiles\node_modules\dsh-adg-token-budget'
+if (Test-Path -LiteralPath $pluginDest) { Remove-Item -LiteralPath $pluginDest -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $pluginDest | Out-Null
+foreach ($item in 'package.json', 'src', 'README.md', 'examples') {
+  Copy-Item -LiteralPath (Join-Path $pluginSrc $item) -Destination $pluginDest -Recurse -Force
+}
+
+# 挂载行写进 web profile 自己的 patch 层（热重载），不动机器级的 $root\cordis.patch.yml：
+# 机器级那一层套在每个 profile 上（web / headless / sdk / 自建），而这个插件只对 adg preset 的
+# 子代理生效，装到机器级等于让每个 profile 都去 import 它。要全机生效就把同一行搬过去。
+$patchFile = Join-Path $root 'profiles\web\cordis.patch.yml'
+if (-not (Test-Path -LiteralPath $patchFile)) {
+  $patchNote = "未找到 $patchFile，跳过挂载行注册（插件文件已复制；请手工把 plugin\dsh-adg-token-budget\examples\cordis.patch.yml 的行贴上去）"
+} else {
+  # -Encoding UTF8 不能省：Windows PowerShell 5.1 的 Get-Content 默认按系统 ANSI 代码页读，
+  # 用户自己在注释头里写的中文会被读成乱码再被原样写回去（5.1 下实测）。
+  $lines = @(Get-Content -LiteralPath $patchFile -Encoding UTF8)
+  # 在已经解码的行里找，不用 Select-String：5.1 上按 ANSI 解码时，一个残缺的前导字节
+  # 可能把紧跟其后的 ASCII 首字母一起吞掉，导致明明存在的行匹配不上。
+  $registered = @($lines | Where-Object { $_.Contains('dsh-adg-token-budget') }).Count -gt 0
+  if ($registered) {
+    $patchNote = "挂载行已在 $patchFile 里（未改动；enabled 的值以该文件为准）"
+  } elseif ($lines.Count -eq 0 -or $lines[$lines.Count - 1].Trim() -ne '[]') {
+    # patch 层的末行不是空数组字面量，说明这个文件被手工改过；不猜结构，只报错让人自己加。
+    $patchNote = "末行不是 []，内容不可预期：未改动 $patchFile，请手工把 plugin\dsh-adg-token-budget\examples\cordis.patch.yml 的行贴上去"
+  } else {
+    $backup = "$patchFile.bak-adg-token-budget"
+    Copy-Item -LiteralPath $patchFile -Destination $backup -Force
+    $head = @()
+    if ($lines.Count -gt 1) { $head = $lines[0..($lines.Count - 2)] }
+    $row = @(
+      '# token 预算守卫：限制 Adg 专家子代理的累计 token。',
+      '# enabled: false 表示已挂载但不动作；确认无误后改成 true 即可（该文件热重载，立即生效，无需重启）。',
+      '- insert:',
+      '    - id: adg-token-budget',
+      "      name: 'dsh-adg-token-budget'",
+      '      config:',
+      '        enabled: false',
+      "        presets: ['adg']",
+      '        budgetTokens: 3000000',
+      '        softRatio: 0.7',
+      '        cacheReadWeight: 1',
+      '        softNudge: true',
+      "        logFile: '$(Join-Path $root 'adg-token-budget.log')'"
+    )
+    # 不带 BOM 的 UTF-8 + LF：与 dsh 自己生成的 patch 文件逐字节一致（-Encoding UTF8 在 5.1 下会写 BOM）。
+    [System.IO.File]::WriteAllText($patchFile, (($head + $row) -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
+    $patchNote = "已加入挂载行（enabled: false），原文件备份为 $backup"
+  }
+}
+
 Write-Host "已安装到 dsh 用户根：$root"
 Write-Host "  preset -> $presetDest"
 Write-Host "  skill  -> $skillDest"
+Write-Host "  plugin -> $pluginDest"
+Write-Host "  patch  -> $patchNote"
 Write-Host ""
 Write-Host "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 Write-Host "（已挂载的 preset 不会因文件变化重新组合，不重启看不到新的智能体名册。）"
+Write-Host "（插件行是另一回事：web profile 的 cordis.patch.yml 热重载，改 enabled 立即生效、不用重启；"
+Write-Host "  但插件只在 enabled: true 时才注册监听器，装好不等于已武装，见 README。）"
+Write-Host ""
+Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 4 项（package.json/src/README.md/examples）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效，插件行热重载、不用重启。"
