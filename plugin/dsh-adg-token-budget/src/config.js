@@ -11,6 +11,15 @@
  * @module dsh-adg-token-budget/config
  */
 
+/**
+ * The most step tiers the plugin will honour.
+ *
+ * A tier list is operator-authored, so its length is a bound on per-session
+ * memory (`firedTiers` holds one index per tier) and on the work done per step.
+ * Sixteen checkpoints in one child session is already far past useful.
+ */
+export const MAX_STEP_TIERS = 16
+
 /** Every option with its default, as one frozen reference object. */
 export const DEFAULT_CONFIG = Object.freeze({
   /** Master switch; `false` makes `apply` register nothing at all. */
@@ -23,14 +32,38 @@ export const DEFAULT_CONFIG = Object.freeze({
   softRatio: 0.7,
   /** Multiplier applied to `cacheReadTokens` when folding cumulative usage. */
   cacheReadWeight: 1,
-  /** Whether the soft stage appends a wrap-up instruction to the step. */
+  /**
+   * Whether the plugin injects a reminder into a step at all. Its two triggers
+   * are the token soft stage (`softNudge`) and the step checkpoints
+   * (`stepNudge`); `false` logs each of them once instead of injecting, and the
+   * hard cap still applies.
+   */
   softNudge: true,
+  /**
+   * Whether the step checkpoints run: count the steps this child has entered,
+   * and inject a convergence reminder when the count reaches each
+   * `stepTiers` entry (once per tier per residency epoch).
+   */
+  stepNudge: true,
+  /**
+   * The step numbers a checkpoint fires on, ascending. An entered step is
+   * counted as the child's Nth step, and a tier of N fires on that step.
+   */
+  stepTiers: Object.freeze([12, 24, 40]),
   /**
    * Calibration switch: compute and log every decision, but take no action —
    * no message is injected and no `agent.cancel` is issued. The step is
    * delegated through `next()` even at the hard stage.
    */
   dryRun: false,
+  /**
+   * Calibration switch for the destructive stage only. With `dryRun` off, the
+   * hard stage logs what it would cancel and delegates through, while the
+   * reminders are injected for real. Arming the reminders without arming
+   * `agent.cancel` is exactly what this key is for. Ignored while `dryRun` is
+   * on, which already covers every stage.
+   */
+  hardDryRun: false,
   /** Append one line per decision to this absolute path; `null` disables it. */
   logFile: null,
 })
@@ -118,6 +151,39 @@ function readNames(value, fallback) {
 }
 
 /**
+ * Read the step-checkpoint tiers.
+ *
+ * A bare number reads as a one-tier list, the way `presets: adg` reads as a
+ * one-name list. Each entry is rounded to an integer and must be positive: a
+ * fraction of a step and a zero/negative step are both meaningless, so they are
+ * dropped rather than clamped to something the operator did not write. The
+ * result is de-duplicated and sorted ascending, because the decision helper
+ * scans it in order and reports the first tier that is due.
+ *
+ * When nothing usable survives — `[]`, `'x'`, `[0, -1]` — the fallback tiers are
+ * used, matching the rest of this module: a mistyped value must not silently
+ * turn the checkpoints off. Use `stepNudge: false` to turn them off on purpose.
+ *
+ * @param value - the raw value.
+ * @param fallback - the default tiers.
+ * @returns {number[]} ascending, de-duplicated, positive integer tiers.
+ */
+function readStepTiers(value, fallback) {
+  const source = Array.isArray(value) ? value : [value]
+  const tiers = []
+  for (const entry of source) {
+    if (tiers.length >= MAX_STEP_TIERS) break
+    const resolved = readNumber(entry, Number.NaN)
+    if (!Number.isFinite(resolved)) continue
+    const tier = Math.min(Math.round(resolved), Number.MAX_SAFE_INTEGER)
+    if (tier < 1 || tiers.includes(tier)) continue
+    tiers.push(tier)
+  }
+  if (tiers.length === 0) return [...fallback]
+  return tiers.sort((left, right) => left - right)
+}
+
+/**
  * Normalize one raw `config:` block into a complete option object.
  *
  * @param {unknown} raw - the row's configuration, as composed from YAML.
@@ -136,7 +202,10 @@ export function normalizeConfig(raw) {
     softRatio: clamp(readNumber(input.softRatio, DEFAULT_CONFIG.softRatio), 0, 1),
     cacheReadWeight: readClampedNumber(input.cacheReadWeight, DEFAULT_CONFIG.cacheReadWeight, 0, 100),
     softNudge: readBoolean(input.softNudge, DEFAULT_CONFIG.softNudge),
+    stepNudge: readBoolean(input.stepNudge, DEFAULT_CONFIG.stepNudge),
+    stepTiers: readStepTiers(input.stepTiers, DEFAULT_CONFIG.stepTiers),
     dryRun: readBoolean(input.dryRun, DEFAULT_CONFIG.dryRun),
+    hardDryRun: readBoolean(input.hardDryRun, DEFAULT_CONFIG.hardDryRun),
     // `null` (and any unusable value) means "no file logging".
     logFile: logFile ?? DEFAULT_CONFIG.logFile,
   }

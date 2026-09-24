@@ -4,8 +4,14 @@
 #   $DSH_HOME/profiles/<profile>/cordis.patch.yml   -> that profile only
 #   $DSH_HOME/cordis.patch.yml                      -> every profile on this machine
 #
-# A profile with `patchReload: live` (the shipped `web` profile) picks the change
-# up without a restart. `enabled: false` ships on purpose: install the plugin
+# A profile with `patchReload: live` (the shipped `web` profile) picks a `config:`
+# change up without a restart — but ONLY a `config:` change: the live reload does
+# not re-`import` a module the process already loaded, so replacing the package's
+# `src/` needs a restart (measured; see the README's Install section). Deploy the
+# code first, restart, confirm the new `activation:` line carries the newer
+# fields, and only then turn `dryRun` off — an old build sitting on a new config
+# silently ignores keys it does not know, `hardDryRun` included.
+# `enabled: false` ships on purpose: install the plugin
 # and flip this to `true` deliberately, in one step you can undo.
 #
 # Every key under `config:` is optional; the commented values are the defaults.
@@ -42,19 +48,44 @@
         # entirely; a fraction discounts them.
         # cacheReadWeight: 1
         #
-        # Whether the soft stage injects the wrap-up instruction into the step.
-        # false = log the soft stage only, and keep the hard cap.
+        # Whether the plugin injects a reminder into a step at all. Its two
+        # triggers are the token soft stage and the step checkpoints; false
+        # makes both log once instead of injecting, and keeps the hard cap.
         # softNudge: true
         #
+        # Whether the STEP CHECKPOINTS run: count the steps a governed child
+        # enters, and inject a convergence reminder when that count reaches each
+        # stepTiers entry (once per tier per residency epoch; at most one
+        # reminder message per step). false disables them entirely — including
+        # the counting — and restores the token stage's zero-allocation
+        # pass-through.
+        # stepNudge: true
+        #
+        # The step numbers the checkpoints fire on, ascending. A bare number
+        # (`stepTiers: 24`) reads as a one-tier list. Anything unusable falls back
+        # to this default; use `stepNudge: false` to switch them off on purpose.
+        # Calibration for 12/24/40: the audited corpus averaged 23.4 model
+        # requests per delegated child (range 10..54), so the first checkpoint
+        # lands near half of an average child and the third only in the tail.
+        # stepTiers: [12, 24, 40]
+        #
         # Calibration switch. true computes and logs every decision it would
-        # make (soft nudge and hard cancel) but takes no action: nothing is
-        # injected, agent.cancel is never called, the hard stage still delegates
-        # through next(), and the once-per-nudge flag is not consumed — so
-        # arming afterwards still nudges. Recommended first step.
+        # make (soft nudge, step checkpoints and hard cancel) but takes no
+        # action: nothing is injected, agent.cancel is never called, the hard
+        # stage still delegates through next(), and no once-per-epoch flag is
+        # consumed — so arming afterwards still nudges. Recommended first step.
         # dryRun: false
         #
+        # Calibration switch for the DESTRUCTIVE stage only. With `dryRun` off,
+        # the hard stage logs what it would cancel and delegates through, while
+        # the reminders are injected for real. This is the "arm the reminders,
+        # keep the cancels on paper" setting. Ignored while `dryRun` is on,
+        # which already covers every stage.
+        # hardDryRun: false
+        #
         # Append the load-time activation line plus one line per decision EVENT
-        # here (soft nudge, hard stop, dry-run decision, settle, no-data note).
-        # A step that passes through writes nothing. Absolute path, or null for
-        # no file logging. Each line is prefixed with an ISO-8601 timestamp.
+        # here (soft nudge, step checkpoint, hard stop, dry-run decision, settle,
+        # no-data note). A step that passes through writes nothing. Absolute
+        # path, or null for no file logging. Each line is prefixed with an
+        # ISO-8601 timestamp.
         # logFile: 'D:\dsh-adg-token-budget.log'

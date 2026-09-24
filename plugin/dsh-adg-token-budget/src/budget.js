@@ -129,3 +129,42 @@ export function decide(gate) {
   if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return PASS
   return usage >= budget * ratio ? SOFT : PASS
 }
+
+/**
+ * The first step tier that is due and has not fired yet, as an index into
+ * `tiers`, or `undefined` when there is none.
+ *
+ * The tiers are step numbers: with `stepCount` = the number of steps this child
+ * has entered (so the step being decided is step `stepCount` itself), a tier is
+ * due while `stepCount >= tier`. The lowest such tier wins, which matters
+ * because a caller that only evaluates this once per step still fires every tier
+ * in order even when several are due at once — the next call reports the next
+ * index.
+ *
+ * A tier that is already in `firedTiers` is skipped. That list is the
+ * once-per-tier record, and it is an index list rather than a value list so a
+ * tier configured twice (normalization dedupes, but a caller is free not to) can
+ * never be confused for a different one.
+ *
+ * Out-of-contract input yields `undefined` (no nudge) rather than throwing: this
+ * runs inside a live step.
+ *
+ * @param {{ tiers: readonly number[], stepCount: number, firedTiers?: readonly number[] }} gate - the checkpoint inputs.
+ * @returns {number | undefined} the index of the tier to fire, or `undefined`.
+ */
+export function dueStepTier(gate) {
+  const tiers = gate?.tiers
+  const stepCount = gate?.stepCount
+  if (!Array.isArray(tiers)) return undefined
+  if (typeof stepCount !== 'number' || !Number.isFinite(stepCount)) return undefined
+  const fired = gate?.firedTiers
+  const consumed = Array.isArray(fired) ? fired : []
+  for (let index = 0; index < tiers.length; index += 1) {
+    const tier = tiers[index]
+    if (typeof tier !== 'number' || !Number.isFinite(tier) || tier < 1) continue
+    if (stepCount < tier) continue
+    if (consumed.includes(index)) continue
+    return index
+  }
+  return undefined
+}

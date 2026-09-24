@@ -1,28 +1,41 @@
 /**
- * dsh-adg-token-budget — a host-plane DSH/Cordis plugin that puts a two-stage
- * cumulative token budget on the **delegated children of an `adg` agent
- * preset**.
+ * dsh-adg-token-budget — a host-plane DSH/Cordis plugin that keeps the
+ * **delegated children of an `adg` agent preset** from burning millions of
+ * tokens in an unbounded exploration loop.
  *
- * One delegated expert can otherwise burn millions of tokens in an unbounded
- * exploration loop; this plugin is the backstop, not a scheduler. It registers
- * exactly one `agent/pre-step` waterfall listener and decides on every proposed
- * step of every governed child:
+ * It is a backstop, not a scheduler. It registers exactly one
+ * `agent/pre-step` waterfall listener and decides on every proposed step of
+ * every governed child, on two independent triggers:
  *
  * | Stage | Trigger | Action |
  * | --- | --- | --- |
- * | soft | `usage >= budgetTokens * softRatio` | `next()` first, then append one wrap-up instruction to the returned `{kind:'enter'}` decision's `messages` |
+ * | step | the child is entering its `stepTiers[n]`-th step | `next()` first, then append the nth convergence reminder to the returned `{kind:'enter'}` decision's `messages` — at most once per tier per residency epoch |
+ * | soft | `usage >= budgetTokens * softRatio` | `next()` first, then append one wrap-up instruction to the returned `{kind:'enter'}` decision's `messages` — at most once per residency epoch |
  * | hard | `usage >= budgetTokens` | `agent.cancel({kind:'parent'})` and return `{kind:'reject'}` without calling `next()` |
  *
- * With `dryRun: true` both decisions are computed and logged but nothing is
+ * The step stage exists because it is the one lever the dispatcher cannot pull
+ * itself. The dispatcher owns the *policy* — its persona tells it to put a
+ * convergence target in every delegation prompt — but it cannot see how many
+ * steps a running child has taken: polling for it re-sends the dispatcher's own
+ * context (the largest in the run, 59% of the audited bill) once per poll, which
+ * costs far more than the reminder saves. So the reminder is injected here,
+ * deterministically and on the dispatcher's behalf. **At most one reminder
+ * message is appended per step**, and cost is the reason: an injected message
+ * stays in the child's context and is re-sent on every later step.
+ *
+ * With `dryRun: true` every decision is computed and logged but nothing is
  * injected and nothing is cancelled; the step is delegated through `next()`
  * even at the hard stage, so a budget can be calibrated against real traffic
- * before it is armed.
+ * before it is armed. `hardDryRun: true` does the same for the destructive
+ * stage only, which is how the reminders can be armed for real while
+ * `agent.cancel` is still being calibrated.
  *
  * Cumulative usage is
  * `uncachedInputTokens + outputTokens + cacheReadTokens * cacheReadWeight +
  * cacheWriteTokens`, read from `ctx.get('sessionProjections')?.stateOf(
  * agent.session, 'tokenUsage')`, whose `totals` are cumulative over the whole
- * session log.
+ * session log. The step count needs no projection: it is the number of steps
+ * this listener has watched the child enter.
  *
  * ## Two invariants this file is built around
  *
@@ -70,6 +83,7 @@ import {
   cumulativeUsageOf,
   decide,
   delegationDepthOf,
+  dueStepTier,
   isDelegatedChild,
   presetIsGoverned,
 } from './budget.js'
@@ -116,7 +130,9 @@ export function resetRegistrationStateForTests() {
   activeRegistrations = 0
 }
 
-/** The instruction appended at the soft stage: stop exploring, report now. */
+/**
+ * The instruction appended at the token soft stage: stop exploring, report now.
+ */
 export const NUDGE_TEXT = [
   '【令牌预算提醒】你已接近本次委派任务的累计 token 预算上限。',
   '',
@@ -127,6 +143,64 @@ export const NUDGE_TEXT = [
   '2. 尚未解决、但你已经知道该从哪里入手的部分；',
   '3. 你明确没有验证过的部分——请直说未验证，不要推测成结论。',
 ].join('\n')
+
+/**
+ * The step-checkpoint bodies, in escalation order.
+ *
+ * A configured `stepTiers` list longer than this reuses the last body, which is
+ * why the checkpoint ordinal ("第 N 个检查点，共 M 个") is built separately in
+ * `stepNudgeText` rather than baked in here.
+ *
+ * Every body is written to protect the result, not just to save tokens. Each one
+ * tells the child to (a) stop *non-essential* exploration, (b) still do the one
+ * remaining action if it is **required** for the delivery, and (c) hand back what
+ * it has *not* verified rather than guessing. A checkpoint that only said "stop
+ * now" would trade tokens for a worse answer, which is the one trade this
+ * feature is not allowed to make.
+ */
+export const STEP_NUDGE_TEXTS = Object.freeze([
+  [
+    '请先做一次收敛判断，再决定下一步做什么：',
+    '- 已有的证据如果已经足以回答委派任务，就立刻停止探索、直接汇报，不要再做"更完整"的补充检索。',
+    '- 如果还剩**对交付必需**的关键动作没做完，就只做那一个，做完立刻汇报；不要顺手扩大范围。',
+    '- 这条提醒不是让你放弃必要的验证，而是不要为了完整继续加步数 —— 每一步都要重发整段上下文，步数本身就是成本。',
+  ].join('\n'),
+
+  [
+    '你已经超出常规委派规模，现在请收敛：',
+    '- 停止一切非必需的新探索：不新开调查线，不重复读同一文件或同一 URL，不为"再确认一下"重跑命令。',
+    '- 委派要求的核心交付如果已经能给出，就直接汇报；只有当某一步是交付**必需**、而且你已经知道它是哪一步时，才做那一步。',
+    '- 汇报格式：结论 + 每条证据（path:line 或 URL）+ 未解决项 + 你明确没有验证过的部分。',
+  ].join('\n'),
+
+  [
+    '这已经远超常规委派规模，请立即停止探索并汇报：',
+    '- 不要再调用探索类工具（检索、读取、抓取、命令），除非某个已确认必需的动作只差最后一步。',
+    '- 用你手上的证据给出结论。宁可结论不完整，也要明确写出"哪些没验证、卡在哪里"。',
+    '- 汇报格式：结论 + 每条证据（path:line 或 URL）+ 未解决项。',
+  ].join('\n'),
+])
+
+/**
+ * Build the Nth convergence reminder.
+ *
+ * The count is included because a concrete number is what makes the checkpoint
+ * actionable ("this is step 24"), and the escalation index picks the body. The
+ * builder is pure and total: out-of-contract input falls back to the first body
+ * with a zero count instead of throwing inside a live step.
+ *
+ * @param {{ tierIndex?: number, tierCount?: number, stepCount?: number }} input - where the checkpoint sits and how many steps the child took.
+ * @returns {string} the message text.
+ */
+export function stepNudgeText(input) {
+  const tierIndex = Number.isInteger(input?.tierIndex) && input.tierIndex >= 0 ? input.tierIndex : 0
+  const tierCount = Number.isInteger(input?.tierCount) && input.tierCount >= 1 ? input.tierCount : STEP_NUDGE_TEXTS.length
+  const stepCount = typeof input?.stepCount === 'number' && Number.isFinite(input.stepCount)
+    ? Math.max(0, Math.round(input.stepCount))
+    : 0
+  const body = STEP_NUDGE_TEXTS[Math.min(tierIndex, STEP_NUDGE_TEXTS.length - 1)]
+  return `【收敛检查点 ${tierIndex + 1}／${tierCount}】调度代理提醒：这是你的第 ${stepCount} 步。\n\n${body}`
+}
 
 /**
  * The message source a plugin-authored user message carries; the variant is
@@ -440,7 +514,10 @@ export function activationLine(config, strategy) {
     `presets=[${config.presets.join(', ')}]`,
     `cacheReadWeight=${config.cacheReadWeight}`,
     `softNudge=${config.softNudge}`,
+    `stepNudge=${config.stepNudge}`,
+    `stepTiers=[${config.stepTiers.join(', ')}]`,
     `dryRun=${config.dryRun}`,
+    `hardDryRun=${config.hardDryRun}`,
     `logFile=${logFile}`,
   ].join(' ')
 }
@@ -510,10 +587,24 @@ export function apply(ctx, rawConfig) {
       logger.activation(`warning: ${note}`)
     }
 
-    // Per-session state, keyed by `agent.id` (the session id). An entry is
-    // created only when the soft stage delivers its one-shot action (the nudge,
-    // or the single log line when `softNudge` is false), and removed on
-    // `subagent/end`, so a long-lived host cannot accumulate children.
+    // Per-session state, keyed by `agent.id` (the session id), one entry per
+    // child residency epoch:
+    //
+    //   { steps, nudged, firedTiers }
+    //
+    // `steps` is the number of steps this listener has watched a governed child
+    // enter, and it has to exist for a checkpoint to be countable — so with
+    // `stepNudge` on (the default) the first governed step allocates it. With
+    // `stepNudge: false` nothing here is allocated on a pass-through step, which
+    // keeps the token stage's original zero-allocation property. `nudged` is the
+    // token stage's once-per-epoch flag, set only once its instruction was
+    // really delivered (or, with `softNudge: false`, once its single log line
+    // was written). `firedTiers` holds the index of every step tier already
+    // fired, so its length is bounded by the configured `stepTiers` (at most
+    // MAX_STEP_TIERS).
+    //
+    // Entries are removed on `subagent/end` and cleared wholesale by a
+    // `ctx.effect` disposer, so a long-lived host cannot accumulate children.
     const sessions = new Map()
     let handlerFailed = false
     let noBudgetDataLogged = false
@@ -521,29 +612,77 @@ export function apply(ctx, rawConfig) {
     /**
      * Note — at most once per activation — that a governed child has no budget
      * data. Deliberately NOT kept in the per-session map: a child with no
-     * projection has nothing to nudge or stop, so remembering it there would
-     * only give the map a second, unbounded growth path.
+     * projection has nothing to nudge or stop with, so remembering it there
+     * would only give the map a second, unbounded growth path.
+     *
+     * The step stage does not need the projection, so this no longer means the
+     * child is untouched — only that its token stages are inert.
      */
     const noteNoBudgetData = (agent) => {
       if (noBudgetDataLogged) return
       noBudgetDataLogged = true
-      logger.log(`no budget data: passing through label=${labelOf(agent)}`)
+      logger.log(`no budget data: passing through the token stages label=${labelOf(agent)}`)
+    }
+
+    /** The state shape for one child, so every writer touches the same keys. */
+    const emptyEntry = () => ({ steps: 0, nudged: false, firedTiers: [] })
+
+    /**
+     * The state entry for one child.
+     *
+     * @param key - the session key, or `undefined` when the agent has no usable id.
+     * @param create - whether a missing entry may be allocated.
+     * @returns the live entry, or `undefined` when there is nothing to read.
+     */
+    const entryOf = (key, create) => {
+      if (key === undefined) return undefined
+      try {
+        let entry = sessions.get(key)
+        if (entry === undefined && create) {
+          entry = emptyEntry()
+          sessions.set(key, entry)
+        }
+        return entry
+      } catch {
+        // An unusable map costs one skipped reminder, never a failed step.
+        return undefined
+      }
     }
 
     /**
-     * Record that this session has had its one-shot soft stage. Skipped while
-     * `dryRun` is on: a calibration run must not consume the flag, so the real
-     * nudge still lands the first time the budget is armed on that session.
+     * Record that this session has had its one-shot token soft stage. Skipped
+     * while `dryRun` is on: a calibration run must not consume the flag, so the
+     * real nudge still lands the first time the budget is armed on that session.
      */
     const markNudged = (key) => {
-      if (key === undefined) return
-      try {
-        const entry = sessions.get(key) ?? { nudged: false }
-        entry.nudged = true
-        sessions.set(key, entry)
-      } catch {
-        // An unusable map costs one repeated log line, never a failed step.
-      }
+      const entry = entryOf(key, true)
+      if (entry !== undefined) entry.nudged = true
+    }
+
+    /**
+     * Count one *entered* step for a governed child, and return its entry.
+     *
+     * Only an entered step counts: a step a downstream listener rejected never
+     * opened, so it is not charged against the child. Counting happens under
+     * `dryRun` too — without it there would be nothing to calibrate — but it
+     * consumes no flag, so arming afterwards still delivers that checkpoint.
+     *
+     * @param key - the session key.
+     * @returns the entry carrying the new count, or `undefined`.
+     */
+    const markStep = (key) => {
+      const entry = entryOf(key, true)
+      if (entry === undefined) return undefined
+      entry.steps = (typeof entry.steps === 'number' && Number.isFinite(entry.steps) ? entry.steps : 0) + 1
+      return entry
+    }
+
+    /** Record that one step tier has fired, so it never fires twice per epoch. */
+    const markTierFired = (key, index) => {
+      const entry = entryOf(key, true)
+      if (entry === undefined) return
+      if (!Array.isArray(entry.firedTiers)) entry.firedTiers = []
+      if (!entry.firedTiers.includes(index)) entry.firedTiers.push(index)
     }
 
     /**
@@ -573,13 +712,14 @@ export function apply(ctx, rawConfig) {
     }
 
     /**
-     * Build the wrap-up message, or `undefined` when it cannot be constructed.
+     * Build one reminder message, or `undefined` when it cannot be constructed.
      *
+     * @param text - the instruction text to wrap.
      * @returns {object | undefined} the message to append.
      */
-    const buildNudge = () => {
+    const buildNudge = (text) => {
       try {
-        const message = factory?.create(NUDGE_TEXT)
+        const message = factory?.create(text)
         return typeof message === 'object' && message !== null ? message : undefined
       } catch (error) {
         warn(`${name}: nudge construction failed (${renderThrown(error)}); continuing without the instruction`)
@@ -588,63 +728,128 @@ export function apply(ctx, rawConfig) {
     }
 
     /**
-     * The soft stage, run strictly AFTER a successful `next()`.
+     * The reminder stages, run strictly AFTER a successful `next()`.
      *
      * Everything here is a no-throw zone on purpose: the decision returned by
      * `next()` is already the chain's answer, and re-entering `next()` is
      * forbidden, so a failure in this function must leave that decision alone.
      * The caller wraps it anyway.
      *
-     * The once-per-session flag is only set once the instruction is really
-     * appended to an entering decision (or, with `softNudge: false`, once its
-     * single log line has been written): a child whose downstream listener
-     * rejected the step has NOT been told anything yet, and must still be
-     * nudged on a later step.
+     * Two triggers are evaluated per step, and **at most one message is
+     * appended**:
      *
-     * @param {{ agent: object, decision: object, usage: number, alreadyNudged: boolean, key: string | undefined }} input - the step's outcome.
-     * @returns {object} the decision to return, possibly carrying the nudge.
+     * - the **token** soft stage (`stage === SOFT`), once per residency epoch;
+     * - the **step** checkpoint, once per configured tier per residency epoch.
+     *
+     * When both are due on the same step the token wrap-up wins: it is the more
+     * urgent of the two (the budget is nearly spent), and adding a second
+     * near-identical message to the same step would pay for the same advice
+     * twice on every later step of the child. The step tier is consumed either
+     * way — the child has been told to converge.
+     *
+     * A flag is only consumed once its instruction was *really delivered* (or,
+     * with `softNudge: false`, once its single log line was written): a child
+     * whose downstream listener rejected the step has NOT been told anything
+     * yet, and must still be reminded on a later step.
+     *
+     * @param {{ agent: object, decision: object, usage: number | undefined, stage: string, key: string | undefined }} input - the step's outcome.
+     * @returns {object} the decision to return, possibly carrying one reminder.
      */
-    const softStage = ({ agent, decision, usage, alreadyNudged, key }) => {
-      if (alreadyNudged) return decision
-      const label = labelOf(agent)
-      const summary = `usage=${usage} budget=${config.budgetTokens} label=${label}`
+    const postStep = ({ agent, decision, usage, stage, key }) => {
+      const entered = decision?.kind === 'enter' && Array.isArray(decision.messages)
       const kind = decision?.kind ?? 'undefined'
-      const deliverable = decision?.kind === 'enter' && Array.isArray(decision.messages)
+      const summary = `usage=${usage} budget=${config.budgetTokens} label=${labelOf(agent)}`
+
+      // Step accounting. With `stepNudge: false` nothing is allocated here, so
+      // the token stage keeps its old zero-allocation pass-through.
+      const entry = config.stepNudge && entered ? markStep(key) : entryOf(key, false)
+      const stepCount = typeof entry?.steps === 'number' && Number.isFinite(entry.steps) ? entry.steps : 0
+      const tokenDue = stage === SOFT && entry?.nudged !== true
+      // Evaluated even when the step was not entered, so calibration can report
+      // "a checkpoint was due, but the decision was not an entry" the same way
+      // it does for the token stage. The flag is not consumed in that case.
+      const tierIndex = config.stepNudge
+        ? dueStepTier({ tiers: config.stepTiers, stepCount, firedTiers: entry?.firedTiers })
+        : undefined
+      const tierSummary = tierIndex === undefined
+        ? undefined
+        : `tier=${tierIndex + 1}/${config.stepTiers.length} step=${stepCount} ${summary}`
 
       if (config.dryRun) {
         // Calibration: report what an armed plugin would do, change nothing.
-        if (!config.softNudge) {
-          logger.log(`dry-run soft stage: would not nudge (softNudge: false, would log once) ${summary}`)
-          return decision
+        if (stage === SOFT) {
+          if (!config.softNudge) {
+            logger.log(`dry-run soft stage: would not nudge (softNudge: false, would log once) ${summary}`)
+          } else if (!entered) {
+            logger.log(`dry-run soft stage: would not nudge (decision kind=${kind}) ${summary}`)
+          } else if (buildNudge(NUDGE_TEXT) === undefined) {
+            logger.log(`dry-run soft stage: would not nudge (nudge construction failed) ${summary}`)
+          } else {
+            logger.log(`dry-run soft stage: would nudge ${summary}`)
+          }
         }
-        if (!deliverable) {
-          logger.log(`dry-run soft stage: would not nudge (decision kind=${kind}) ${summary}`)
-          return decision
+        if (tierSummary !== undefined) {
+          if (!config.softNudge) {
+            logger.log(`dry-run step stage: would not nudge (softNudge: false, would log once) ${tierSummary}`)
+          } else if (!entered) {
+            logger.log(`dry-run step stage: would not nudge (decision kind=${kind}) ${tierSummary}`)
+          } else if (buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount })) === undefined) {
+            logger.log(`dry-run step stage: would not nudge (nudge construction failed) ${tierSummary}`)
+          } else {
+            logger.log(`dry-run step stage: would nudge ${tierSummary}`)
+          }
         }
-        if (buildNudge() === undefined) {
-          logger.log(`dry-run soft stage: would not nudge (nudge construction failed) ${summary}`)
-          return decision
-        }
-        logger.log(`dry-run soft stage: would nudge ${summary}`)
         return decision
       }
 
-      if (!config.softNudge) {
-        markNudged(key)
-        logger.log(`soft stage (no nudge configured) ${summary}`)
-        return decision
+      let result = decision
+      let delivered = false
+
+      if (tokenDue) {
+        if (!config.softNudge) {
+          markNudged(key)
+          logger.log(`soft stage (no nudge configured) ${summary}`)
+        } else {
+          const message = entered ? buildNudge(NUDGE_TEXT) : undefined
+          if (message === undefined) {
+            // The flag stays unset: nothing was delivered, so a later step may
+            // still deliver the instruction.
+            logger.log(`soft stage (no nudge injected: ${entered ? 'nudge construction failed' : `decision kind=${kind}`}) ${summary}`)
+          } else {
+            result = { ...result, messages: [...result.messages, message] }
+            delivered = true
+            markNudged(key)
+            logger.log(`soft stage: nudged ${summary}`)
+          }
+        }
       }
-      const message = deliverable ? buildNudge() : undefined
-      if (message === undefined) {
-        // The flag stays unset: nothing was delivered, so a later step may still
-        // deliver the instruction.
-        logger.log(`soft stage (no nudge injected: ${deliverable ? 'nudge construction failed' : `decision kind=${kind}`}) ${summary}`)
-        return decision
+
+      if (tierSummary !== undefined) {
+        if (!config.softNudge) {
+          markTierFired(key, tierIndex)
+          logger.log(`step stage (no nudge configured) ${tierSummary}`)
+        } else if (delivered) {
+          // One reminder per step: this checkpoint rides the token wrap-up that
+          // was just appended, and the tier is consumed because the child has
+          // been told to converge.
+          markTierFired(key, tierIndex)
+          logger.log(`step stage: folded into the token wrap-up ${tierSummary}`)
+        } else {
+          const message = entered
+            ? buildNudge(stepNudgeText({ tierIndex, tierCount: config.stepTiers.length, stepCount }))
+            : undefined
+          if (message === undefined) {
+            logger.log(`step stage (no nudge injected: ${entered ? 'nudge construction failed' : `decision kind=${kind}`}) ${tierSummary}`)
+          } else {
+            result = { ...result, messages: [...result.messages, message] }
+            delivered = true
+            markTierFired(key, tierIndex)
+            logger.log(`step stage: nudged ${tierSummary}`)
+          }
+        }
       }
-      const nudged = { ...decision, messages: [...decision.messages, message] }
-      markNudged(key)
-      logger.log(`soft stage: nudged ${summary}`)
-      return nudged
+
+      return result
     }
 
     // The payload is taken whole and destructured INSIDE the try: a malformed
@@ -706,60 +911,60 @@ export function apply(ctx, rawConfig) {
       if (!presetIsGoverned(agent, config.presets)) return callNext()
 
       const key = sessionKeyOf(agent)
-      const state = key === undefined ? undefined : sessions.get(key)
+      const state = entryOf(key, false)
       const projections = projectionsOf(state)
+      let usage
       if (projections === undefined) {
         // "No budget data" is not "no budget": a missing service or a missing
-        // projection must never stop a child. Reported at most once.
+        // projection must never stop a child. Reported at most once. The step
+        // stage needs no projection, so it still runs.
         noteNoBudgetData(agent)
-        return callNext()
+      } else {
+        usage = cumulativeUsageOf(projections.stateOf(agent.session, 'tokenUsage'), config.cacheReadWeight)
+        if (usage === undefined) noteNoBudgetData(agent)
       }
 
-      const usage = cumulativeUsageOf(projections.stateOf(agent.session, 'tokenUsage'), config.cacheReadWeight)
-      if (usage === undefined) {
-        noteNoBudgetData(agent)
-        return callNext()
-      }
-
-      const stage = decide({ usage, budgetTokens: config.budgetTokens, softRatio: config.softRatio })
-      if (stage === PASS) return callNext()
+      const stage = usage === undefined
+        ? PASS
+        : decide({ usage, budgetTokens: config.budgetTokens, softRatio: config.softRatio })
 
       if (stage === HARD) {
-        if (config.dryRun) {
+        if (config.dryRun || config.hardDryRun) {
           // Calibration: nothing is cancelled and the step is delegated
-          // through, but the line says exactly what would have happened.
+          // through, but the line says exactly what would have happened. It is
+          // the same line `dryRun` writes, because it is the same fact: the
+          // destructive stage is running dry.
           logger.log(`dry-run hard stage: would cancel usage=${usage} budget=${config.budgetTokens} label=${labelOf(agent)}`)
-          return callNext()
+        } else {
+          // `cancel` aborts the in-flight turn so no further requests are
+          // billed, and the `reject` guarantees the loop does not proceed to
+          // derivation even if the abort lands late: the agent loop maps a
+          // rejected pre-step to a `blocked` turn end without opening a step
+          // (`@deepseek-ai/dsh-agent-loop/lib/index.js` `turn()`), so the child
+          // surfaces to the dispatcher as a cancelled run **with its partial
+          // output**, which the delegation tool appends
+          // (`@deepseek-ai/dsh-tool-subagent/lib/index.js:305-323`). `next()` is
+          // deliberately NOT called: the budget decision is final.
+          logger.log(`hard stage: cancel usage=${usage} budget=${config.budgetTokens} label=${labelOf(agent)}`)
+          try {
+            agent.cancel({ kind: 'parent' })
+          } catch (error) {
+            warn(`${name}: agent.cancel failed (${renderThrown(error)})`)
+          }
+          return { kind: 'reject' }
         }
-        // `cancel` aborts the in-flight turn so no further requests are billed,
-        // and the `reject` guarantees the loop does not proceed to derivation
-        // even if the abort lands late: the agent loop maps a rejected pre-step
-        // to a `blocked` turn end without opening a step
-        // (`@deepseek-ai/dsh-agent-loop/lib/index.js` `turn()`), so the child
-        // surfaces to the dispatcher as a cancelled run **with its partial
-        // output**, which the delegation tool appends
-        // (`@deepseek-ai/dsh-tool-subagent/lib/index.js:305-323`). `next()` is
-        // deliberately NOT called: the budget decision is final.
-        logger.log(`hard stage: cancel usage=${usage} budget=${config.budgetTokens} label=${labelOf(agent)}`)
-        try {
-          agent.cancel({ kind: 'parent' })
-        } catch (error) {
-          warn(`${name}: agent.cancel failed (${renderThrown(error)})`)
-        }
-        return { kind: 'reject' }
       }
 
-      // Soft stage: this listener must delegate first, because the nudge rides
-      // the decision the rest of the chain produced (the first-party idiom in
+      // The reminder stages must delegate first, because a reminder rides the
+      // decision the rest of the chain produced (the first-party idiom in
       // `@deepseek-ai/dsh-hooks-codex/lib/index.js:224-230`).
-      const alreadyNudged = state?.nudged === true
       const decision = await callNext()
       // From here on, nothing may throw: `next()` has run, so its decision is
       // final and this listener must not re-enter the chain.
       try {
-        return softStage({ agent, decision, usage, alreadyNudged, key })
+        return postStep({ agent, decision, usage, stage, key })
       } catch (error) {
-        warn(`${name}: the soft stage failed after next() (${renderThrown(error)}); returning the decision unchanged`)
+        warn(`${name}: the reminder stages failed after next() (${renderThrown(error)}); returning the decision unchanged`)
         return decision
       }
     }
@@ -851,11 +1056,11 @@ function labelOf(agent) {
  * `activation` writes a load-time line (the activation line itself, or a
  * registration note such as "this context already applied the plugin") to the
  * file only; `log` writes one line per decision event. Only these events reach
- * `logFile`: load-time lines, a soft stage event, a hard stop, a settle, a
- * dry-run decision and the at-most-once "no budget data" note — a plain PASS
- * step logs nothing. The first line written through `log` also goes to the host
- * log once, so an armed plugin is observable without flooding `ctx.logger` at
- * every step.
+ * `logFile`: load-time lines, a token soft stage event, a step checkpoint
+ * event, a hard stop, a settle, a dry-run decision and the at-most-once "no
+ * budget data" note — a plain PASS step logs nothing. The first line written
+ * through `log` also goes to the host log once, so an armed plugin is
+ * observable without flooding `ctx.logger` at every step.
  *
  * A relative `logFile` disables file logging with a warning (the row is composed
  * from YAML, where a relative path would silently resolve against the host's
@@ -892,4 +1097,4 @@ function createLogger(logFile, warn, info) {
 }
 
 /** Re-exported so a caller can build a standalone decision without this file. */
-export { decide, cumulativeUsageOf, delegationDepthOf, isDelegatedChild, presetIsGoverned }
+export { decide, cumulativeUsageOf, delegationDepthOf, dueStepTier, isDelegatedChild, presetIsGoverned }
