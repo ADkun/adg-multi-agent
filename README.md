@@ -562,7 +562,8 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 改完**立即生效、不用重启**（这个文件是 `patchReload: live`）：宿主会重新 `apply` 这一行并写下一行
 `activation: active …`。**前提是包里 `src/` 的代码没变过** —— 热重载不会重新 `import` 已经加载过的
 模块（见 [装完必须重启 dsh](#装完必须重启-dsh)）。本机已经这样跑过（见下）。想小范围试：把
-`budgetTokens` 调到 `20000`、`softRatio` 调到 `0.05`，两档都能在一两次委派里撞到。
+`budgetTokens` 调到 `20000`、`softRatio` 调到 `0.05`，token 那两档在一两次委派里就能撞到；
+步数检查点把 `stepTiers` 调到 `[1, 2]` 就会在子代理的头两步各出现一次。
 
 **推荐的上线顺序是四步而不是三步：** 先 `enabled: false` 挂上（照抄例子文件就是关着的）→
 `enabled: true` + `dryRun: true` 拿自己的流量校准 → `dryRun: false` + `hardDryRun: true`
@@ -676,7 +677,7 @@ skills/
   adg-add-agent/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
 plugin/
-  dsh-adg-token-budget/ # host-plane 插件：子代理累计 token 的两档硬兜底
+  dsh-adg-token-budget/ # host-plane 插件：子代理的步数收敛检查点 + 累计 token 的两档硬兜底
     package.json        # 部署单元：ESM 包，无运行期依赖
     src/                # config.js（归一化）/ budget.js（纯判定）/ plugin.js（注册监听器）
     examples/
@@ -695,8 +696,9 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是三处：
-  `persona` 增加调度名册、分派规则与委派预算；`delegation` 组由通用委派行换成专家行；
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是四处：
+  `persona` 增加调度名册、分派规则与委派预算（含收敛目标与"不要轮询步数"）；
+  `delegation` 组由通用委派行换成专家行；八个专家的成本纪律末尾各补一句检查点纪律；
   `compaction` / `tool-web` 三行加上 token 预算（出厂值见 [token 成本纪律](#token-成本纪律这些上限是怎么来的)）。
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、
   `@deepseek-ai/dsh-skill-filesystem`、`@deepseek-ai/dsh-tool-subagent-control` 等）。
@@ -709,6 +711,10 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 - **`install.ps1` 带 UTF-8 BOM，是有意的，不要去掉。** Windows PowerShell 5.1 在没有 BOM 时
   会按系统 ANSI 代码页读取脚本，中文会变成乱码并直接解析失败（本仓库已实测复现并修复）。
   这条同样适用于任何新写的、含中文的 `.ps1`。
+  **而且编辑工具会悄悄把它去掉**：本次交付里一次普通的文本替换就删掉了 BOM
+  （前三个字节从 `EF BB BF` 变成 `23 20 E5`），补回来之后 `Parser::ParseFile` 才重新 0 错误。
+  **改完这个文件请单独确认前三个字节仍是 `EF BB BF`** —— `git diff` 在"两边都有 BOM"时看不出差别，
+  但一次丢 BOM 的提交会让安装脚本在 5.1 上直接解析失败，而 diff 里只会看到几行注释改动。
 
 ## 给 AI 的安装指令
 

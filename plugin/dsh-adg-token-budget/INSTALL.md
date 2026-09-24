@@ -3,7 +3,7 @@
 这份文件是**操作清单**，只讲"怎么装、怎么开、怎么确认、怎么回滚"。
 插件做什么、每个键什么含义、安全设计、证据边界，见本目录的 `README.md`；
 两层预算的整体口径（含实测分布与 300 万这个默认值怎么来的）见仓库根 `README.md` 的
-「第二层：子代理 token 预算的硬兜底」一节。
+「第二层：子代理的步数检查点与 token 兜底」一节。
 
 **本文件是仓库文档，不在部署集合里** —— 装到 `$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`
 的是 `package.json` / `src/` / `README.md` / `examples/` / `LICENSE` 五项，`test/` 与 `INSTALL.md` 都不进去。

@@ -614,8 +614,8 @@ holding on to:
 - **The corpus keeps growing.** A re-read of the same session directory after
   this documentation pass found 32 children (up from 22), a maximum of 17,022,627
   and an average of 3,942,185 — every number in the table is a floor. The live
-  dry-run traffic in the previous section independently reached 9,824,410 on a
-  single child.
+  dry-run traffic in the previous section went further still: 5 of 5 governed
+  children crossed the 3,000,000 budget, and one reached **48,992,135**.
 
 That is exactly why `dryRun` exists: **calibrate against your own traffic before
 arming.** With `dryRun: true`, every soft/hard decision the plugin would make is
