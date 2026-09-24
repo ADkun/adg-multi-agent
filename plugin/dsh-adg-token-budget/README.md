@@ -493,6 +493,55 @@ slowly:
 | `ctx.get('sessionProjections')` resolves and `stateOf(…,'tokenUsage')` returns usable `totals` | the same line carries `usage=7651807` — a real cumulative figure, not a default |
 | `agent.cancel({kind:'parent'})` is reached on a live child | `hard stage: cancel`, i.e. the branch that issues the cancel |
 
+### The checkpoints now have live evidence, including the child's side of it
+
+On 2026-09-25 the row was armed at `dryRun: false` + `hardDryRun: true`, and **three
+real step checkpoints fired** — this was the stage's first honest evidence, and it
+arrived in two parts: the plugin's log line, and the message itself inside the
+delegated child's transcript.
+
+```
+2026-09-24T17:45:49.845Z step stage: nudged tier=1/3 step=12 usage=124291 budget=3000000 label=adg/fdd55c65-4584-4082-83d2-618570604e5f
+2026-09-24T17:55:04.609Z step stage: nudged tier=1/3 step=12 usage=104900 budget=3000000 label=adg/12bf2213-0322-4dfb-9c85-80e12066ab40
+2026-09-24T18:22:13.725Z step stage: nudged tier=1/3 step=12 usage=142986 budget=3000000 label=adg/41c07ec8-a997-47e7-8bb1-9457ccf4bd89
+```
+
+Reading the same events out of each child's session log (`session.v3.jsonl.zstd`,
+zstd frames) closes the loop. The first two children received the **old, directive**
+wording, and this is the message as it sits in the transcript, one millisecond after
+the log line — `role: user`, `source: {kind: 'plugin', plugin: 'dsh-adg-token-budget'}`:
+
+```json
+{"type":"user/message","seq":113,"time":1790272504616,"data":{"content":[{"type":"text","text":"【收敛检查点 1／3】调度代理提醒：这是你的第 12 步。\n请先做一次收敛判断……"}],"source":{"kind":"plugin","plugin":"dsh-adg-token-budget"},"role":"user","id":"4da24f75-…"}}
+```
+
+and what the child did next:
+
+| child | wording | the child's next message, opening words |
+| --- | --- | --- |
+| `fdd55c65` | old | *"I'm at step 12. I should converge. Let me assess what I have and what's missing."* |
+| `12bf2213` | old | *"I have enough evidence. Let me 收敛 and report."* |
+| `41c07ec8` | **new** | *"Let me assess. I have most of what I need. Remaining必需工作: 1. … 2. … 3. … Let me do 2 more fetches … then converge. I'll say I'm continuing briefly."* |
+
+Three things follow, and the third is the point of the redesign:
+
+1. **The injection path works end to end.** The message is in the transcript with this
+   plugin's id as its source, at the step the log recorded, and the child reacts to it.
+2. **The token price of asking early is small.** At step 12 these children had spent
+   **124k / 105k / 143k** tokens. A checkpoint at step 4 costs a fraction of that —
+   which is what makes an early, dense ladder affordable.
+3. **The two wordings produced the two different behaviours they were written for.**
+   Both children that received the directive wording said they would converge. The one
+   child that received the choice wording took the **continue** branch — and said so
+   explicitly, listing what it still considered necessary, instead of quietly trimming
+   its plan. That is branch 2 of the new body working as designed: the reminder was
+   read, considered, and legitimately declined.
+
+With `n = 1` per wording and different tasks, this is an illustration, not a
+measurement of the wording's effect; the honest comparison still needs the
+before/after step quantiles from `audit-steps.mjs`. What it does establish is that
+the message lands, is attributed correctly, and is acted on rather than ignored.
+
 The dry-run lines in the next section extend this to three further claims:
 `softRatio` is applied to the live cumulative figure (`would nudge` at 2,128,454
 with a 2,100,000 threshold), the hard comparison is applied to the same figure
@@ -593,21 +642,29 @@ exactly one line.
   of the injected message or its rendering in the child's transcript. The soft
   stage's *decision logic* is live-measured; its *effect* is not. (The stage is
   armed since 01:38:47, but no governed child has crossed 2,100,000 since.)
-- **Any step checkpoint, armed or dry.** The build that has it is loaded and the
-  row is armed, but no governed child has passed the first tier since the restart, so
-  the log holds **0** lines of either step-stage kind. Until one appears, the evidence
-  for this stage is the suite and the mutation pass, nothing more.
+- **Any step checkpoint, armed or dry.** ~~0 lines~~ — **observed on 2026-09-25**: three
+  injections, the message found in each child's transcript, and the child's reply read
+  from the next assistant message. See
+  [The checkpoints now have live evidence](#the-checkpoints-now-have-live-evidence-including-the-childs-side-of-it).
+  What that evidence still does **not** cover: a checkpoint on any tier other than the
+  first (`tier=1/3 step=12` ×3), a checkpoint under the **new** 14-tier ladder, a
+  checkpoint that fires while a child is also above the soft ratio (the folding path),
+  and a `dry-run step stage: would nudge` line, which this machine has still never
+  produced because the stage went from "no code" to "armed" without a calibrated state
+  in between.
 - **Whether an earlier, denser ladder helps or hurts.** The ladder was moved earlier
   on the argument that most children are far shorter than the average, and the wording
   was softened to make that safe. Both halves of that trade are **argued, not
   measured**: what is measured is the distribution the ladder is fitted to (37
-  children) and the fact that a checkpoint costs ~0.25% of the child bill. Whether a
-  child that receives nine checkpoints converges in fewer steps than the same child
+  children), the fact that a checkpoint costs ~0.25% of the child bill, and that the
+  three observed checkpoints cost only 105k–143k tokens of context. Whether a
+  child that receives fourteen checkpoints converges in fewer steps than the same child
   would have without them is exactly the question the audit rerun below is for.
-- **That an injected reminder changes a child's behaviour.** This is the whole
-  point of the feature and it is unmeasured: no line in this file, and no test,
-  can show that a child which receives `【收敛检查点 …】` converges faster. The
-  test-verified guardrails (the choice clauses, one message per step)
+- **That an injected reminder changes a child's behaviour.** Still unmeasured as an
+  *effect*: three children reacted to it (two said they would converge, one declined and
+  continued with reasons), which shows the reminder is read and acted on, but three
+  instances on three different tasks cannot show that it makes anything converge faster.
+  The test-verified guardrails (the choice clauses, one message per step)
   bound what the reminder is allowed to *say*; they do not measure what it *does*.
   Watching this needs a before/after step count on comparable delegations: run
   `node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"`
@@ -624,23 +681,28 @@ exactly one line.
 - **What the dispatcher renders** on a real cancellation: the
   `Partial output before the run ended: …` contract is read from first-party
   source, not watched.
-- **The settle edge.** `settled: released session state …` has never been
-  observed, although children have now passed through the guard — the child
-  cancelled at 13:53 never produced a settle line, and neither did the five
-  dry-run children.
-- **A `subagent/end` → resumed-child re-nudge cycle.**
+- **The settle edge.** ~~never observed~~ — **observed on 2026-09-25**:
+  `2026-09-24T17:55:33.298Z settled: released session state label=12bf2213-0322-4dfb-9c85-80e12066ab40`,
+  written 29 seconds after that child received its checkpoint and converged. The child
+  cancelled at 13:53 and the five dry-run children predate this line; the state release
+  is now confirmed rather than inferred.
+- **A `subagent/end` → resumed-child re-nudge cycle.** Still never observed: the one
+  settle line above is a child that simply finished.
 
 Everything else in this file is a code-level fact or a unit-test result.
 
 ### Current live state
 
-**Armed for real on 2026-09-25T01:38:47+08:00, after the restart that loaded this
-build.** The live row is `enabled: true`, `budgetTokens: 3000000`,
-`presets: ['adg']`, `stepNudge: true`, `stepTiers: [12, 24, 40]`, `softNudge: true`,
-**`dryRun: false`**, **`hardDryRun: true`** — i.e. the step checkpoints and the token
-wrap-up are injected for real, and the only stage still on paper is `agent.cancel`.
+**Armed for real on 2026-09-25T01:38:47+08:00, and running the redesigned ladder since
+02:25:14+08:00** — the latter arriving as a `config:`-only hot reload, with **no
+restart**. The live row is `enabled: true`, `budgetTokens: 3000000`,
+`presets: ['adg']`, `stepNudge: true`,
+`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`,
+`softNudge: true`, **`dryRun: false`**, **`hardDryRun: true`**, and `stepText` unset
+(so `stepText=builtin`) — i.e. the step checkpoints and the token wrap-up are injected
+for real, and the only stage still on paper is `agent.cancel`.
 
-The restart is what made this safe, and the pair of activation lines is the whole
+The restart is what made the arming safe, and the activation lines are the whole
 story. Before the restart, with the new package already on disk:
 
 ```
@@ -657,6 +719,25 @@ was re-applied by the new build:
 2026-09-24T17:37:18.586Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=true hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
 2026-09-24T17:38:47.549Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
 ```
+
+That pair shows the 17:37 restart had loaded the *first* build of the step stage. The
+redesign needed a second restart, and the three lines below are how it landed —
+note that only the last one is a hot reload, which is exactly the boundary this
+project keeps documenting:
+
+```
+2026-09-24T18:18:22.774Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-24T18:23:27.177Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[12, 24, 40] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-24T18:25:14.773Z activation: active createUserMessage=profile-fallback:web budgetTokens=3000000 softThreshold=2100000 softRatio=0.7 presets=[adg] cacheReadWeight=1 softNudge=true stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false hardDryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+```
+
+The 18:18 line is the new code proving itself (`stepText=` is the field only this
+build writes) while the ladder was still the old one; the 18:25 line is the same
+process, with the ladder changed, **without a restart**. One caveat that comes with
+any of these reloads: re-applying the row starts a fresh residency epoch, so a child
+that is mid-run has its step count and its once-per-epoch flags reset. Its next step
+is counted as step 1 again, and it can be reminded for a tier it had already spent.
+That is inherent to the state being per-application rather than per-session-log.
 
 The 17:37 line is the new build proving itself: `stepNudge=`, `stepTiers=[12, 24, 40]`
 and `hardDryRun=` are present, so the step stage exists, `stepTiers` parsed into
