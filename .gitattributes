@@ -1,0 +1,3 @@
+# 保证 install.sh 在任何平台 clone 出来都是 LF，否则在 macOS/Linux 上 sh 执行会出错。
+* text=auto
+*.sh text eol=lf
