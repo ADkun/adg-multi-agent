@@ -6,7 +6,9 @@
 //   2. 每个专家行都齐全：provider / toolName / backgroundMode / persona / toolFilter.allow；
 //   3. toolName 全局唯一，且形如 `agent_<name>`；
 //   4. allow 名单只写"已注册的工具名"—— dsh-tools 的 restrict() 遇到未知名会直接抛错
-//      （`names unknown global tool ...`），所以这里提前拦下来；
+//      （`names unknown global tool ...`），所以这里提前拦下来；条件性注册的名字
+//      （bash / read_image）与策略越界（workflow / ralph）只给提示 —— 判错只留给
+//      "这次委派必然抛错"的情形；
 //   5. 不存在通用 `subagent` / `subagent_fork` 委派行；
 //   6. 文件顶部调度 persona 的名册与专家行一一对应（双向，不能只加行不改名册）。
 //
@@ -37,6 +39,7 @@ const KNOWN_TOOLS = new Set([
   'read',
   'write',
   'edit',
+  'read_image',
   'glob',
   'grep',
   // background jobs（tool-jobs）
@@ -59,6 +62,23 @@ const KNOWN_TOOLS = new Set([
   'web_fetch',
   'present',
 ])
+
+/**
+ * 条件性注册的名字：通常都在，但缺条件时根本没注册，写进 allow 会让那一次委派直接抛
+ * `names unknown global tool`。静态检查求值不了 `!!js`，也判断不了服务是否挂载，所以只提示。
+ */
+const CONDITIONAL_TOOLS = new Map([
+  ['bash', 'Windows 上 tool-bash 被 disabled 行关掉（只在非 win32 注册）'],
+  ['read_image', '依赖 attachments 服务（base 组合里恒有），服务缺失时不注册'],
+  ['subagent_codex', '对应的 disabled 行没启用时不注册'],
+  ['subagent_claude_code', '对应的 disabled 行没启用时不注册'],
+])
+
+/**
+ * 只对调度智能体开放：专家拿到它就能绕开名册再开一个不受限的子代理。
+ * 注意这是策略问题而不是"必然抛错"——这两个名字在本组合里确实注册了，restrict() 会接受。
+ */
+const SCHEDULER_ONLY = new Set(['workflow', 'ralph'])
 
 const errors = []
 const warnings = []
@@ -153,11 +173,20 @@ for (const row of rows) {
   else if (row.personaChars < 60) warn(`第 ${row.line} 行 ${row.id}：persona 只有 ${row.personaChars} 字，可能没写清边界与越界处理`)
   if (row.allow.length === 0) fail(`第 ${row.line} 行 ${row.id}：toolFilter.allow 为空`)
   for (const tool of row.allow) {
-    if (KNOWN_TOOLS.has(tool) || seen.has(tool)) continue
+    if (SCHEDULER_ONLY.has(tool)) {
+      warn(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是策略越界——它只留给调度智能体（restrict() 会接受它、不会让委派失败，但专家拿到就能绕开名册开任意代理）`)
+      continue
+    }
+    if (KNOWN_TOOLS.has(tool)) {
+      const reason = CONDITIONAL_TOOLS.get(tool)
+      if (reason !== undefined) {
+        warn(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是条件性注册的名字（${reason}）——条件不满足时这一次委派会抛 names unknown global tool`)
+      }
+      continue
+    }
+    // 允许把别的专家的 `agent_*` 名字写进 allow：这是"让某个专家能直接转交"的官方开关。
+    if (seen.has(tool)) continue
     fail(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 不是本组合注册过的工具名——restrict() 会抛 "names unknown global tool"`)
-  }
-  if (row.allow.includes('workflow') || row.allow.includes('ralph')) {
-    warn(`第 ${row.line} 行 ${row.id}：allow 里出现 workflow/ralph，专家可借此绕开名册开任意代理`)
   }
 }
 

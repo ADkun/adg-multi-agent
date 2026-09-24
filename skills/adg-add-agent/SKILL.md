@@ -72,6 +72,9 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   `names unknown global tool ...`，委派会当场失败。合法名单见 `tools/check-preset.mjs` 里的
   `KNOWN_TOOLS`（本组合注册过的工具名：shell、filesystem、jobs、skill/goal、委派控制、
   ask_user/todo/web/present 等）—— 改 composition 的 tool 行时同步那份清单，改完跑一次自检。
+  注意**条件性注册**的名字：`bash` 被 Windows 上的 `disabled` 行关掉、`read_image` 依赖
+  `attachments` 服务（base 组合里恒有）、`disabled` 的 codex/claude-code 行同理。自检对这类
+  名字只给「提示」；真在缺条件的部署上用到，那一次委派会抛错而不是挂载失败。
 - **有 `pwsh` 的专家要同时给 `job_list` / `job_output` / `job_kill`**，否则后台跑起来的任务取不回来。
 
 ## 本技能从哪来
