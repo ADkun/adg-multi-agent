@@ -118,7 +118,9 @@ Search Agent），后三个是 Adg 原有的代码向专家。缺口一栏写的
 | （Marvis 无对应） | `agent_coder` | 按已确定的方案改工作区代码，并运行编译/测试自证 | Adg 原有：只在当前工作区内改动文件；不做需求解读、方案设计与系统级运维 |
 | （Marvis 无对应） | `agent_reviewer` | 对已有改动做对抗性审查，尽量用只读命令或测试验证 | Adg 原有：只报告不修改；每条结论给路径与行号或命令依据 |
 
-## 浏览器专家需要完全权限（硬约束、根因与处置）
+## 浏览器专家需要完全权限
+
+本节写三件事：**硬约束**（为什么必须切权限）、**根因**（实测到哪一层）、**处置**（preset 侧唯一能做的两道闸门）。
 
 **结论先说：**`agent_browser` 要做真正的浏览器自动化，**必须**让本会话处于 `danger-full-access`
 （界面 Permissions 选择器里 id 为 `danger-full-access` 的那一项，或 `/permission danger-full-access`）。

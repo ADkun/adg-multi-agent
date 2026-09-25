@@ -32,7 +32,7 @@ last_reviewed: 2026-09-25
 | 子代理转写 | `C:\Users\cenqian\.dsh\sessions\…\session.v3.jsonl.zstd` | 注入消息的原文与子代理的回应，与日志行毫秒级对齐 |
 | 审计脚本 | `D:\dsh\.dsh-token-audit\audit-run.mjs`（成本）/ `audit-steps.mjs`（步数分布） | 从会话目录重算；报告写到同目录的 `audit-report.txt` / `audit-report.steps.txt`。`audit-steps.mjs` 打印 `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`、排序表、直方图，以及"每个候选 tier 会命中谁" |
 | 变异验证 | `D:\dsh\.adg-step-mutations\run-mutations.ps1` | 每个变异一个独立目录，跑完把原始 `node --test` 输出留在旁边。**不属于任何交付包** |
-| 沙箱探测（§11） | `D:\dsh\_sbx_probe\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log` / `probe2-*.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
+| 沙箱探测（§11） | `D:\dsh\_sbx_probe\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
 
 ## 1. 步数分布与阶梯校准（真机实测）
@@ -228,7 +228,7 @@ node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"
 也就是「受限令牌的孙进程」，与专家侧的实际运行条件一致。
 **复现脚本**：`D:\dsh\_sbx_probe\probe1.js`（stdio 与浏览器启动 + 真驱动一次 CDP）、
 `D:\dsh\_sbx_probe\probe2.js`（按变体收集浏览器 stderr）；原始输出在 `D:\dsh\_sbx_probe\` 下的
-`probe1.log` / `probe2.log` / `probe2-*.err.txt`。**这两个脚本不属于任何交付包**
+`probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`（如 `edge-dumpdom.err.txt`）。**这两个脚本不属于任何交付包**
 （与 `D:\dsh\.dsh-token-audit\` 那批审计脚本同一口径）。B 列是同一份脚本在同一天重跑的，不是旁证。
 
 | 探测 | A：`workspace-write` | B：`danger-full-access` |

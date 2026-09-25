@@ -17,9 +17,10 @@ last_reviewed: 2026-09-25
 - `preset/design.md`：`SchedulerPersona` 新增不变量 I11（派发 `agent_browser` 前必须有权限闸门、且闸门只能是提示级）；「不负责」清单补一条（不拥有沙箱与审批栈的**判定入口**）；非功能红线补一条（禁止删掉或绕过该闸门）。
 - `preset/AGENTS.md`：模块特有红线补一条（I11）。
 - `preset/testing-guide.md`：不变量全表补 I11 的两条用例（人工 review + 本地文本检索），如实标注**未实现**。
-- 根 `README.md`：新增「浏览器专家需要完全权限（硬约束、根因与处置）」一节（A/B 真机实测表、三问三答的源码依据、两道闸门的口径、备选方案的取舍、「这是流程闸门不是安全边界」）；专家名册 Browser Agent 行、怎么用派发表 `agent_browser` 行、「兼容性」的实质改动清单与两条说明同步。
+- 根 `README.md`：新增「浏览器专家需要完全权限」一节（A/B 真机实测表、三问三答的源码依据、两道闸门的口径、备选方案的取舍、「这是流程闸门不是安全边界」）；专家名册 Browser Agent 行、怎么用派发表 `agent_browser` 行、「兼容性」的实质改动清单与两条说明同步。
 - `docs/evidence.md`：新增 §11「浏览器自动化的沙箱前提（真机实测 A/B）」；§8 未观测清单补两条（闸门是否真的触发、沙箱外手工拉起浏览器 + 连 CDP 端口）；证据来源表补一行沙箱探测脚本。
 - 未改动：`install.ps1` / `install.sh`（部署集合没变）、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
+- 引用真实性复核（按 `docs/docs-guide.md` §5 逐条判存在），更正三处：`docs/evidence.md` 证据来源表与 §11 里那个不存在的 `probe2-*.err.txt` 改成实际文件名形状 `<变体>.out.txt` / `<变体>.err.txt`（如 `edge-dumpdom.err.txt`）；根 `AGENTS.md` 去掉手写的「`README.md`（905 行）」行数（已漂移到 986，且规范禁止手写会漂移的副本）；README 小节标题去掉括号后缀，让全仓 9 处「浏览器专家需要完全权限」引用逐字命中标题。
 
 ## 2026-09-25（晚·三）— 按对抗性审查结论修正文档
 
