@@ -12,9 +12,14 @@
  * | step | the child is entering its `stepTiers[n]`-th step | `next()` first, then append the nth convergence reminder to the returned `{kind:'enter'}` decision's `messages` — at most once per tier per residency epoch |
  *
  * The step stage exists because it is the one lever the dispatcher cannot pull
- * itself. The dispatcher owns the *policy* — its persona tells it to put a
- * convergence target in every delegation prompt — but it cannot see how many
- * steps a running child has taken: polling for it re-sends the dispatcher's own
+ * itself, and it is now the *only* place the reminder lives: the persona used to
+ * tell the dispatcher to put a convergence scale in every delegation prompt and
+ * not to poll for step counts, and both lines were deleted. The first duplicated
+ * a signal this plugin already sends from `stepTiers` — and the two would drift,
+ * since a tier change is a hot-reload while a persona change needs a restart.
+ * The second is already stated by the `job_output` / `subagent` tool docs. What
+ * remains genuinely belongs here: the dispatcher cannot see how many steps a
+ * running child has taken, and polling for it re-sends the dispatcher's own
  * context (the largest in the run, 59% of the audited bill) once per poll, which
  * costs far more than the reminder saves. So the reminder is injected here,
  * deterministically and on the dispatcher's behalf. **At most one reminder

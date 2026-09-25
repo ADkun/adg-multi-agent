@@ -67,9 +67,15 @@ effect.
 
 ## The step checkpoints
 
-The step trigger is the one lever a dispatcher cannot pull itself. The dispatcher
-owns the *policy*: its persona tells it to put a convergence scale in every
-delegation prompt (as a reference, explicitly not a hard bound). But it cannot see how
+The step trigger is the one lever a dispatcher cannot pull itself, and this plugin
+is now the *only* place the reminder lives: the `adg` persona used to carry a
+matching policy — tell each delegation roughly how many steps it should converge
+in, and don't poll for step counts — and both lines were deleted from it. The
+first restated a signal this plugin already sends from `stepTiers`, with a second
+set of numbers that would silently drift out of sync (a tier change hot-reloads; a
+persona change needs a restart). The second is already stated by the
+`job_output` / `subagent` tool descriptions. What stays here is the part no prompt
+can do: the dispatcher cannot see how
 many steps a running child has taken.
 Polling for it would re-send the dispatcher's own context — the largest in the run
 (59% of the audited `adg` bill) — once per poll, costing far more than the
