@@ -112,11 +112,87 @@ Search Agent），后三个是 Adg 原有的代码向专家。缺口一栏写的
 | File Agent | `agent_file` | 文件与文档的检索定位、深入阅读与问答、复制/移动/重命名/批量归类、格式转换与文档生成 | 图片内容理解走 `read_image`（把图片交给模型看，需要模型路由支持图像输入，调用报错就如实说明）；文本类文档（PDF/Word/Excel/PPT）用 `pwsh` 调本机已有工具提文本。OCR（图片里的文字）、人像/场景检索、跨设备传输**取决于本机工具链**（Python 库、Office、同步盘目录等）：persona 要求先用 `pwsh` 探测可用工具，缺什么就直说「本机缺少 X，无法完成」并给替代方案，不允许假装完成 |
 | Computer Agent | `agent_computer` | 系统与硬件信息查询、系统设置修改、优化清理、故障排查、窗口与桌面管理、进程/服务/计划任务控制 | 不依赖模拟点击的 **Windows API 路线可用**（PowerShell / CIM / P-Invoke）。会改变系统状态的操作要先说明影响与回退；不可逆或高风险操作必须先停下、写明「需要用户确认后才能执行」 |
 | App Agent | `agent_app` | 桌面软件启停/安装卸载与内部功能调用、Android 模拟器上的 App、微信小程序 | Marvis 的 GUI 视觉识别 + 模拟点击在 DSH **没有对应工具**：只能走 CLI / adb / winget / 软件自带接口。凡是「看界面点按钮」类需求**必须明说不具备**，并给出替代（应用 CLI、adb 命令、官方 API、或请用户手动完成） |
-| Browser Agent | `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | 优先 Playwright / Puppeteer / Edge CDP（用 `pwsh` 调 node 脚本）；没有可用自动化运行时就**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证必须立刻停止并请用户介入，不得绕过 |
+| Browser Agent | `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | **本会话必须是「完全权限」（`danger-full-access`）—— 硬约束，理由与源码依据见下一节「浏览器专家需要完全权限」**：在 `workspace-write` / `read-only` 下本机 Chrome / Edge **根本起不来**（受限令牌禁止创建 Chromium 内部 IPC 必需的有名管道），所以调度者会先停下来问用户。能跑起来时：优先 Playwright / Puppeteer / Edge CDP（用 `pwsh` 调 node 脚本）；没有可用自动化运行时就**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证必须立刻停止并请用户介入，不得绕过 |
 | Search Agent | `agent_search` | 多轮联网检索与多源资料综述、关键信息引用溯源 | **只联网**：`allow` 里只有 `web_search` / `web_fetch`，本地文件与系统级请求被硬性排除（这不是偏好）。天气、汇率、股价这类简单事实查询由调度智能体**直接回答**，不派给它 |
 | （Marvis 无对应） | `agent_researcher` | 在本仓库/本机文件里定位实现、配置与出处，只读、带行号 | Adg 原有：**硬只读** —— `allow` 里没有 `write` / `edit` / `pwsh`，真的改不动东西；公网发现式调研归 `agent_search`，它自己的 `web_search` / `web_fetch` 只用于已知 URL 的定点核对 |
 | （Marvis 无对应） | `agent_coder` | 按已确定的方案改工作区代码，并运行编译/测试自证 | Adg 原有：只在当前工作区内改动文件；不做需求解读、方案设计与系统级运维 |
 | （Marvis 无对应） | `agent_reviewer` | 对已有改动做对抗性审查，尽量用只读命令或测试验证 | Adg 原有：只报告不修改；每条结论给路径与行号或命令依据 |
+
+## 浏览器专家需要完全权限（硬约束、根因与处置）
+
+**结论先说：**`agent_browser` 要做真正的浏览器自动化，**必须**让本会话处于 `danger-full-access`
+（界面 Permissions 选择器里 id 为 `danger-full-access` 的那一项，或 `/permission danger-full-access`）。
+在 `workspace-write` / `read-only` 下，本机的 Chrome 与 Edge **根本起不来** —— 这不是配置问题，
+也不是 persona 能绕过去的偏好，是 Windows 沙箱后端的机制。这条约束**无法从 preset 侧修掉**
+（下一节逐条给源码依据），所以本 preset 的处置是把它做成**调度侧的前置闸门**：派发 `agent_browser` 之前，
+调度智能体先读自己上下文里那行 `Current DSH file policy:`，不是 `danger-full-access` 就先
+`ask_user_question` 问一次，再按回答决定。
+
+### 根因：受限令牌禁止创建浏览器内部 IPC 必需的有名管道
+
+沙箱在 Windows 上用 `WRITE_RESTRICTED` 受限令牌运行子进程（`@deepseek-ai/dsh-sandbox-windows-acl`）。
+这个后端自己的 README 把该边界写在「已知限制」里：**受限孙进程的管道 stdio 捕获不可用** ——
+libuv 的管道 stdio 用有名管道，其 client 端打开所请求的写访问没有任何 restricting SID 被授予，
+所以受限进程内 `spawn(..., { stdio: 'pipe' })` 以 **EPERM** 失败。Chromium 的 Mojo IPC 同样走有名管道，
+于是浏览器在**进程初始化阶段**就死掉。2026-09-26 在本机做了一次 A/B：同一台机器、同一个 `node`、
+同一批浏览器二进制，**只改会话文件策略**（复现脚本与原始输出见 `docs/evidence.md` §11）：
+
+| 探测 | `workspace-write` | `danger-full-access` |
+|---|---|---|
+| `spawn('cmd.exe', …, { stdio: 'pipe' })` | **`spawn THREW EPERM`** —— 后端的文档边界，实测复现 | 退出码 0 |
+| 同一条命令改用 `stdio: 'ignore'` / `'inherit'` | 退出码 0 —— 换 stdio 能让**别的**程序跑起来 | 退出码 0 |
+| `chrome.exe --version` | 退出码 0 —— 二进制本身没问题 | 退出码 0 |
+| `chrome.exe --headless=new --no-sandbox --remote-debugging-port=…` | **退出码 21**，CDP 端口从未起来 | **退出码 0，CDP 起来（`Chrome/152.0.7977.76`），导航 + 取回页面文本成功** |
+| `msedge.exe` 同一组参数 | **`FATAL:mojo\public\cpp\platform\platform_channel.cc:183] Check failed: . : 拒绝访问。(0x5)`** | 退出码 0 |
+
+也就是说：**换 stdio 救不了浏览器**（它要的是进程内部 IPC，不是它自己的 stdout），
+`--no-sandbox` / `--single-process` / `--no-zygote`、profile 放工作区或临时目录**都试过，全部无效**；
+**同一批命令在 `danger-full-access` 下全部转绿**。本机没装 Firefox（只装了 Chrome 与 Edge），
+**其它浏览器未测试**；全访问那一列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回文本」，
+Edge 只做到 `--dump-dom` 退出码 0。
+
+### 为什么不能从 preset 侧修（三个问题的答案）
+
+| 问题 | 结论 | 源码依据（**源码级事实**） |
+|---|---|---|
+| 父智能体能否给子智能体指定权限范围？ | **不能** | `dsh-tool-subagent` 的实例配置只有 `provider` / `toolName` / `modelSelectionSettings` / `enableRunInBackground` / `backgroundMode` / `agentOptions` / `persona` / `toolFilter` / `maxDepth`；它的 `lib/index.js` 里 **`sandbox` 零命中**，模型可见 schema 也只多 `provider` / `model` / `reasoning_effort` / `run_in_background` |
+| 能否用 preset 文件改默认权限范围？ | **不能** | `sandbox-policy`（部署默认 `mode`）、`permission`（预设表）、`approval` 三行都在 **host-plane** 的 `@deepseek-ai/dsh-base/cordis.patch.yml` 里；模式解析是 `request.mode ?? 会话的 sandbox/mode 事件 ?? 部署默认`（`dsh-sandbox-policy/lib/index.js` 的 `resolve()` / `overrideOf()`），**没有 preset 侧入口**能改一个会话的模式。`dsh-permission-presets` 自己的「已知限制」第一条就写着：预设只组合沙箱模式与审批策略这两个机制级旋钮，agent / profile 选择尚未纳入 |
+| 子代理能否自己升权（`sandbox_permissions` + 用户批准）？ | **不能** | 委派时子会话的审批策略被**钉成 `never`**（`dsh-subagent/lib/index.js` 的 `captureDelegatedPolicyOverrides()`，注释原话 "the approval policy is pinned to `'never'` regardless of the parent's own policy"）；`dsh-user-approval` 对 `never` 直接 `return "rejected"`、**不弹窗**。所以专家侧的升权重试是失败关闭，不是弹出审批 |
+
+**唯一能把子代理送进完全权限的路径是：用户在会话里把权限切到 `danger-full-access`。**
+子会话只继承父会话的**显式**覆盖值 —— `captureDelegatedPolicyOverrides()` 取的是
+`parent.ctx.get('sandboxPolicy')?.overrideOf(parent.session)`，也就是那条 `sandbox/mode` 事件，
+而切换权限正是写入这条事件的动作（**部署默认值不会被继承**）。
+
+### 现在的处置：调度侧两道闸门（提示级，不是权限强制）
+
+1. **派发前**（调度 persona 规则 9）：不是 `danger-full-access` 就先 `ask_user_question`，
+   选项是「已切到完全权限，继续派发」／「改用降级方案：只做 `web_fetch` 静态抓取（不能交互）」／
+   「暂不做这项网页操作」。用户答已切换后，**先确认上下文那行真的变了**再派发；没变就如实说没切成功。
+2. **失败时**（`agent_browser` persona）：命中上面那张表的任一签名就**立刻停手**，如实报
+   「本会话不是完全权限，浏览器自动化不可用」+ 报错原文，不许反复换参数重试、不许假装完成。
+
+**这是流程闸门，不是安全边界**：它靠 persona 被遵守，机制上拦不住一个不听话的模型 ——
+与「`allow` 是真实边界、persona 只是补充说明」那套口径一致（见「设计要点」）。
+
+**刻意没做的事（备选方案与取舍）：** 可以用一个 preset 侧的 `tools/pre-execute` 监听器把这条闸门做成
+**确定性拒绝** —— 那个瀑布是真实存在的（`dsh-tools` 的 `waterfall(carrier, 'tools/pre-execute', exec, …)`，
+非 `allow` 的判定会带着 `reason` 变成一次 `Error:` 工具结果），而 `ctx.get('sandboxPolicy').resolve({ session })`
+能算出**含部署默认**的有效模式。没有这么做，是因为它会把一条「流程提醒」升级成硬拦（连用户想降级执行也会被一并挡掉），
+而要做对就得再起一个包、一条部署路径与一套测试；收益（拦住不听话的模型）与体积不成比例。
+真要做时，它应当拒绝 `agent_browser` 调用、并回一条指向 `ask_user_question` 的说明，
+**而不是**自己去改沙箱模式 —— 绕过用户批准改沙箱模式，正是这套系统刻意不提供的口子。
+
+### 证据档位与未观测
+
+- **真机实测**（2026-09-26，同一台机器上的 A/B，只改会话文件策略）：上面那张两列探测表；
+  原始输出与复现脚本见 `docs/evidence.md` §11。「全访问下浏览器确实可用」是**实测**（Chrome 走完了
+  启动 → 连 CDP → 导航 → 取回页面文本），不再是用户报告。
+- **源码级事实**：三个问题的结论，以及两处「子代理被钉死」的位置（路径见上表）。
+- **未观测**：「调度者是否真的每次都先问」**没有实测** —— 闸门刚落地，还没有一次真实 Adg 会话走过它；
+  「用户在沙箱外自己拉起带 `--remote-debugging-port` 的浏览器、专家只连那个 CDP 端口」这条路
+  **设计上可能可行**（受限策略下网络不受限，受限进程自建监听与本地 `fetch` 都通）但
+  **本仓库未实测**，不许写成可行 —— 而且既然全访问下浏览器本来就能用，这条路只在「用户不愿切权限」时才有意义。
 
 ## 怎么用
 
@@ -128,7 +204,7 @@ Search Agent），后三个是 Adg 原有的代码向专家。缺口一栏写的
 | 文件与文档（检索、整理、转换、生成） | `agent_file` |
 | 系统 / 硬件 / 设置 / 清理 / 故障排查 | `agent_computer` |
 | 软件与 App 操作（CLI、adb、winget、小程序） | `agent_app` |
-| 网页登录 / 填表 / 点击 / 多页抓取 | `agent_browser` |
+| 网页登录 / 填表 / 点击 / 多页抓取 | `agent_browser`（**需本会话为完全权限**；不是的话调度者会先停下来问你 —— 见「浏览器专家需要完全权限」） |
 | 全网检索与综述（只搜不点） | `agent_search` |
 | 在本地代码库与文件里定位事实与出处 | `agent_researcher` |
 | 改工作区代码并自证 | `agent_coder` |
@@ -817,11 +893,15 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是四处：
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是五处：
   `persona` 增加调度名册与分派规则（步数收敛不写在调度者 persona 里，交给下面的插件在运行期
   注入）；`delegation` 组由通用委派行换成专家行；八个专家的 persona 末尾各留一句收敛纪律；
   `compaction` / `tool-web` 三行**不覆盖任何体积旋钮**（回归出厂默认，
-  理由见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门)）。
+  理由见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门)）；
+  `agent_browser` 多一条**权限前置闸门**（本机沙箱下浏览器起不来，见「浏览器专家需要完全权限」）。
+- **`agent_browser` 需要 `danger-full-access` 是本机的硬约束，不是本 preset 的选择。**
+  它无法从 preset 侧修（父智能体不能指定子智能体权限、子代理不能自己升权、沙箱行在 host-plane），
+  所以闸门做在调度侧、且是**提示级**的：见「浏览器专家需要完全权限」一节的三问三答与取舍。
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、
   `@deepseek-ai/dsh-skill-filesystem`、`@deepseek-ai/dsh-tool-subagent-control` 等）。
 - 新增/删除/修改智能体后需要重启 dsh 才生效，这是 preset 挂载机制决定的，不是缺陷。
