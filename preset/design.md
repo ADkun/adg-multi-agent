@@ -13,6 +13,7 @@ last_reviewed: 2026-09-25
 
 - 不拥有工具注册表与工具实现：它们由 host 组合的 `base.cordis.yml` / `web.cordis.yml` 提供；
 - 不拥有沙箱与审批栈，**也不拥有它们的判定入口**：`sandbox-policy` / `permission` / `approval` 三行都在 host-plane 的 `dsh-base/cordis.patch.yml`，`dsh-tool-subagent` 没有权限字段、子代理的审批策略在委派时被钉成 `never`，所以「让 `agent_browser` 能起浏览器」这件事在 preset 侧**只能表达成提示级的流程闸门**（I11），不能表达成权限强制；
+- 不拥有**用户问答通道**（`ask_user_question`）：它由调度者独占使用，专家行只能把未决问题写进最终结果、由调度者转达（I12）；专家行里禁止出现「问用户」这类要求。
 - 不拥有持久化与模型路由；
 - 不做上下文压缩阈值、单条工具结果截断、抓取与检索上限 —— 承载它们的三行（`compaction-basic` / `tool-result-pruner` / `tool-web`）刻意只声明插件、不写 `config`，一律用插件出厂默认值；
 - 不做运行时的步数收敛提醒 —— 那是 host-plane 插件 `dsh-adg-token-budget`（包名是历史名称，它不比较任何 token 阈值）；
@@ -71,6 +72,7 @@ last_reviewed: 2026-09-25
   - I9: 每个启用专家行的 `toolName` 必须出现在名册里；名册提到的每个 `agent_*` 必须有对应行（双向）。
   - I10: 名册里禁止出现「委派预算 / 让步数区间 / 不要轮询步数」这类与插件职责重叠的政策措辞。
   - I11: 禁止删掉或绕过 `agent_browser` 的**权限闸门**，且该闸门禁止被表述成权限强制。闸门的两半：调度 persona 里必须有一条「派发 `agent_browser` 前先读上下文里的当前文件策略，不是 `danger-full-access` 就先 `ask_user_question`」的规则；`agent_browser` 的 persona 里必须写明受限策略下的失败签名与「命中就停手、如实报出」。**它只能是提示级的**：preset 侧没有权限判定入口（见「不负责」），所以禁止在它的文档或注释里把它写成安全边界。
+  - I12: 禁止任何专家行（被委派的子代理）直接调用 `ask_user_question`，也禁止把它加进任何专家行的 `allow`。人工介入（登录墙／验证码／二次验证）只能走「专家停手并把未决问题写进最终结果 → 调度者用 `ask_user_question` 转达 → 按用户回答重派／换方式／收手」，且**同一条路径的人工介入每任务至多一轮**。依据：`@deepseek-ai/dsh-tool-ask-user` 按 preset 注册（不在全局工具层），`@deepseek-ai/dsh-user-questions` 的 `ask()` 只认 live runtime root（`agents.roots()`），子代理拿 `DELEGATED_CALLER`，其错误文本自己就规定「include the unresolved question or decision in the child agent's final result」。
 
 ## 对外接口
 
@@ -88,12 +90,13 @@ last_reviewed: 2026-09-25
 - persona 里禁止写 token／读取预算。来源：根 `README.md`「persona 层保留的政策：只剩专家侧的收敛纪律」与 `docs/evidence.md` §2（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。
 - 要改体积旋钮却没拿得出前后对比数字时，禁止改动。来源：`docs/evidence.md` §10「怎么重新测量」（两条审计命令必须改动前后各跑一次）。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门（I11），也禁止把它写成安全边界。来源：真机实测 A/B，`docs/evidence.md` §11（`workspace-write` 下 Chrome 退出码 21、Edge Mojo `拒绝访问 (0x5)`；`danger-full-access` 下同一批命令全部退出码 0 且 CDP 真驱动成功），以及源码级事实三问（父智能体不能指定子智能体权限 / preset 不能改会话模式 / 子代理不能自己升权）。
+- 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「请用户介入／问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`。来源：源码级事实，`@deepseek-ai/dsh-user-questions` 的 `ask()`（带 agent 时只认 `agents.roots()`）与 `@deepseek-ai/dsh-tool-ask-user` 的 `execute`（把 `exec.agent` 传下去）；转达机制见 `docs/evidence.md` §12。
 
 ## For Agents
 
 动手前先读：`preset/AGENTS.md` → `preset/design.md` → 视改动再读 `skills/adg-add-agent/SKILL.md`。
 
-绝不能做：上面 8 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
+绝不能做：上面 9 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
 
 停止并升级人类：要推翻既有语义；红线之间冲突；需求超出本对象边界；要改体积旋钮却拿不出前后对比数字。
 

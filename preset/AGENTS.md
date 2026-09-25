@@ -21,6 +21,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 禁止加回通用 `subagent` / `subagent_fork` 行（`design.md` 红线 1）。
 - 禁止把「委派预算 / 让步数区间 / 不要轮询步数」写进调度 persona（I10）。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门，也禁止把它写成安全边界（I11）：本机沙箱（`workspace-write` / `read-only`）下浏览器**根本起不来**（A/B 实测见 `docs/evidence.md` §11），而这件事**无法从 preset 侧强制**（父智能体不能指定子智能体权限、子代理不能自己升权、权限行都在 host-plane），所以闸门只能是**提示级**的流程约束。
+- 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「自己去问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`（`ask()` 带 agent 时只认 live runtime root），人工介入必须由调度者转达，且**同一条路径的人工介入每任务至多一轮**。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`（`design.md` 红线 4）。
 
 根 `AGENTS.md`「关键红线」里的其余各条同样适用于本模块，此处不重复。
@@ -32,6 +33,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | 专家名册 / 调度分派规则 | `design.md` → `skills/adg-add-agent/SKILL.md` → 改完 `node tools/check-preset.mjs` |
 | 承载体积旋钮的那三行 | `docs/evidence.md` §2 / §3 / §8 / §10（重测口径照抄 §10） |
 | 网页交互（`agent_browser`）的权限前提 | `design.md` I11 → `docs/evidence.md` §11（A/B 实测）→ 根 `README.md`「浏览器专家需要完全权限」（三问三答与备选方案取舍） |
+| 登录墙／验证码的人工介入 | `design.md` I12 → `docs/evidence.md` §12（子代理不能问用户的源码依据 + 窗口存活／CDP 重连的机制实测）→ 根 `README.md`「登录墙与验证码：人工介入协议」 |
 | 「治理哪些会话」这件事 | `plugin/dsh-adg-token-budget/design.md`（`presets` 配置 × `session.header.agentPreset` 的乘积） |
 | 校验口径本身 | `tools/AGENTS.md` |
 

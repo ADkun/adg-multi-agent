@@ -185,12 +185,35 @@ Edge 只做到 `--dump-dom` 退出码 0。
 真要做时，它应当拒绝 `agent_browser` 调用、并回一条指向 `ask_user_question` 的说明，
 **而不是**自己去改沙箱模式 —— 绕过用户批准改沙箱模式，正是这套系统刻意不提供的口子。
 
+### 登录墙与验证码：人工介入协议
+
+**能让你手动去登录／过验证码，但不能由浏览器专家直接问你。** 分工是：专家**把窗口开好并停下来说明** → 调度者用 `ask_user_question` **转达你的选择** → 按你的回答决定「重派／换方式／收手」。
+
+**为什么专家问不了（源码级事实）**：`ask_user_question` 由 `@deepseek-ai/dsh-tool-ask-user` 按 **preset** 注册（**不在**全局工具层，Adg 组合里那一行是给调度者的，见 `preset/agent.cordis.yml` 的 `tool-ask-user`）；而 `@deepseek-ai/dsh-user-questions` 的 `ask()` 在带上调用者 agent 时只认 **live runtime root**（`agents.roots()`），被委派的子代理会拿到 `DELEGATED_CALLER` —— 那句错误文本自己就规定了做法：
+「human interaction is unavailable while the calling agent is owned by another live agent; **include the unresolved question or decision in the child agent's final result**」。
+**所以不要**把 `ask_user_question` 加进专家的 `allow` 名单（加了也不解决任何问题）。
+
+| 你的回答 | 调度者做什么 | 专家做什么 |
+|---|---|---|
+| 「我去手动登录／过验证，已完成」 | 重新派发**同一个** `agent_browser`，带上专家上一轮报的「CDP 端口 / profile 目录」与「用户已完成」 | **CDP 重连那个已有实例**继续，**不新开浏览器**（登录态在旧实例的 profile 里） |
+| 「不想登录或验证」 | 停手，如实汇总「因为未登录，X 拿不到」 | 停手；不绕过、不换路径再试、不拿别的来源冒充 |
+| 「试过了还是被挡」 | 停手，把结论交回你换方案；**同一条路径的人工介入每任务至多一轮** | 停手，报「人工验证未通过」，不再要求第二次尝试 |
+| 「换种方式」 | 走降级路径（`web_fetch` 静态抓取／换来源），或按你的替代方案改派其它专家 | 说明这次拿不到哪些内容 |
+
+**专家侧的窗口是怎么开的（真机实测，2026-09-26）**：有头浏览器（**不加** `--headless`）＋固定 `--user-data-dir`＋固定 `--remote-debugging-port`，**分离启动**（不等在工具调用里）。实测三件事：①启动那个工具调用退出后浏览器**还活着**（`GET /json/version` 仍返回 200）；②另一个进程能**重连**并继续驱动同一页面（`Page.navigate` + `Runtime.evaluate` 成功）；③它是**真的窗口**（`MainWindowHandle` 非 0、标题可读），所以你能在里面操作。定位这个实例靠**端口号 / profile 目录**，不要靠 pid —— 实测启动进程可能已经退出、浏览器却还活着。
+
+**未观测**：真实站点的登录／验证码流程**没有端到端跑过**（本次只验了机制：窗口存活 + CDP 重连 + 可驱动）；「登录态跨任务复用」**也未观测** —— 往那个 profile 里写 cookie 后 30 秒内没在磁盘上看到 cookie 库（Chrome 惰性刷盘），所以**同一轮里复用那个还活着的实例是实测的，关掉浏览器之后再靠 profile 复用没有证据**（见 `docs/evidence.md` §12）。
+
 ### 证据档位与未观测
 
 - **真机实测**（2026-09-26，同一台机器上的 A/B，只改会话文件策略）：上面那张两列探测表；
   原始输出与复现脚本见 `docs/evidence.md` §11。「全访问下浏览器确实可用」是**实测**（Chrome 走完了
   启动 → 连 CDP → 导航 → 取回页面文本），不再是用户报告。
-- **源码级事实**：三个问题的结论，以及两处「子代理被钉死」的位置（路径见上表）。
+- **源码级事实**：三个问题的结论，两处「子代理被钉死」的位置（路径见上表），以及人工介入为什么
+  只能由调度者转达（`ask()` 只认 `agents.roots()`，子代理拿 `DELEGATED_CALLER`）。
+- **未观测（人工介入）**：真实站点的登录／验证码流程**没有端到端跑过**；「调度者是否真的每次都转达」
+  同样没有真实会话为证；「关掉浏览器后再靠 profile 复用登录态」**也没有证据**（cookie 30 秒内没落盘）。
+  已实测的只是**机制**：有头窗口存活 + 跨工具调用 CDP 重连 + 能继续驱动。
 - **未观测**：「调度者是否真的每次都先问」**没有实测** —— 闸门刚落地，还没有一次真实 Adg 会话走过它；
   「用户在沙箱外自己拉起带 `--remote-debugging-port` 的浏览器、专家只连那个 CDP 端口」这条路
   **设计上可能可行**（受限策略下网络不受限，受限进程自建监听与本地 `fetch` 都通）但
@@ -895,15 +918,19 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是五处：
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是六处：
   `persona` 增加调度名册与分派规则（步数收敛不写在调度者 persona 里，交给下面的插件在运行期
   注入）；`delegation` 组由通用委派行换成专家行；八个专家的 persona 末尾各留一句收敛纪律；
   `compaction` / `tool-web` 三行**不覆盖任何体积旋钮**（回归出厂默认，
   理由见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门)）；
-  `agent_browser` 多一条**权限前置闸门**（本机沙箱下浏览器起不来，见「浏览器专家需要完全权限」）。
+  `agent_browser` 多一条**权限前置闸门**（本机沙箱下浏览器起不来，见「浏览器专家需要完全权限」）；
+  `agent_browser` 的登录墙／验证码多一条**人工介入协议**（子代理问不了用户，改由调度者转达，
+  见「登录墙与验证码：人工介入协议」）。
 - **`agent_browser` 需要 `danger-full-access` 是本机的硬约束，不是本 preset 的选择。**
   它无法从 preset 侧修（父智能体不能指定子智能体权限、子代理不能自己升权、沙箱行在 host-plane），
   所以闸门做在调度侧、且是**提示级**的：见「浏览器专家需要完全权限」一节的三问三答与取舍。
+- **人工介入也只能由调度者转达**：`dsh-user-questions` 的 `ask()` 只认 live runtime root，
+  被委派的子代理拿到 `DELEGATED_CALLER`。这条同样是机制约束，不是本 preset 的选择。
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、
   `@deepseek-ai/dsh-skill-filesystem`、`@deepseek-ai/dsh-tool-subagent-control` 等）。
 - 新增/删除/修改智能体后需要重启 dsh 才生效，这是 preset 挂载机制决定的，不是缺陷。

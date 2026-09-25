@@ -9,6 +9,19 @@ last_reviewed: 2026-09-25
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-26（晚）— 登录墙／验证码的人工介入协议
+
+- `preset/agent.cordis.yml` 调度 persona 新增规则 10：浏览器专家报「需要用户人工介入」时**由调度者去问用户**（专家问不了，见下），四分支处置 —— 「我去手动登录／过验证，已完成」→ 重新派发同一个 `agent_browser` 并带上端口/profile，要求它 **CDP 重连旧实例**；「不想登录或验证」→ 停手如实汇总；「试过了还是被挡」→ 停手换方案、同一条路径的人工介入每任务至多一轮；「换种方式」→ 走降级路径或改派。并注明不是完全权限时人工介入同样走不通。
+- `preset/agent.cordis.yml` 的 `agent_browser` persona：新增「人工介入协议」一段（有头浏览器 + 固定 `--user-data-dir`/`--remote-debugging-port` + 分离启动 → 报四件事 → 停手，**不在工具调用里等用户**；重派时 CDP 重连旧实例、靠端口/profile 而非 pid 定位；三条用户反馈对应的停手口径），并把原「边界与协作」里那句「立刻停止并请用户介入」改成指向该协议。
+- `preset/agent.cordis.yml` 文件顶注：实质改动由「五处」改「六处」，补第 6 条（人工介入为什么只能由调度者转达：`ask_user_question` 按 preset 注册且 `ask()` 只认 live runtime root，子代理拿 `DELEGATED_CALLER`）。
+- `preset/design.md`：`SchedulerPersona` 新增不变量 I12（专家行不得直接问用户、不得把 `ask_user_question` 加进 `allow`、同一条路径人工介入至多一轮）；「不负责」补一条（不拥有用户问答通道）；非功能红线补一条；For Agents 的「8 条」改「9 条」。
+- `preset/AGENTS.md`：模块红线补 I12；跨模块路由补「登录墙／验证码的人工介入」一行。
+- `preset/testing-guide.md`：不变量全表补 I12 的三条用例（M1 allow 机器可读 + 语义判读、M2 分工两半、M3 真实重连，如实标**未实现**）；I11 的 L1 用例按实测把命中位置由「三处」更正为「四组」（新协议段末句也命中权限关键字）。
+- 根 `README.md`：在浏览器那节新增「登录墙与验证码：人工介入协议」一小节（四分支处置表、为什么专家问不了、窗口怎么开的三条机制实测、两条未观测）；「兼容性」的实质改动清单由五处改六处并补一条「人工介入也只能由调度者转达」。
+- `docs/evidence.md`：新增 §12「子代理能不能直接问用户？人工介入的可行路径」（四条源码级事实表 + 有头窗口存活／跨调用 CDP 重连的五条机制实测 + 三条未观测 + 重测口径）；证据来源表补一行人工介入探测脚本；§8 未观测清单补三条（真实站点端到端、关掉浏览器后靠 profile 复用登录态、调度者是否真的转达）。
+- `docs/registry.md`：`docs/evidence.md` 行的索引补 §12。
+- 未改动：`install.ps1` / `install.sh`、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
+
 ## 2026-09-26 — 浏览器专家的权限前置闸门
 
 - `preset/agent.cordis.yml` 调度 persona 新增规则 9：派发 `agent_browser` 前先读自己上下文里的 `Current DSH file policy:`，不是 `danger-full-access` 就先 `ask_user_question`（三选项：已切权限继续 / 降级只做 `web_fetch` 静态抓取 / 暂不做），答已切换后还要确认那行真的变了才派发。

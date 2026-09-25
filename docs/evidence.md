@@ -33,6 +33,7 @@ last_reviewed: 2026-09-25
 | 审计脚本 | `D:\dsh\.dsh-token-audit\audit-run.mjs`（成本）/ `audit-steps.mjs`（步数分布） | 从会话目录重算；报告写到同目录的 `audit-report.txt` / `audit-report.steps.txt`。`audit-steps.mjs` 打印 `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`、排序表、直方图，以及"每个候选 tier 会命中谁" |
 | 变异验证 | `D:\dsh\.adg-step-mutations\run-mutations.ps1` | 每个变异一个独立目录，跑完把原始 `node --test` 输出留在旁边。**不属于任何交付包** |
 | 沙箱探测（§11） | `D:\dsh\_sbx_probe\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
+| 人工介入探测（§12） | `D:\dsh\_sbx_probe\probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘） | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
 
 ## 1. 步数分布与阶梯校准（真机实测）
@@ -122,6 +123,9 @@ last_reviewed: 2026-09-25
 | **注入消息在会话转写里的原文**（`session.v3.jsonl.zstd`，§1/§6 引用的"毫秒级对齐"） | **本台账未独立复核**：本机没有 zstd 解压能力。日志侧的行存在是确认的；转写侧需要一台能解压的机器按 §9 的 `label` 比对 |
 | **调度者的权限闸门是否真的每次都触发**（派发 `agent_browser` 前是否先问用户） | **未观测**：闸门于 2026-09-26 落地，还没有一次真实 Adg 会话走过它。量法：Adg 会话转写里查 `ask_user_question` 的调用是否出现在 `agent_browser` 之前，以及本会话文件策略那一行当时是不是 `danger-full-access` |
 | **在沙箱外手工拉起浏览器、专家只连 CDP 端口** | **未实测**：`workspace-write` 下网络不受限、受限进程自建监听与本地 `fetch` 都通（§11），所以**设计上可能可行**；但没有人真的做过，不许写成可行。量法：用户在自己的（非沙箱）终端里起一个 `--remote-debugging-port=…` 的浏览器，再让 Adg 会话里的专家只调用 CDP HTTP/WebSocket |
+| **真实站点的登录／验证码端到端流程**（用户手动登录 → 专家接着抓登录后的内容） | **未观测**：§12 只验了**机制**（有头窗口跨工具调用存活 + 新进程 CDP 重连并继续驱动），没有一次真的走完「人工登录 → 继续」。量法：按 §12 的 `probe3-*` 起实例，请人在窗口里登录一个真实站点，再由另一个进程重连并断言登录后的页面元素存在 |
+| **关掉浏览器之后再靠 profile 复用登录态** | **未观测**：§12 的 `probe4-cookie.js` 往 profile 写了 cookie，live store 立即可见，但 30 秒内磁盘上没有 cookie 库（Chrome 惰性刷盘）。量法：同一 profile 优雅关掉浏览器后再启动，看 `Network.getCookies` 还在不在 |
+| **调度者是否真的每次都转达人工介入**（收到「需要用户介入」报告后是否真的先问用户） | **未观测**：与上面那条闸门同源 —— 提示级协议，没有真实 Adg 会话走过它。量法：Adg 转写里 `agent_browser` 返回「需要用户介入」之后，紧跟的应当是一次 `ask_user_question`，而不是第二次同路径派发 |
 
 ## 9. 活证据复核快照（2026-09-25T13:46:37Z / 21:46:37+08:00）
 
@@ -273,3 +277,48 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 在受限策略下输出必须是 `THREW EPERM`，切到全访问后同一句不再抛（`exit=0`）。
 **注意浏览器那一路的 stderr 必须重定向到真文件**（管道会被沙箱拒），
 `probe2.js` 里就是用 `fs.openSync` 拿文件句柄再传给 `stdio` 的。
+
+## 12. 子代理能不能直接问用户？人工介入的可行路径（源码级事实 + 机制实测，2026-09-26）
+
+**这一节回答两件事**：`agent_browser` 遇到登录墙／验证码时**能不能自己弹一个问题给用户**（不能），
+以及「用户手动登录、专家接着用」在机制上**能不能成立**（能，但只在同一轮里复用那个还活着的实例）。
+`README.md` 的「登录墙与验证码：人工介入协议」一节引用本节。
+
+**源码级事实：被委派的子代理不能问用户。**
+
+| 事实 | 位置 |
+|---|---|
+| `ask_user_question` 是**按 preset 注册**的模型可见工具，**不在**全局工具层（全局层只管渲染 UI）。所以「谁能问」由组合决定：Adg 组合里有 `tool-ask-user` 那一行，调度者是 runtime root，能问 | `@deepseek-ai/dsh-tool-ask-user` 的 `apply()`（`ctx.tools.register(defineTool({ name: 'ask_user_question', … }))`）；`@deepseek-ai/dsh-client-ui-user-questions` 的 node 半边 `apply()` 是空实现，注释原话「Mounting `ask_user_question` in the tools registry's global layer expands every agent's tool list regardless of its preset … the model-facing tool belongs to the presets that include it」 |
+| 工具把调用者 agent 传下去 | `dsh-tool-ask-user/lib/index.js` 的 `execute`：`...exec.agent !== void 0 ? { agent: exec.agent } : {}` |
+| 服务在带上 agent 时**只认 live runtime root**，被委派的子代理拿 `DELEGATED_CALLER` | `@deepseek-ai/dsh-user-questions` 的 `ask()`：`if (!agents.roots().includes(agent)) throw new UserQuestionError("human interaction is unavailable while the calling agent is owned by another live agent; include the unresolved question or decision in the child agent's final result", "DELEGATED_CALLER")`；同文件文档注释另写「an owned child has no human answerer and would block forever」 |
+| 所以往专家行的 `allow` 里加它没有意义 | **推论**（不是实测）：调用会走上面那条分支 |
+
+**结论**：人工介入只能「专家停手并把未决问题写进最终结果 → 调度者用 `ask_user_question` 转达 →
+按回答重派／换方式／收手」。那句错误文本本身就把这个分工写成了规定动作。
+
+**机制实测**（同一台机器、同一天；脚本 `D:\dsh\_sbx_probe\probe3-launch.js` 与 `probe3-attach.js`，
+**不属于任何交付包**）：「用户手动登录、专家接着用」要求浏览器比启动它的那次工具调用活得更久，
+并且能被**另一个进程**重新接上。分两次进程（= 两次工具调用）实测：
+
+| 探测 | 结果 |
+|---|---|
+| 有头 Chrome（**不加** `--headless`）+ 固定 `--user-data-dir` + `--remote-debugging-port=9451`，**detached 启动** | 启动那次调用内 CDP 就起来了（`Chrome/152.0.7977.76`） |
+| 启动进程退出后，**另一次工具调用的新进程**访问 `GET /json/version` | **200** —— 浏览器还活着 |
+| 那个新进程对留下的页面 `Page.navigate` + `Runtime.evaluate` | 成功，取回 `"RESUMED\n\n7"` —— 是**同一个实例**，不是新开的 |
+| 它是真的窗口吗 | `MainWindowHandle` 非 0、`MainWindowTitle` 可读（`… - Google Chrome`），即用户能真的在里面操作 |
+| 靠 pid 定位它？ | **不行**：启动进程的 pid 后来消失了，浏览器却还活着 → 必须用**端口号 / profile 目录**定位 |
+
+**未观测（不要把上面那半读成「登录流程已经跑通」）**：
+
+- **真实站点的登录／验证码流程没有端到端跑过**：本次只验机制（窗口存活 + 跨调用 CDP 重连 + 能继续驱动），
+  没有一次「用户真的在某网站登录／过验证码，专家真的接着抓到了登录后的内容」。
+- **「关掉浏览器之后再靠 profile 复用登录态」没有证据**：`probe4-cookie.js` 往那个 profile 写了 cookie，
+  **live store 里立即可见**（`Network.getCookies` 返回 `["adg_probe"]`），但 **30 秒内磁盘上始终没有 cookie 库**
+  （`Default\Network\Cookies` 不存在）—— Chrome 惰性刷盘，本次没观测到落盘。因此
+  「同一轮里复用那个还活着的实例」是实测的，「下一轮靠 profile 免登录」**不是**。
+- **调度者是否真的每次都转达**：提示级协议，没有真实 Adg 会话为证（与 §11 那条同源）。
+
+**怎么重测**：先 `node probe3-launch.js`（它退出后浏览器应仍在）→ 隔一次 shell 再 `node probe3-attach.js`
+（应打印 `reattach OK` 并取回 `RESUMED`）；cookie 落盘口径用 `probe4-cookie.js` 重测。
+用完按 profile 关掉那个实例（`Get-CimInstance Win32_Process -Filter "Name='chrome.exe'"` 里
+`CommandLine -like '*<profile>*'` 的那些 pid），否则会留一个浏览器窗口在桌面上。
