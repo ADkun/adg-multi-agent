@@ -34,7 +34,10 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 2. 在 `delegation` 组的专家名册段里**复制一行现有专家**，改 `id`、`toolName`、`persona`、
    `toolFilter.allow` 四个字段。
 3. **同步更新文件顶部 `persona` 的 prefix**：把新专家加进「可委派的专家」名册，并按需补一条
-   调度规则。这一步不能省，否则调度智能体根本不知道有这个专家。
+   调度规则。这一步不能省，否则调度智能体根本不知道有这个专家。**不要动规则 6 / 规则 7** —— 那两条
+   是**派发拓扑**规则（同一实体 + 同一性质的任务合并成一次委派；同一实体的后续任务用 `list_agents` +
+   `send_message` 接给已经读过它的那个专家）；新增专家时只按它的性质补一句"该派给谁"，别把名册
+   改写成预算、也别删掉这两条。
 4. **删除智能体**：删掉那一行 + 顶部名册里的那一行，两处都要改。
 5. **跑自检**：在仓库里 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过）；
    改的是**已安装**的那一份就传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
@@ -64,7 +67,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 - **不要加回通用的 `dsh-tool-subagent`（`toolName: subagent`）或 `subagent_fork` 行。**
   子代理会继承父代理的这整套 composition，一旦存在通用行，专家就能绕过自己的范围再开一个
   不受限的子代理，能力边界形同虚设（这条已在创造模式实测复现）。
-- **`toolFilter.allow` 真实生效，是能力边界本身。** 已实测：给 `agent_coder`（旧 allow 6 个工具）
+- **`toolFilter.allow` 真实生效，是能力边界本身。** 已实测：给 `agent_coder`（当时的 allow 名单）
   委派任务，它报告的可见工具目录**恰好等于它的 allow 名单**，`agent_*` 名册行与通用 `subagent`
   都不在其中 —— 连 preset 自己注册的工具也一起被裁。所以：
   - 专家之间**不能**直接互相转交（名册行不在它们的 allow 里）；越界的正确做法是回一句
@@ -87,8 +90,11 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   不要漏掉。**不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
   "结论控制在 N 字符内"、"禁止整读大文件"之类）：那一层纪律已整体撤销 —— 截断与提前压缩会把
   工具已经取到的事实切掉，写在 persona 里的预算提示会把注意力从"把事情做对"挪到"别写太多"，
-  净效果是更差的结论。省 token 交给插件的**步数收敛检查点**（`dsh-adg-token-budget`；它**不比较
-  任何 token 阈值**，包名里的 `token-budget` 只是历史名称），见 README「token 成本纪律」。
+  净效果是更差的结论。**唯一的例外是调度侧那两条编排层派发拓扑规则**（同实体合并、优先恢复既有
+  专家）：它们管的是"派给谁、派几次"，不管"单个专家能读多少、写多少"，所以**不要拿这条红线当
+  理由删掉它们**。省 token 交给插件的**步数收敛检查点**（`dsh-adg-token-budget`；它**不比较
+  任何 token 阈值**，包名里的 `token-budget` 只是历史名称），见 README「token 成本纪律」与
+  「多智能体的 token 消耗：已落地与可选手段」。
 - **不要给那三行体积旋钮加回覆盖值。** `compaction-basic` / `tool-result-pruner` / `tool-web` 三行
   刻意不写压缩阈值、单条工具结果截断、`fetchMaxOutputChars` / `searchMaxResults` /
   `searchMaxQueries`，一律用插件出厂默认值 —— 加一个智能体**不需要**动它们，而且"靠截断省 token"

@@ -7,7 +7,7 @@ last_reviewed: 2026-09-25
 
 ## 职责与边界
 
-负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册与分派规则）、8 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
+负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册、分派规则、两条派发拓扑规则）、8 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
 
 不负责（逐条防越权）：
 
@@ -23,11 +23,12 @@ last_reviewed: 2026-09-25
 
 ## 依赖关系
 
-- 依赖（组合层）：host 组合提供的 `tools` / `fs` / `subagents` / `workflows` / `skills` / `goals` / `sessionProjections` 注册表，经 `cordis:group` 的 `isolate` realm 发布（`delegation` 组带 `workflowEngine: true`，`compaction` 组带 `compaction` + `toolResultPruner`，`planning` 组带 `planMode`）。无需经契约的理由：这些是宿主服务，preset 只是消费方，实例的创建与回收都不在本模块。`dsh-agent-presets` 负责 standing mount 与 generation（组合文件 stamp 变化起新 generation）。
+- 依赖（组合层）：host 组合提供的 `tools` / `fs` / `subagents` / `workflows` / `skills` / `goals` / `sessionProjections` 注册表，经 `cordis:group` 的 `isolate` realm 发布（`delegation` 组带 `workflowEngine: true`，`compaction` 组带 `compaction` + `toolResultPruner`，`planning` 组带 `planMode`）。无需经契约的理由：这些是宿主服务，preset 只是消费方，实例的创建与回收都不在本模块。`dsh-agent-presets` 负责 standing mount 与 generation（组合文件 stamp 变化起新 generation）。I13 的「恢复既有专家」依赖 `subagents` 的 continuable 语义（`@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化会话重建），同样是消费方。
 - 依赖（同仓库）：`tools/check-preset.mjs` 是它的静态校验器；`skills/adg-add-agent/SKILL.md` 是它的修改入口手册。
 - 被依赖：`plugin/dsh-adg-token-budget` 通过 `session.header.agentPreset === 'adg'` 识别自己要治理的子代理 —— **preset 是它的输入事实来源**，但插件不读这个文件，只读会话头；`install.ps1` / `install.sh` 复制并部署它；`tools/check-preset.mjs` 校验它。
 - 跨模块改动路由：
   1. 改专家名册 → 先读 `preset/AGENTS.md`，再读 `skills/adg-add-agent/SKILL.md`，改完跑 `node tools/check-preset.mjs`，然后**重启 dsh**；
+  1b. 改调度 persona 的分派规则或派发拓扑规则（I13）→ 先读 `preset/testing-guide.md` 的 I10 / I13 用例，再读根 `README.md`「多智能体的 token 消耗：已落地与可选手段」（成本口径与量法）；
   2. 改承载体积旋钮的三行 → 先读 `docs/evidence.md`（§2 成本基线、§3 三个体积旋钮的实际生效值、§8 未观测清单、§10 怎么重新测量）；
   3. 改「治理哪些会话」→ 先读 `plugin/dsh-adg-token-budget/design.md`（治理面与 `presets` 配置的不变量），再读 `plugin/dsh-adg-token-budget/src/config.js` 的 `DEFAULT_CONFIG.presets`。
   4. 改 preset id（`adg`）→ 先读 `plugin/dsh-adg-token-budget/design.md` 的跨模块消费侧契约：id 取自 `.agent-presets/` 下的**目录名**（`@deepseek-ai/dsh-agent-presets` 的 `PRESET_ID = /^[a-z0-9][a-z0-9-]*$/`），改它等于改治理面，必须与插件的 `presets` 同时改。
@@ -70,9 +71,10 @@ last_reviewed: 2026-09-25
 - 属性和名册的对应关系：名册项 ↔ 专家行的 `toolName`。
 - 不变量：
   - I9: 每个启用专家行的 `toolName` 必须出现在名册里；名册提到的每个 `agent_*` 必须有对应行（双向）。
-  - I10: 名册里禁止出现「委派预算 / 让步数区间 / 不要轮询步数」这类与插件职责重叠的政策措辞。
+  - I10: 名册里禁止出现「委派预算 / 让步数区间 / 不要轮询步数」这类与插件职责重叠的**子代理预算**措辞。与成本有关的编排层规则只有 I13 那两条，且禁止把 I13 改写成对单个专家的读取量 / 产出量限制（那正是被撤销的那一层，理由见非功能红线）。
   - I11: 禁止删掉或绕过 `agent_browser` 的**权限闸门**，且该闸门禁止被表述成权限强制。闸门的两半：调度 persona 里必须有一条「派发 `agent_browser` 前先读上下文里的当前文件策略，不是 `danger-full-access` 就先 `ask_user_question`」的规则；`agent_browser` 的 persona 里必须写明受限策略下的失败签名与「命中就停手、如实报出」。**它只能是提示级的**：preset 侧没有权限判定入口（见「不负责」），所以禁止在它的文档或注释里把它写成安全边界。
   - I12: 禁止任何专家行（被委派的子代理）直接调用 `ask_user_question`，也禁止把它加进任何专家行的 `allow`。人工介入（登录墙／验证码／二次验证）只能走「专家停手并把未决问题写进最终结果 → 调度者用 `ask_user_question` 转达 → 按用户回答重派／换方式／收手」，且**同一条路径的人工介入每任务至多一轮**。依据：`@deepseek-ai/dsh-tool-ask-user` 按 preset 注册（不在全局工具层），`@deepseek-ai/dsh-user-questions` 的 `ask()` 只认 live runtime root（`agents.roots()`），子代理拿 `DELEGATED_CALLER`，其错误文本自己就规定「include the unresolved question or decision in the child agent's final result」。
+  - I13: 调度 persona 必须保留两条**派发拓扑**规则，且它们只能是编排层的：① 同一实体 + 同一性质的任务合并成一次委派（不为同一个代码库 / 文档库 / 站点并发多个"各看一个方面"的同类专家，而是把方面列进同一条委派让一个专家一次通读、按方面分节产出）；② 同一实体的**后续**任务优先用 `list_agents` + `send_message` 接给**已经读过它**的那个专家，而不是新建委派。判据固定为**实体 × 性质**两个维度：实体不同或性质不同才拆（"先只读调研、再写入改动"是性质不同，仍分两步）。依据：成本结构的直接观测量是**子代理个数**（实测 cache-read 占提示 token 的 91%，N 个同类委派等于把同一份材料买 N 次），恢复机制是 `@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化的子代理会话重建（源码注释：`no subagent provider is dispatched`）。取反方向由 I10 守住。
 
 ## 对外接口
 
@@ -87,7 +89,8 @@ last_reviewed: 2026-09-25
 - 禁止给 `compaction-basic` / `tool-result-pruner` / `tool-web` 三行写回体积覆盖值。来源：实测，根 `README.md`「为什么撤销 preset 侧的体积闸门」与 `docs/evidence.md` §2（成本基线）、§3（三个体积旋钮的实际生效值）、§4（已移除的 token 两档）（截断把工具已取到的事实切掉；提前压缩让上下文不可逆失真）。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`。来源：`skills/adg-add-agent/SKILL.md`「硬约束」（只给 pwsh 会让后台跑起来的任务取不回来）。
 - 禁止设 `maxTokens` / `agentOptions` / `reasoningEffort`（后者在手工声明的路由上会让每次委派 `UNSUPPORTED_REASONING_EFFORT`）。来源：`skills/adg-add-agent/SKILL.md`「硬约束」。
-- persona 里禁止写 token／读取预算。来源：根 `README.md`「persona 层保留的政策：只剩专家侧的收敛纪律」与 `docs/evidence.md` §2（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。
+- persona 里禁止写**子代理预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。来源：根 `README.md`「persona 层保留的政策：专家侧的收敛纪律与调度侧的派发拓扑」与 `docs/evidence.md` §2（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。**边界**：编排层的两条派发拓扑规则（I13）不属于本条禁止的范围 —— 它们约束"派给谁、派几次"，不限制任何单个专家的读取量与产出量。
+- 禁止删掉调度 persona 的派发拓扑规则（I13），也禁止把「同一实体合并委派」改写成子代理读取／汇报预算。来源：成本结构实测（根 `README.md`「多智能体的 token 消耗：已落地与可选手段」：cache-read 占 91%、调度者 59% / 子代理 41%、每个子代理 ≈1.73M）+ `@deepseek-ai/dsh-subagent` 的 `coldResume` 源码事实。
 - 要改体积旋钮却没拿得出前后对比数字时，禁止改动。来源：`docs/evidence.md` §10「怎么重新测量」（两条审计命令必须改动前后各跑一次）。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门（I11），也禁止把它写成安全边界。来源：真机实测 A/B，`docs/evidence.md` §11（`workspace-write` 下 Chrome 退出码 21、Edge Mojo `拒绝访问 (0x5)`；`danger-full-access` 下同一批命令全部退出码 0 且 CDP 真驱动成功），以及源码级事实三问（父智能体不能指定子智能体权限 / preset 不能改会话模式 / 子代理不能自己升权）。
 - 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「请用户介入／问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`。来源：源码级事实，`@deepseek-ai/dsh-user-questions` 的 `ask()`（带 agent 时只认 `agents.roots()`）与 `@deepseek-ai/dsh-tool-ask-user` 的 `execute`（把 `exec.agent` 传下去）；转达机制见 `docs/evidence.md` §12。
@@ -96,7 +99,7 @@ last_reviewed: 2026-09-25
 
 动手前先读：`preset/AGENTS.md` → `preset/design.md` → 视改动再读 `skills/adg-add-agent/SKILL.md`。
 
-绝不能做：上面 9 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
+绝不能做：上面 10 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
 
 停止并升级人类：要推翻既有语义；红线之间冲突；需求超出本对象边界；要改体积旋钮却拿不出前后对比数字。
 
