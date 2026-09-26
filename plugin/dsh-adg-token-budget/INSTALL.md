@@ -92,7 +92,7 @@
 | `logFile`（决策行） | 只有**事件**才写：步数检查点 `step stage: nudged tier=n/N step=S label=…`、`step stage (no nudge injected: …) …`、dry-run 判定（`dry-run step stage: would nudge …` / `dry-run step stage: would not nudge (…) …`）、`settled: released session state label=…`。**普通放行一步什么都不写** |
 | 宿主日志（加载期） | `dsh-adg-token-budget: activation: active createUserMessage=…`；出现 `apply failed (…); the step checkpoints are inactive` 或 `context has no event API; the step checkpoints are inactive` 就是降级成 no-op 了 |
 | 宿主日志（第一次决策时，一次） | `dsh-adg-token-budget: first decision: …` |
-| 行为（检查点） | 受管子代理走到阶梯上的某一步时会收到一条 `【收敛检查点 n／N】调度代理提醒：这是你的第 N 步。…`，正文是一条**可选**提醒（自己选"收敛汇报"还是"继续"）。想最快看到，把 `stepTiers` 临时改成 `[1, 2]`；想连措辞都自己认，用 `stepText` 写一句——**这两件都只是 `config:` 改动，热重载、不用重启** |
+| 行为（检查点） | 受管子代理走到阶梯上的某一步时会收到一条 `【收敛检查点 n／N】调度代理提醒：这是你的第 N 步。…`，正文是一条**可选**提醒（自己选"收尾汇报"还是"继续"）。想最快看到，把 `stepTiers` 临时改成 `[1, 2]`；想连措辞都自己认，用 `stepText` 写一句——**这两件都只是 `config:` 改动，热重载、不用重启** |
 | 源码（确认没有破坏性路径） | 见下面的代码级检查：滤掉注释行后，`agent.cancel` / `sessionProjections` / `kind: 'reject'` **一个都不应匹配** —— 这是"token 两档真的被删掉了"的事实，和日志无关 |
 | 测试 | 在插件目录里 `node --test test`（不依赖 `node_modules`；沙箱里若 piped stdio 被挡，用 `node --test --test-isolation=none test`） |
 

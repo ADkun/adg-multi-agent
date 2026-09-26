@@ -157,20 +157,23 @@ export function resetRegistrationStateForTests() {
  *
  * 1. says outright that it is optional and may be ignored, so continuing costs
  *    the child nothing;
- * 2. names both options symmetrically — converge now, or keep working and
- *    disregard the reminder — and leaves the choice to the task;
+ * 2. names both options symmetrically — wrap up once the goal can already be
+ *    answered, or keep working and disregard the reminder — and leaves the
+ *    choice to the task;
  * 3. asks for one sentence naming the choice, which is the only reason the
  *    message can change anything at all: it forces a decision the child would
  *    otherwise not stop to make.
  *
- * What it must never do is trade the result for tokens, which is why the
- * converge branch still asks for what was *not* verified. The suite pins all
- * three properties, and the wording is overridable through `stepText` for
- * operators who want to tune it without a new package.
+ * What it must never do is trade the result for tokens, so the body does not
+ * prescribe *what* to report: the first branch only asks whether the goal can
+ * already be answered and, if so, to wrap up. Which parts were delivered and
+ * which were left unverified is the child's call — it is the only one that
+ * knows. The suite pins all three properties, and the wording is overridable
+ * through `stepText` for operators who want to tune it without a new package.
  */
 export const STEP_CHOICE_BODY = [
   '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
-  '- **收敛**：如果现有产出已经能回答委派目标，就收尾汇报——交付了什么、还有哪些部分没有验证。',
+  '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
   '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
   '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
 ].join('\n')

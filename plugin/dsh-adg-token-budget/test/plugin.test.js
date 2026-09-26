@@ -1028,7 +1028,7 @@ test('the built-in checkpoint wording is unchanged', () => {
   // refactor cannot quietly turn it into an order.
   assert.equal(STEP_CHOICE_BODY, [
     '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
-    '- **收敛**：如果现有产出已经能回答委派目标，就收尾汇报——交付了什么、还有哪些部分没有验证。',
+    '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
     '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
     '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
   ].join('\n'))
@@ -1071,10 +1071,12 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   assert.match(STEP_CHOICE_BODY, /可选/)
   assert.match(STEP_CHOICE_BODY, /不是停止指令/)
   assert.match(STEP_CHOICE_BODY, /直接无视这条提醒/)
-  assert.match(STEP_CHOICE_BODY, /收敛/)
+  assert.match(STEP_CHOICE_BODY, /如果现有产出已经能回答委派目标，就收尾汇报/)
   assert.match(STEP_CHOICE_BODY, /继续/)
   assert.match(STEP_CHOICE_BODY, /由任务本身决定/)
-  assert.match(STEP_CHOICE_BODY, /没有验证/)
+  // The body must not prescribe *what* to report: which parts were delivered and
+  // which were left unverified is the child's call, not the checkpoint's.
+  assert.doesNotMatch(STEP_CHOICE_BODY, /没有验证|交付了什么|哪些部分/)
   assert.match(STEP_CHOICE_BODY, /用一句话说明你的选择/)
   // It must not read as an order to stop exploring: "继续" has to be a real
   // option a child can take without penalty.

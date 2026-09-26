@@ -57,7 +57,7 @@ if (-not (Test-Path -LiteralPath $patchFile)) {
     if ($lines.Count -gt 1) { $head = $lines[0..($lines.Count - 2)] }
     $row = @(
       '# 步数收敛检查点：按 4/8/12/…/280 的阶梯给 Adg 专家子代理注入可选收敛提醒。',
-      '# 提醒是"自己选：收敛汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。',
+      '# 提醒是"自己选：收尾汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。',
       '# 按累计 token 介入的两档（软档收尾提醒 + 硬档 agent.cancel）已整体移除：输出型任务本来就需要那么多 token，',
       '#   按阈值砍只会截断产出。插件现在既不注入任何 token 触发的消息，也从不 agent.cancel（详见 README）。',
       '# enabled: false 表示已挂载但不动作。改 config: 热重载立即生效；但换过 src\ 里的代码之后必须重启 dsh',
