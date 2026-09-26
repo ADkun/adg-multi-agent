@@ -7,7 +7,7 @@ last_reviewed: 2026-09-25
 
 # preset 模块测试指南
 
-对象与不变量编号见 `design.md`（I1..I13 一一对应，本文不重复定义）。类型只有三种：**静态自检**（`tools/check-preset.mjs` 真的会拦）、**真实挂载**（重启 dsh 后按根 `README.md`「给 AI 的安装指令」第 7 步做）、**人工 review**（脚本抓不到，必须有人看）。
+对象与不变量编号见 `design.md`（I1..I14 一一对应，本文不重复定义）。类型只有三种：**静态自检**（`tools/check-preset.mjs` 真的会拦）、**真实挂载**（重启 dsh 后按根 `README.md`「给 AI 的安装指令」第 7 步做）、**人工 review**（脚本抓不到，必须有人看）。
 
 ## 命令（可直接照抄）
 
@@ -41,17 +41,19 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | I9 名册 ↔ 专家行双向一致 | J1 只加专家行、不改顶部名册 → 必须 ERROR | 静态自检 | 已实现。`调度名册里没有 agent_x：专家行加了但 persona 名册没同步（调度智能体不会知道它存在）` |
 | I9（同上） | J2 只在名册里写 `agent_x`、没有对应行 → 必须 ERROR | 静态自检 | 已实现。`调度名册提到 agent_x，但没有对应的专家行（名册与实现不一致）`。若连 `prefix: \|-` 块都找不到：`没找到顶部 persona 的 prefix: \|- block（调度名册应当写在这里）` |
 | I9（同上） | J3 名册里的每个名字是否**语义上**对得上它那一行的 persona | 人工 review | 未实现（脚本只做文本包含判断） |
-| I10 名册不得写与插件重叠的政策 | K1 检索名册块内是否出现**子代理预算**类措辞（「委派预算 / 步数区间 / 不要轮询步数 / 读取预算 / 结论 N 字符内」） | 人工 review | 未实现（语义判断）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern '预算|步数区间|轮询步数'` —— 命中的多数是文件顶部的解释性注释（说明这些政策已被删除、不要在调度 persona 里写回）。**判据**：命中行落在 `prefix: \|-` 块内、且语义上是"限制**单个专家**怎么读、怎么写"才算违例；规则 6 / 规则 7 那两条**编排层**规则（连同它们的成本理由）**不算**违例，见 I13 |
+| I10 名册不得写与插件重叠的政策 | K1 检索名册块内是否出现**子代理预算**类措辞（「委派预算 / 步数区间 / 不要轮询步数 / 读取预算 / 结论 N 字符内」） | 人工 review | 未实现（语义判断）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern '预算|步数区间|轮询步数'` —— 命中的多数是文件顶部的解释性注释（说明这些政策已被删除、不要在调度 persona 里写回）。**判据**：命中行落在 `prefix: \|-` 块内、且语义上是"限制**单个专家**怎么读、怎么写"才算违例；I13 那四条**编排层**规则（连同它们的成本理由与 digest 中转口径）**不算**违例，见 I13 / I14 |
 | I10（同上） | K2 确认专家行 persona 末行的「收敛纪律」仍在（这是**子代理侧**口径，与 I10 限制的**调度侧**政策不同，不得一起删） | 静态自检 | 未实现（脚本不查该句）；可按 I9 同类方式人工核对 8 行 |
-| I11 `agent_browser` 的权限闸门不得被删掉或绕过 | L1 检索闸门的两半是否还在：调度名册块里有没有「派发 `agent_browser` 前先看当前文件策略、不是 `danger-full-access` 就先 `ask_user_question`」的规则；`agent-browser` 那一行的 persona 里有没有失败签名与「停手＋如实报出」 | 人工 review | 未实现（脚本不查语义）。辅助检索（`-Encoding UTF8` 不能省，否则中文匹配不上）：`Select-String -Path preset\agent.cordis.yml -Pattern 'danger-full-access\|platform_channel\|完全权限' -Encoding UTF8` —— 注意 PowerShell 的 `Select-String` 用正则，`\|` 是**字面竖线**，要按关键字择一匹配就得写不带反斜杠的 `|`。本次实测（用不带反斜杠的写法）命中**四组**：文件顶注的第 5/6 条改动说明、调度 persona 规则 11/12、`agent-browser` 的「权限前提」段、以及它的人工介入协议段末句（「本会话不是完全权限时有头窗口也开不出来」）。缺任一组即违例 |
+| I11 `agent_browser` 的权限闸门不得被删掉或绕过 | L1 检索闸门的两半是否还在：调度名册块里有没有「派发 `agent_browser` 前先看当前文件策略、不是 `danger-full-access` 就先 `ask_user_question`」的规则；`agent-browser` 那一行的 persona 里有没有失败签名与「停手＋如实报出」 | 人工 review | 未实现（脚本不查语义）。辅助检索（`-Encoding UTF8` 不能省，否则中文匹配不上）：`Select-String -Path preset\agent.cordis.yml -Pattern 'danger-full-access\|platform_channel\|完全权限' -Encoding UTF8` —— 注意 PowerShell 的 `Select-String` 用正则，`\|` 是**字面竖线**，要按关键字择一匹配就得写不带反斜杠的 `|`。本次实测（用不带反斜杠的写法）命中**四组**：文件顶注的第 5/6 条改动说明、调度 persona 规则 11/12、`agent-browser` 的「权限前提」段、以及它的人工介入协议段末句（「本会话不是完全权限时有头窗口也开不出来」）。缺任一组即违例。**注意分工**：规则 11/12 只保留**决策**（判定、三选项、四分支、至多一轮），失败签名与根因（退出码 21、`platform_channel`）只住在 `agent-browser` 的 persona 与 README —— 所以检索时调度那组是靠 `danger-full-access` / `完全权限` 命中的，别因为那里搜不到 `platform_channel` 就判违例（那正是压缩后的预期形状） |
 | I11（同上） | L2 闸门有没有被写成**权限强制**（例如文档/注释里宣称「preset 会拦住不听话的模型」「这是安全边界」） | 人工 review | 未实现（语义判断）。判据：`design.md`「不负责」清单、`README.md`「浏览器专家需要完全权限」的「这是流程闸门，不是安全边界」一句必须与实现口径一致 |
 | I11（同上） | L3 闸门是否真的被遵守（真实 Adg 会话里，派发 `agent_browser` 之前有没有先问用户） | 真实挂载 | **未实现**：闸门刚落地，还没有一次真实 Adg 会话走过它（`docs/evidence.md` §8 未观测清单已登记这条缺口与量法） |
 | I12 专家行不得直接问用户，人工介入只能由调度者转达 | M1 ①任何专家行的 `toolFilter.allow` 里有没有 `ask_user_question`；②专家 persona 里有没有「请用户介入／去问用户」这类**要求它自己问**的话 | 静态自检 | ①机器可读：`node tools/check-preset.mjs` 会打印每行的 allow，本次实测 8 行**都没有** `ask_user_question`（正确：它只归调度者）。②人工 review：辅助检索 `Select-String -Path preset\agent.cordis.yml -Pattern 'ask_user_question' -Encoding UTF8` 会命中多处，**其中多数是允许的** —— 文件顶注的说明、调度 persona 规则 11/12、`plan-mode` 行的出厂人设，以及 `agent-browser` 里那句「你**不能**直接问用户（调 ask_user_question 只会拿到 DELEGATED_CALLER）」。**判违例看语义，不看是否出现这个词**：出现「把它加进 allow」或「要求专家去问用户」才算 |
 | I12（同上） | M2 人工介入的分工两半是否都在：调度 persona 四分支处置（已完成／不想／仍被挡／换方式）+ `agent-browser` 的 persona「开有头窗口 → 停手 → 报四件事 → CDP 重连、不新开浏览器」 | 人工 review | 未实现（语义判断）。判据与 `docs/evidence.md` §12 的机制实测一致 |
 | I12（同上） | M3 专家被重派时是否真的重连旧实例（而不是另开一个浏览器） | 真实挂载 | **未实现**：机制已实测（有头窗口跨工具调用存活 + 新进程 CDP 重连并继续驱动，见 `docs/evidence.md` §12），但**真实站点的登录／验证码流程没有端到端跑过**，所以「专家会不会照做」这一半没有证据 |
-| I13 派发拓扑规则必须在位，且只能是编排层 | N1 调度名册块里是否留着两条规则：① 同一实体 + 同一性质的任务合并成一次委派；② 同一实体的**后续**任务用 `list_agents` + `send_message` 接给已经读过它的那个专家 | 人工 review | 未实现（脚本不查语义）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern '同一实体' -Encoding UTF8` —— 本次实测命中文件顶注第 7 条与调度 persona 规则 6 / 规则 7；**只有落在 `prefix: \|-` 块内的才算出在 persona 里**，顶注命中不算 |
-| I13（同上） | N2 这两条有没有被写成**子代理预算**（"结论 N 字符内""每次最多读几个文件"） | 人工 review | 未实现（语义判断）。判据：规则文本只出现"实体 / 性质 / 合并 / 恢复 / 接给"这类**编排**措辞，不出现对单个专家的读取量、产出量限制 —— 后者是 I10 禁止的东西 |
-| I13（同上） | N3 调度者是否真的**合并**同类委派、并按规则 7 恢复既有专家（而不是每次新建委派） | 真实挂载 | **未观测**：到本次改动为止，还没有真实 Adg 会话带着这两条规则跑过。量法：在新会话里让同一个代码库做**两轮**探索，数①产生的子代理条数（同类任务应为 1 个）②`list_agents` / `send_message` 的调用次数；口径见根 `README.md`「多智能体的 token 消耗：已落地与可选手段」 |
+| I13 编排层规则必须在位，且只能是编排层 | N1 调度名册块里是否留着四条规则：① 同一实体 + 同一性质的任务合并成一次委派；② 同一实体的**后续**任务用 `list_agents` + `send_message` 接给已经读过它的那个专家；③ 大范围改动先派 `agent_researcher` 出 `path:line`、再让 `agent_coder` 按位改；④ 跨专家传递大材料走 digest | 人工 review | 未实现（脚本不查语义）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern '同一实体|path:line|digest' -Encoding UTF8` —— 本次实测命中文件顶注第 7 / 8 条与调度 persona 规则 6 / 7 / 13 / 14；**只有落在 `prefix: \|-` 块内的才算出在 persona 里**，顶注命中不算 |
+| I13（同上） | N2 这四条有没有被写成**子代理预算**（"结论 N 字符内""每次最多读几个文件"） | 人工 review | 未实现（语义判断）。判据：规则文本只出现"实体 / 性质 / 合并 / 恢复 / 接给 / 定位再改 / 中转"这类**编排**措辞，不出现对单个专家的读取量、产出量限制 —— 后者是 I10 禁止的东西 |
+| I13（同上） | N3 调度者是否真的**合并**同类委派、按规则 7 恢复既有专家、按规则 13 先定位再改、按规则 14 用 digest（而不是每次新建委派 / 让 coder 盲搜 / 把大材料反复塞进 prompt） | 真实挂载 | **未观测**：到本次改动为止，还没有真实 Adg 会话带着这四条规则跑过。量法：在新会话里让同一个代码库做**两轮**探索，数①产生的子代理条数（同类任务应为 1 个）②`list_agents` / `send_message` 的调用次数；口径见根 `README.md`「多智能体的 token 消耗：已落地与可选手段」 |
+| I14 digest 工件只能落在平台临时根、任务结束即清理 | N4 调度 persona 里有没有"只写平台临时根 / 绝不写工作区 / 任务结束即删 / 删不掉要说 / `read-only` 下不造工件"这五件事；有没有在任何专家 persona 里被改写成"把中间文件写进项目" | 人工 review | 未实现（语义判断）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern 'adg-digest|临时根|绝不' -Encoding UTF8` —— 命中文件顶注第 8 条与调度 persona 规则 14 即正常；**判违例看语义**：出现"写进工作区/仓库"或"不用删"才算 |
+| I14（同上） | N5 调度者是否真的把 digest 落在**平台临时根**（而不是工作区）、并在交付前删掉自己创建的工件 | 真实挂载 | **未观测**：尚无真实 Adg 会话走过 digest 路径。量法：制造一个"多性质专家看同一份大材料"的任务，交付后检查①工作区 `git status` 干净（没有 digest 残留）②平台临时根下 `adg-digest` 无本次任务残留。**机制前提**（源码/包文档级事实，非真机实测）：`@deepseek-ai/dsh-fs-sandbox` 的「围栏行为」写明读取不受围栏限制、`workspace-write` 允许目标位于工作区或平台临时区域、`read-only` 拒绝一切变更 |
 
 ## 2. `PresetRevision` 状态机迁移矩阵（全表）
 

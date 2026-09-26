@@ -1,6 +1,6 @@
 # AGENTS.md — preset（Adg preset 的定义）
 
-本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 两条派发拓扑规则）+ 8 个专家行。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
+本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 四条**编排层**规则）+ 8 个专家行。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
 
 ## 独立命令
 
@@ -20,7 +20,8 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 禁止给专家行的 `allow` 加 `workflow` / `ralph`（I6）；禁止给专家行写 `maxDepth`（I8）。
 - 禁止加回通用 `subagent` / `subagent_fork` 行（`design.md` 红线 1）。
 - 禁止把**子代理预算**（「委派预算 / 让步数区间 / 不要轮询步数 / 结论 N 字符内」）写进调度 persona 或专家 persona（I10）。
-- 禁止删掉调度 persona 的两条**派发拓扑**规则（I13）：同一实体 + 同一性质的任务合并成一次委派；同一实体的后续任务用 `list_agents` + `send_message` 接给已经读过它的那个专家。**别拿 I10 当理由删它们** —— I10 禁止的是**子代理预算**，这两条约束的是"派给谁、派几次"，不限制任何单个专家的读取量与产出量（边界见 `design.md` I10 / I13）。
+- 禁止删掉调度 persona 的四条**编排层**规则（I13）：同一实体 + 同一性质的任务合并成一次委派；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务用 `list_agents` + `send_message` 接给已经读过它的那个专家；跨专家传递大材料走 digest。**别拿 I10 当理由删它们** —— I10 禁止的是**子代理预算**，这四条约束的是"派给谁、派几次、材料怎么中转"，不限制任何单个专家的读取量与产出量（边界见 `design.md` I10 / I13）。
+- 禁止把 digest 工件写进会话工作区 / 仓库，也禁止没删掉自己创建的工件就宣称"已清理干净"（I14）：工件只能落在平台临时根下、任务结束即删，`read-only` 下不造工件。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门，也禁止把它写成安全边界（I11）：本机沙箱（`workspace-write` / `read-only`）下浏览器**根本起不来**（A/B 实测见 `docs/evidence.md` §11），而这件事**无法从 preset 侧强制**（父智能体不能指定子智能体权限、子代理不能自己升权、权限行都在 host-plane），所以闸门只能是**提示级**的流程约束。
 - 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「自己去问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`（`ask()` 带 agent 时只认 live runtime root），人工介入必须由调度者转达，且**同一条路径的人工介入每任务至多一轮**。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`（`design.md` 红线 4）。
@@ -32,7 +33,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | 你要改什么 | 先读 |
 |---|---|
 | 专家名册 / 调度分派规则 | `design.md` → `skills/adg-add-agent/SKILL.md` → 改完 `node tools/check-preset.mjs` |
-| 调度 persona 的派发拓扑规则（同实体合并 / 复用既有专家） | `design.md` I13 → 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I13 用例 |
+| 调度 persona 的编排层规则（同实体合并 / 先定位再改 / 复用既有专家 / digest 中转） | `design.md` I13 / I14 → 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I13 / I14 用例 |
 | 承载体积旋钮的那三行 | `docs/evidence.md` §2 / §3 / §8 / §10（重测口径照抄 §10） |
 | 网页交互（`agent_browser`）的权限前提 | `design.md` I11 → `docs/evidence.md` §11（A/B 实测）→ 根 `README.md`「浏览器专家需要完全权限」（三问三答与备选方案取舍） |
 | 登录墙／验证码的人工介入 | `design.md` I12 → `docs/evidence.md` §12（子代理不能问用户的源码依据 + 窗口存活／CDP 重连的机制实测）→ 根 `README.md`「登录墙与验证码：人工介入协议」 |

@@ -9,6 +9,19 @@ last_reviewed: 2026-09-25
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-26（晚·三）— 编排层再落地三条：压缩浏览器细则、digest 中转、先定位再改
+
+- `preset/agent.cordis.yml` 调度 persona **压缩规则 11 / 12**（只动措辞、不动语义）：删掉与 `agent_browser` persona 重复的失败签名与根因复述（退出码 21 / `platform_channel` / `--no-sandbox` 无效那一段），保留 `danger-full-access` 判定、`ask_user_question` 三选项、四分支处置、「同一条路径每任务至多一轮」。两条合计 **1281 → 812 字符**（占 prefix 块 35.6% → 20.0%）。
+- `preset/agent.cordis.yml` 新增**规则 13**：大范围改动先派只读的 `agent_researcher` 出 `path:line` 清单，再让 `agent_coder` 按位改（规则 6 的"性质不同"正例；仓库小或改动点已明确时不加这一跳）。
+- `preset/agent.cordis.yml` 新增**规则 14**（digest 中转 + 清理口径）：跨专家传递大材料默认塞进委派 prompt（零文件）；长了才落成文件工件，**只写平台临时根**下的 `adg-digest`、**绝不写进工作区 / 仓库**、后续只传绝对路径、**任务结束即删并如实报告删除结果**、`read-only` 下不造工件；digest 必须被标注为派生材料（冲突以源材料为准）。调度者开场那行"不直接碰文件"补上这个唯一例外。
+- `preset/agent.cordis.yml` 顶注：实质改动「七处」→「八处」，新增第 8 条说明（规则 13/14 + 压缩 11/12 的量化）；净体积 prefix 块 3598 → **4050 字符**（+452：规则 13+14 加 868，压缩减 469）。
+- `preset/design.md`：I13 由「两条派发拓扑规则」扩展为**四条编排层规则**（补入先定位再改、digest 中转）；新增 **I14**（digest 工件的位置、生命周期、`read-only` 退化与"派生材料"标注，依据 `@deepseek-ai/dsh-fs-sandbox` 包文档「围栏行为」）；非功能红线补一条（禁止写进工作区、禁止未删就宣称已清理），「10 条」→「11 条」；「不负责」补「不拥有文件写入的可用范围」（preset 只能规定写哪、何时删，保证不了写得进去）。
+- 根 `README.md`：「多智能体的 token 消耗」三行状态由**建议**改**已落地**并更新量化（压缩 −36.6%、digest 的清理口径、规则 13 与规则 6 的校准关系），补"这一轮的净体积"段；「省 token 的口径」「怎么用」第 3 条、「兼容性」（七处 → 八处）同步。
+- `preset/testing-guide.md`：不变量全表 `I1..I13` → `I1..I14`；I13 的 N1/N2/N3 三条改写为"四条规则"；新增 **N4 / N5**（digest 落位与清理，N5 含包文档级机制前提，状态如实标**未观测**）；I11 L1 补一句分工说明（调度那组靠 `danger-full-access` / `完全权限` 命中，搜不到 `platform_channel` 是压缩后的预期形状）。
+- `preset/AGENTS.md`、根 `AGENTS.md`：编排层红线由两条扩为四条、新增 digest 落位红线；跨模块路由与 Context Loading 的 I13 引用改为 I13 / I14。
+- `skills/adg-add-agent/SKILL.md`：第 3 步的"不要动规则 6 / 规则 7"扩为"不要动编排层与闸门那几条（6 / 7 / 13 / 14 / 11 / 12）"；硬约束的唯一例外由两条改四条。
+- 未改动：`install.ps1` / `install.sh`、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`、`docs/evidence.md`。
+
 ## 2026-09-26（晚·二）— 派发拓扑：同实体合并 + 复用既有专家；去掉无关产品提示词
 
 - `preset/agent.cordis.yml` 调度 persona 新增规则 6 / 规则 7：① **同一实体 + 同一性质**的任务合并成一次委派（判据只有"实体 × 性质"两个维度；同一实体的多个方面列进同一条委派，由一个专家一次通读、按方面分节产出）；② 同一实体的**后续**任务先 `list_agents` 找到既有子代理、再 `send_message` 接给已经读过它的那个专家，不重新开一个。原规则 6–10 顺延为 8–12（权限闸门与人工介入两条现为规则 11 / 12）。

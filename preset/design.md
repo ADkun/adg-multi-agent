@@ -7,13 +7,14 @@ last_reviewed: 2026-09-25
 
 ## 职责与边界
 
-负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册、分派规则、两条派发拓扑规则）、8 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
+负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册、分派规则、四条编排层规则）、8 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
 
 不负责（逐条防越权）：
 
 - 不拥有工具注册表与工具实现：它们由 host 组合的 `base.cordis.yml` / `web.cordis.yml` 提供；
 - 不拥有沙箱与审批栈，**也不拥有它们的判定入口**：`sandbox-policy` / `permission` / `approval` 三行都在 host-plane 的 `dsh-base/cordis.patch.yml`，`dsh-tool-subagent` 没有权限字段、子代理的审批策略在委派时被钉成 `never`，所以「让 `agent_browser` 能起浏览器」这件事在 preset 侧**只能表达成提示级的流程闸门**（I11），不能表达成权限强制；
 - 不拥有**用户问答通道**（`ask_user_question`）：它由调度者独占使用，专家行只能把未决问题写进最终结果、由调度者转达（I12）；专家行里禁止出现「问用户」这类要求。
+- 不拥有**文件写入的可用范围**：那是 host-plane 的 `dsh-fs-sandbox` 与逐会话沙箱策略。preset 只能规定"写在哪个目录、什么时候删"（I14），**保证不了写得进去** —— `read-only` 下一切写入都会被拒，所以 I14 要求直接退化成"不造工件、digest 随委派 prompt 传递"。
 - 不拥有持久化与模型路由；
 - 不做上下文压缩阈值、单条工具结果截断、抓取与检索上限 —— 承载它们的三行（`compaction-basic` / `tool-result-pruner` / `tool-web`）刻意只声明插件、不写 `config`，一律用插件出厂默认值；
 - 不做运行时的步数收敛提醒 —— 那是 host-plane 插件 `dsh-adg-token-budget`（包名是历史名称，它不比较任何 token 阈值）；
@@ -74,7 +75,8 @@ last_reviewed: 2026-09-25
   - I10: 名册里禁止出现「委派预算 / 让步数区间 / 不要轮询步数」这类与插件职责重叠的**子代理预算**措辞。与成本有关的编排层规则只有 I13 那两条，且禁止把 I13 改写成对单个专家的读取量 / 产出量限制（那正是被撤销的那一层，理由见非功能红线）。
   - I11: 禁止删掉或绕过 `agent_browser` 的**权限闸门**，且该闸门禁止被表述成权限强制。闸门的两半：调度 persona 里必须有一条「派发 `agent_browser` 前先读上下文里的当前文件策略，不是 `danger-full-access` 就先 `ask_user_question`」的规则；`agent_browser` 的 persona 里必须写明受限策略下的失败签名与「命中就停手、如实报出」。**它只能是提示级的**：preset 侧没有权限判定入口（见「不负责」），所以禁止在它的文档或注释里把它写成安全边界。
   - I12: 禁止任何专家行（被委派的子代理）直接调用 `ask_user_question`，也禁止把它加进任何专家行的 `allow`。人工介入（登录墙／验证码／二次验证）只能走「专家停手并把未决问题写进最终结果 → 调度者用 `ask_user_question` 转达 → 按用户回答重派／换方式／收手」，且**同一条路径的人工介入每任务至多一轮**。依据：`@deepseek-ai/dsh-tool-ask-user` 按 preset 注册（不在全局工具层），`@deepseek-ai/dsh-user-questions` 的 `ask()` 只认 live runtime root（`agents.roots()`），子代理拿 `DELEGATED_CALLER`，其错误文本自己就规定「include the unresolved question or decision in the child agent's final result」。
-  - I13: 调度 persona 必须保留两条**派发拓扑**规则，且它们只能是编排层的：① 同一实体 + 同一性质的任务合并成一次委派（不为同一个代码库 / 文档库 / 站点并发多个"各看一个方面"的同类专家，而是把方面列进同一条委派让一个专家一次通读、按方面分节产出）；② 同一实体的**后续**任务优先用 `list_agents` + `send_message` 接给**已经读过它**的那个专家，而不是新建委派。判据固定为**实体 × 性质**两个维度：实体不同或性质不同才拆（"先只读调研、再写入改动"是性质不同，仍分两步）。依据：成本结构的直接观测量是**子代理个数**（实测 cache-read 占提示 token 的 91%，N 个同类委派等于把同一份材料买 N 次），恢复机制是 `@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化的子代理会话重建（源码注释：`no subagent provider is dispatched`）。取反方向由 I10 守住。
+  - I13: 调度 persona 必须保留四条**编排层**规则，且它们只能是编排层的：① 同一实体 + 同一性质的任务合并成一次委派（不为同一个代码库 / 文档库 / 站点并发多个"各看一个方面"的同类专家，而是把方面列进同一条委派让一个专家一次通读、按方面分节产出）；② 同一实体的**后续**任务优先用 `list_agents` + `send_message` 接给**已经读过它**的那个专家，而不是新建委派；③ 大范围改动先派只读的 `agent_researcher` 出 `path:line` 清单，再让 `agent_coder` 按位改（定位与改动性质不同，本来就该分两步）；④ 跨专家传递大材料走 digest（见 I14）。判据固定为**实体 × 性质**两个维度：实体不同或性质不同才拆（"先只读调研、再写入改动"是性质不同，仍分两步）。依据：成本结构的直接观测量是**子代理个数**（实测 cache-read 占提示 token 的 91%，N 个同类委派等于把同一份材料买 N 次），恢复机制是 `@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化的子代理会话重建（源码注释：`no subagent provider is dispatched`）。取反方向由 I10 守住。
+  - I14: digest 工件**禁止写进会话工作区或仓库**，只能落在**平台临时根**（`os.tmpdir()` / `$TEMP` / `/tmp`）下本任务自己的子目录里；后续委派只传**绝对路径**并要求专家用 `read` 取；**任务结束时必须删掉本任务自己创建的工件，删不掉要如实报告**；调用会话的策略是 `read-only` 时**禁止造工件**（改走"digest 随委派 prompt 传递"的默认档）。依据：`@deepseek-ai/dsh-fs-sandbox` 的包文档「围栏行为」—— 读取在三种模式下都不受围栏限制，而 `workspace-write` 只允许目标位于会话工作区或平台临时区域之下、`read-only` 拒绝一切变更；写进工作区的散落中间文件会被误提交。digest 必须是**派生材料**：委派 prompt 里要写明"与源材料冲突时以源材料为准、冲突要报出来"，禁止把 digest 当成结论或交付物。
 
 ## 对外接口
 
@@ -89,8 +91,9 @@ last_reviewed: 2026-09-25
 - 禁止给 `compaction-basic` / `tool-result-pruner` / `tool-web` 三行写回体积覆盖值。来源：实测，根 `README.md`「为什么撤销 preset 侧的体积闸门」与 `docs/evidence.md` §2（成本基线）、§3（三个体积旋钮的实际生效值）、§4（已移除的 token 两档）（截断把工具已取到的事实切掉；提前压缩让上下文不可逆失真）。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`。来源：`skills/adg-add-agent/SKILL.md`「硬约束」（只给 pwsh 会让后台跑起来的任务取不回来）。
 - 禁止设 `maxTokens` / `agentOptions` / `reasoningEffort`（后者在手工声明的路由上会让每次委派 `UNSUPPORTED_REASONING_EFFORT`）。来源：`skills/adg-add-agent/SKILL.md`「硬约束」。
-- persona 里禁止写**子代理预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。来源：根 `README.md`「persona 层保留的政策：专家侧的收敛纪律与调度侧的派发拓扑」与 `docs/evidence.md` §2（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。**边界**：编排层的两条派发拓扑规则（I13）不属于本条禁止的范围 —— 它们约束"派给谁、派几次"，不限制任何单个专家的读取量与产出量。
-- 禁止删掉调度 persona 的派发拓扑规则（I13），也禁止把「同一实体合并委派」改写成子代理读取／汇报预算。来源：成本结构实测（根 `README.md`「多智能体的 token 消耗：已落地与可选手段」：cache-read 占 91%、调度者 59% / 子代理 41%、每个子代理 ≈1.73M）+ `@deepseek-ai/dsh-subagent` 的 `coldResume` 源码事实。
+- persona 里禁止写**子代理预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。来源：根 `README.md`「persona 层保留的政策：专家侧的收敛纪律与调度侧的编排层规则」与 `docs/evidence.md` §2（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。**边界**：编排层的四条规则（I13）与 digest 工件口径（I14）不属于本条禁止的范围 —— 它们约束"派给谁、派几次、材料怎么中转"，不限制任何单个专家的读取量与产出量。
+- 禁止删掉调度 persona 的编排层规则（I13），也禁止把「同一实体合并委派」改写成子代理读取／汇报预算。来源：成本结构实测（根 `README.md`「多智能体的 token 消耗：已落地与可选手段」：cache-read 占 91%、调度者 59% / 子代理 41%、每个子代理 ≈1.73M）+ `@deepseek-ai/dsh-subagent` 的 `coldResume` 源码事实。
+- 禁止把 digest 工件写进会话工作区 / 仓库，也禁止在没删掉自己创建的工件时宣称"已清理干净"（I14）。来源：`@deepseek-ai/dsh-fs-sandbox` 的包文档「围栏行为」（可写集合 = 工作区 + 平台临时区域；读取不受限）+ 工作区里散落的中间文件会被误提交。
 - 要改体积旋钮却没拿得出前后对比数字时，禁止改动。来源：`docs/evidence.md` §10「怎么重新测量」（两条审计命令必须改动前后各跑一次）。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门（I11），也禁止把它写成安全边界。来源：真机实测 A/B，`docs/evidence.md` §11（`workspace-write` 下 Chrome 退出码 21、Edge Mojo `拒绝访问 (0x5)`；`danger-full-access` 下同一批命令全部退出码 0 且 CDP 真驱动成功），以及源码级事实三问（父智能体不能指定子智能体权限 / preset 不能改会话模式 / 子代理不能自己升权）。
 - 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「请用户介入／问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`。来源：源码级事实，`@deepseek-ai/dsh-user-questions` 的 `ask()`（带 agent 时只认 `agents.roots()`）与 `@deepseek-ai/dsh-tool-ask-user` 的 `execute`（把 `exec.agent` 传下去）；转达机制见 `docs/evidence.md` §12。
@@ -99,7 +102,7 @@ last_reviewed: 2026-09-25
 
 动手前先读：`preset/AGENTS.md` → `preset/design.md` → 视改动再读 `skills/adg-add-agent/SKILL.md`。
 
-绝不能做：上面 10 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
+绝不能做：上面 11 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
 
 停止并升级人类：要推翻既有语义；红线之间冲突；需求超出本对象边界；要改体积旋钮却拿不出前后对比数字。
 
