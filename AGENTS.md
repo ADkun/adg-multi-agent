@@ -29,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 1. **禁止加回通用 `subagent` / `subagent_fork` 委派行。** 子代理继承父代理的整套 composition；一旦存在通用行，专家就能绕过自己的范围再开一个不受限的子代理（已在创造模式实测复现）。
 2. **`toolFilter.allow` 是真实的能力边界，不是提示。** 实测：专家可见的工具目录**恰好等于**它的 `allow` 名单（连 preset 自己注册的工具一起被裁）。因此禁止在 persona 里要求它做 `allow` 之外的事，也禁止承诺"专家之间默认能互相转交"。
 3. **禁止给承载体积旋钮的三行写回覆盖值**（`compaction-basic` / `tool-result-pruner` / `tool-web`）。本 preset 一律用插件出厂默认值：截断工具结果会把工具**已经取到**的事实切掉。
-4. **禁止在 persona 里写 token／读取预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。该层纪律已整体撤销。**与成本有关的只剩调度侧四条编排层规则**（同一实体 + 同一性质的任务合并成一次委派；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务接给已经读过它的那个专家；跨专家传递大材料走 digest，`preset/design.md` I13 / I14）—— 它们约束"派给谁、派几次、材料怎么中转"，不是"单个专家能读多少、能写多少"；禁止把这四条改写成预算，也禁止把 digest 工件写进工作区（I14）。
+4. **禁止在 persona 里写 token／读取预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。该层纪律已整体撤销。**与成本有关的只剩调度侧五条编排层规则**（同一实体 + 同一性质的任务合并成一次委派；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务接给已经读过它的那个专家；跨专家传递大材料走 digest；派发前过**必要性闸门**并给未纳入的旁路挂号，`preset/design.md` I13 / I14）—— 它们约束"派给谁、派几次、材料怎么中转、要不要做"，不是"单个专家能读多少、能写多少"；禁止把这五条改写成预算，也禁止把 digest 工件写进工作区（I14），禁止把未纳入的旁路静默丢掉（I13 第 ⑤ 条）。
 5. **禁止给任何请求设 `maxTokens` / `agentOptions` / `reasoningEffort`。** 后者在手工声明的路由上会让每次委派直接报 `UNSUPPORTED_REASONING_EFFORT`。
 6. **禁止给专家行写 `maxDepth`。** 写 `0` 会让**每一次** `agent_*` 委派以 `subagent depth 1 exceeds maxDepth 0` 失败。
 7. **`allow` 里只能写已注册的工具名。** `dsh-tools` 的 `restrict()` 遇到未知名直接抛 `names unknown global tool ...`，那一次委派当场失败；合法名单见 `tools/design.md`。
@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 | 你要做什么 | 先读 | 再读 |
 |---|---|---|
 | 新增 / 修改 / 删除一个专家智能体 | `preset/AGENTS.md` | `skills/adg-add-agent/SKILL.md` → `preset/design.md` → 改完 `node tools/check-preset.mjs` |
-| 改调度 persona 的名册或分派规则 | `preset/design.md` | `preset/testing-guide.md`（名册与专家行的双向一致性约束）；改**编排层规则**（I13 / I14）再读 `README.md`「多智能体的 token 消耗：已落地与可选手段」 |
+| 改调度 persona 的名册或分派规则 | `preset/design.md` | `preset/testing-guide.md`（名册与专家行的双向一致性约束）；改**编排层规则**（I13 / I14，含必要性闸门与挂号）再读 `README.md`「多智能体的 token 消耗：已落地与可选手段」 |
 | 改插件行为（筛选 / 计数 / 措辞 / 激活行） | `plugin/dsh-adg-token-budget/AGENTS.md` → `design.md` | `plugin/dsh-adg-token-budget/testing-guide.md`（先看该行为是否已被测试钉住） |
 | 改插件的挂载位置、部署集合或上线顺序 | `plugin/dsh-adg-token-budget/INSTALL.md` | `plugin/dsh-adg-token-budget/design.md` |
 | 改 `check-preset.mjs` 的判错口径，或改 composition 的 tool 行 | `tools/design.md` | `preset/design.md`（体积旋钮与 `allow` 的约束） |
