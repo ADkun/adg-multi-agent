@@ -23,7 +23,7 @@ last_reviewed: 2026-09-25
 | `tools/testing-guide.md` | I1..I9 的用例、两个状态机的迁移矩阵、三条跨模块消费侧契约、它**故意不做**的检查清单 | 改校验器后要跑什么、或要判断"某个坏配置它能不能挡住"时 |
 | `browser/AGENTS.md` | 浏览器工具链的独立命令（含 `tabs` / `close-tab`）、模块特有红线（禁止第三方依赖 / 禁止把 profile 放进工作区 / 禁止代填密码与验证码自动化 / 禁止关别人的标签页与关到 0 个）、跨模块路由、生效方式（重新安装即生效，**不用重启**） | 要跑 `cli.mjs`、或要改 `launch` / `close` / `close-tab` 的默认行为之前 |
 | `browser/design.md` | 工具链作为对象的设计：`BrowserTarget`（不可变值对象）/ `BrowserInstance`（生命周期型）/ `PageSession`（句柄型）/ `PageTab`（清理型）四个对象与 I1..I10（含 I9「不点名不关、不关到 0 个」与 I10「谁开的谁收」）；为什么"登录由人完成"是边界 | 要改命令行契约、profile 解析口径或标签页清理规则之前 |
-| `browser/testing-guide.md` | I1..I10 的用例（**34 个，不需要浏览器**）、三个状态机迁移矩阵全表、两条跨模块消费侧契约、未观测清单 | 改完 `browser/` 要跑什么、要判断某条不变量被测到什么程度时 |
+| `browser/testing-guide.md` | I1..I10 的用例（**36 个，不需要浏览器**）、三个状态机迁移矩阵全表、两条跨模块消费侧契约、未观测清单 | 改完 `browser/` 要跑什么、要判断某条不变量被测到什么程度时 |
 | `preset/AGENTS.md` | `preset/` 的独立命令、模块特有红线、跨模块路由、生效方式；开头写明"为什么本模块需要独立文档" | 要增删专家、或改调度 persona 的名册与分派规则之前 |
 | `preset/design.md` | preset 作为对象的设计：`PresetRevision`（生命周期型）/ `ExpertRow` / `SchedulerPersona` 三个对象与不变量、专家行与调度名册的双向约束、体积旋钮三行的口径 | 要改专家行字段、`allow` 名单或旋钮口径时 |
 | `preset/testing-guide.md` | preset 侧不变量→用例全表、`PresetRevision` 迁移矩阵全表、两条跨模块消费侧契约（插件消费 preset **id** 而非 `preset.yml` 的 `name`；技能消费专家行的**字段形状**）、对 `check-preset.mjs` 的能力边界断言 | 改完 preset 要跑什么、要判断某条约束被测到什么程度时 |

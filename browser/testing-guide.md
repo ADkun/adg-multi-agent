@@ -7,12 +7,12 @@ last_reviewed: 2026-09-27
 
 # browser 模块测试指南
 
-不变量编号见 `design.md`（I1..I8 一一对应，本文不重复定义）。类型三种：**单元测试**（`node --test test`，本机实测 **27 个用例全通过**，不需要浏览器）、**真机实测**（要有本机 Chrome，有日志为证）、**人工 review**（脚本抓不到）。
+不变量编号见 `design.md`（I1..I10 一一对应，本文不重复定义）。类型三种：**单元测试**（`node --test test`，本机实测 **36 个用例全通过**，不需要浏览器）、**真机实测**（要有本机 Chrome，有日志为证）、**人工 review**（脚本抓不到）。
 
 ## 命令（可直接照抄）
 
 ```sh
-cd browser && node --test test                       # 27 个用例
+cd browser && node --test test                       # 36 个用例
 cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-write）里必须加这个 flag
 ```
 
@@ -36,6 +36,8 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 | I9（同上，行为侧） | A34 真机：临时实例里 `close-tab --match` 命中全部 → 拒绝且退出码 1、浏览器仍 `ALIVE=true`；不给选择器 / `--tab 9` 越界 → 同样拒绝；`--tab 0` → `CLOSED_TABS=1`、`TABS` 3→2 | 真机实测 | 已实现（2026-09-27，端口 9444 的一次性 profile） |
 | I10 一次性读取不留标签页 | A35 `I10 pageSession 标出「这一页是不是本命令自己开的」`；A36 `I10 读取命令的收尾只关自己开的页，且受 --keep 控制`（含"text / eval / shot 三个命令都要走这个收尾"的计数断言） | 单元测试（源码级断言） | 已实现 |
 | I10（同上，行为侧） | A37 真机：`text --url <全新地址>` → 打完 `TAB_CLOSED=` 后 `TABS` **不变**（零残留）；同一地址加 `--keep` → `TABS` +1；`close-tab --match example.com` → `CLOSED_TABS=1` 并回到原值 | 真机实测 | 已实现（2026-09-27，用户实例端口 9333：21 → 21 → 22 → 21） |
+| I10（同上，**抢跑修复**） | A38 `I10 新建临时页先开空白标签、attach 后再导航等可读状态（不许抢跑）`（断言 `about:blank` 建页、`sleep(600)` 已消失、复用 `goto`、超时报错）；A39 `I10 初始导航失败也要收走自己开的临时页（失败路径同样「谁开的谁收」）` | 单元测试（源码级断言） | 已实现 |
+| I10（同上，抢跑修复，行为侧） | A40 真机：`text --url` 三个真实站点正文分别 **129 / 547 / 2061 字节**（**修复前三个全是 `BYTES=0`**），每条都打 `TAB_CLOSED=` 且 `TABS` 1 → 1；单轮工具侧耗时 **0.78 / 1.43 / 1.98 s** | 真机实测 | 已实现（2026-09-27，一次性实例端口 9444 + 临时 profile） |
 
 ## 2. 状态机迁移矩阵（全表）
 
@@ -89,15 +91,16 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 - **多实例并发**：两个 Adg 会话同时 `launch` 同一端口的行为没有观测（矩阵里按「第二次 launch 撞端口 → 超时分支报错」登记为**推断**，不是实测）。
 - **无头（`--headless`）路径**：本模块**不提供**，也不打算提供 —— 卡在有头窗口正是「让人来登录 / 过验证」的载体（`preset/design.md` I12）。
 - **「哪一页已经不需要了」这个判断没有自动化**：本模块只有两条确定规则（自己开的临时页自己收；调用方点名的页才关）。专家收尾时是否真的会点名清理、以及会不会把该留的页关掉，没有真实 Adg 会话为证。量法：转写里检索 `close-tab` 的调用与 `TABS=` 的变化；一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
+- **超时 / 失败清理分支没有在真机上触发过**：Chrome 对不可达站点会给出错误页（`.invalid` 域名 → 224 字节的错误页，退出码 0）或在约 10.7s 后正常返回（不可路由 IP `10.255.255.1`），所以 `state.timeout` 报错与"失败时收走自己开的临时页"这两条**只有源码级断言（A38 / A39）**，没有真机证据。量法：拿一个 30s 内既不 `interactive` 也不 `complete` 的本地页面（例如无限 `document.write` 的 `data:`/本地文件）跑 `text --url`，应报 `页面在 30000ms 内没有进入可读状态` 且 `TABS` 不变。
 
 ## 5. 交付前的最小闭环
 
 ```sh
-cd browser && node --test --test-isolation=none test     # 须 34/34 通过
+cd browser && node --test --test-isolation=none test     # 须 36/36 通过
 node cli.mjs profile                                     # 须报出 profile / 端口 / Chrome
 node cli.mjs launch --url https://example.com            # 须 STATE=STARTED 或 STATE=REUSED
 node cli.mjs launch                                      # 须 STATE=REUSED（I3）
-node cli.mjs text --url https://example.com/            # 须打 TAB_CLOSED= 且 tabs 数不变（I10）
+node cli.mjs text --url https://example.com/            # 须打 TAB_CLOSED=、正文非空（BYTES>0）、tabs 数不变（I10）
 node cli.mjs tabs                                        # 记下 TABS=N
 node cli.mjs close-tab --match example.com               # 须 CLOSED_TABS= 且不报「会剩 0 个页面」
 node cli.mjs close                                       # 须 ALIVE=false + CLOSED=true

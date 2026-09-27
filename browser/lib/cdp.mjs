@@ -285,6 +285,12 @@ export async function closeTarget(port, targetId, opts = {}) {
 /**
  * 一次页面会话：连上既有页面（或先开一个新标签），返回一组便捷方法。
  * 调用方负责 `close()` —— 它只断开 CDP，**不关浏览器**。
+ *
+ * `newUrl` 的实现刻意分两步：**先开空白标签、attach 之后再 `Page.navigate` 并等可读状态**。
+ * 早先的写法是 `createTarget(port, url)` 再固定 `sleep(600)` 就读 —— 那是**抢跑**：
+ * 慢了半拍的页面会被读到 0 字节（2026-09-27 实测 example.com / qunar / ctrip 三个站点全部
+ * `BYTES=0`），而空结果又会被当成"这一页没内容"，白烧一整轮。等不到可读状态就**报错**
+ * （而不是返回空正文）：空正文与"页面没加载完"在调用方看来一模一样，必须区分。
  */
 export async function pageSession(port, opts = {}) {
   assertRuntime();
@@ -293,17 +299,40 @@ export async function pageSession(port, opts = {}) {
   // `created` 记录「这一页是不是本命令自己开的」—— 只有自己开的临时标签才允许自动收走（I10）。
   let created = false;
   if (newUrl) {
-    const targetId = await createTarget(port, newUrl, { socketFactory });
-    await sleep(600);
-    picked = pickPage(await listTargets(port), { id: targetId });
+    const targetId = await createTarget(port, 'about:blank', { socketFactory });
+    // 新目标不一定立刻出现在 /json/list 里：轮询等它（最多 ~2s），不要用固定 sleep 赌。
+    for (let i = 0; i < 10 && !picked?.page; i++) {
+      await sleep(200);
+      picked = pickPage(await listTargets(port), { id: targetId });
+    }
     created = true;
   } else {
     picked = pickPage(await listTargets(port), { match, index });
   }
   if (!picked.page) throw new Error(picked.reason);
-  const cdp = await connect(picked.page.webSocketDebuggerUrl, { socketFactory });
-  await cdp.send('Runtime.enable', {});
-  await cdp.send('Page.enable', {});
+  let cdp;
+  try {
+    cdp = await connect(picked.page.webSocketDebuggerUrl, { socketFactory });
+    await cdp.send('Runtime.enable', {});
+    await cdp.send('Page.enable', {});
+    if (newUrl) {
+      const state = await goto(cdp, newUrl, timeoutMs);
+      if (state.timeout) {
+        throw new Error(
+          `页面在 ${timeoutMs}ms 内没有进入可读状态（readyState=${state.readyState ?? '未知'}）：${newUrl}`,
+        );
+      }
+    }
+  } catch (e) {
+    // 失败也不把自己开的临时页留给用户（I10 的"谁开的谁收"包含失败路径）；别人开的页一律不碰。
+    try {
+      cdp?.close();
+    } catch {
+      // 连接本来就没建起来是正常情形。
+    }
+    if (created) await closeTarget(port, picked.page.id, { socketFactory }).catch(() => {});
+    throw e;
+  }
   return {
     cdp,
     target: picked.page,

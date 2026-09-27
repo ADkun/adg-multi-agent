@@ -15,7 +15,7 @@ node cli.mjs launch      # 开有头窗口；**实例活着就复用，不重启
 node cli.mjs close-tab   # 关标签页：--match <子串> 关所有匹配的，--tab <n> 关那一个
 node cli.mjs close       # 优雅关闭 —— 唯一让登录态落盘的动作
 
-cd browser && node --test test                                  # 单元测试（34 个用例，不需要浏览器）
+cd browser && node --test test                                  # 单元测试（36 个用例，不需要浏览器）
 cd browser && node --test --test-isolation=none test            # DSH 沙箱（workspace-write）里必须加这个 flag
 ```
 

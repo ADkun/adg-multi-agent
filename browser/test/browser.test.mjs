@@ -383,3 +383,22 @@ test('I10 读取命令的收尾只关自己开的页，且受 --keep 控制', ()
   const destructured = cli.match(/const \{ session, created \} = await sessionFor\(/g) ?? [];
   assert.equal(destructured.length, 3, 'text / eval / shot 都要拿到 created');
 });
+
+test('I10 新建临时页先开空白标签、attach 后再导航等可读状态（不许抢跑）', () => {
+  const src = fs.readFileSync(path.join(LIB, 'cdp.mjs'), 'utf8');
+  assert.match(src, /createTarget\(port, 'about:blank', \{ socketFactory \}\)/, '必须用空白标签建页');
+  assert.ok(!/await sleep\(600\)/.test(src), '不许再用固定 600ms 赌页面加载完（实测三站点读到 0 字节）');
+  assert.match(src, /const state = await goto\(cdp, newUrl, timeoutMs\)/, '必须复用 goto 的等可读状态逻辑');
+  assert.match(src, /if \(state\.timeout\)/, '等不到可读状态必须报错，不许把空正文当成功返回');
+});
+
+test('I10 初始导航失败也要收走自己开的临时页（失败路径同样「谁开的谁收」）', () => {
+  const src = fs.readFileSync(path.join(LIB, 'cdp.mjs'), 'utf8');
+  const body = src.slice(src.indexOf('export async function pageSession'));
+  assert.match(body, /\} catch \(e\) \{/, 'pageSession 必须有失败清理分支');
+  assert.match(
+    body,
+    /if \(created\) await closeTarget\(port, picked\.page\.id, \{ socketFactory \}\)/,
+    '失败时要关掉自己刚开的那个临时页',
+  );
+});

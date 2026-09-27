@@ -418,7 +418,24 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 「哪一页已经不需要了」这种语义判断留在专家侧（收尾时 `close-tab --match <站点>` 点名），
 工具侧只留两条护栏：不点名不关、不关到 0 个页面。
 
-**单元测试**：`cd browser && node --test --test-isolation=none test` → **34/34 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
+**一次性读页的抢跑（2026-09-27 发现并修复，真机实测）**
+
+量耗时的时候顺手量出一个真缺陷：`text --url <新地址>` 早先是「按目标 URL 建页 → 固定 `sleep(600)` → 读」，
+**抢在页面加载之前就读**，于是三个真实站点全部读到空正文：
+
+| 站点 | 修复前 | 修复后（先开 `about:blank` → attach → `Page.navigate` → 等可读 → 读 → 收页） | 单轮工具侧耗时 |
+|---|---|---|---|
+| `https://example.com/` | `BYTES=0`、`TITLE=`（空） | `BYTES=129`、`TITLE=Example Domain` | 0.78 s |
+| `https://www.qunar.com/` | `BYTES=0` | `BYTES=547` | 1.43 s |
+| `https://hotels.ctrip.com/` | `BYTES=0` | `BYTES=2061` | 1.98 s |
+
+两轮都是**一次性实例**（端口 9444 + 临时 profile），`TABS` 全程 1 → 1（每条都打 `TAB_CLOSED=`）。
+「读不到内容」与「这页本来就空」在调用方看来完全一样，会被当成"这个站点没用"而**白烧一整轮**（还常诱发重试 ——
+再烧一轮），所以修复同时把「等不到可读状态」改成**报错**而不是返回空正文。这也是同日那条调度纪律
+（同一份信息默认只在一个站点取，见 `preset/design.md` I13 ① 与 `docs/changelog.md` 同日条目）的成本依据：
+浏览器一轮的**下限**是 0.8–2.0 秒（工具侧，还不含每一个模型步），真实站点上「等到内容可取」通常更久（未测）。
+
+**单元测试**：`cd browser && node --test --test-isolation=none test` → **36/36 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
 
 **部署实测**：`install.ps1` 把 `browser/` 拷到 `C:\Users\cenqian\.dsh\browser\`；用**部署后的副本**重跑了一遍
 `profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
@@ -438,11 +455,15 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 - **收尾点名清理没有真实 Adg 会话为证**：工具侧的护栏与自动收页都是实测的（见上表），但「专家会不会在任务收尾时
   主动 `close-tab` 点名清理、会不会关掉该留的页」**未观测**。量法：转写里检索 `close-tab` 与 `TABS=` 的变化；
   一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
+- **超时 / 失败清理分支没有在真机上触发过**：不可达站点不会让 Chrome 挂住 —— `.invalid` 域名给错误页
+  （224 字节、退出码 0），不可路由 IP `10.255.255.1` 约 10.7s 后也正常返回。所以「等不到可读状态就报错」与
+  「失败时收走自己开的临时页」只有源码级断言（`browser/testing-guide.md` A38 / A39），没有真机证据。
+  量法：用一个 30s 内既不 `interactive` 也不 `complete` 的本地页面跑 `text --url`。
 
 **怎么重测**（逐条照抄）：
 
 ```sh
-cd browser && node --test --test-isolation=none test          # 须 34/34
+cd browser && node --test --test-isolation=none test          # 须 36/36
 node cli.mjs launch                                           # 须 STATE=STARTED
 node cli.mjs launch                                           # 须 STATE=REUSED
 node cli.mjs eval --js "document.cookie='adg_probe=1; path=/; max-age=3600'; document.cookie"
@@ -450,7 +471,7 @@ node cli.mjs close                                            # 须 ALIVE=false
 node cli.mjs launch --url https://example.com                 # 须 STATE=STARTED
 node cli.mjs eval --match example.com --js "document.cookie"   # 须含 adg_probe=1
 node cli.mjs tabs | grep '^TABS='                             # 记下 N
-node cli.mjs text --url https://example.com/                   # 须打 TAB_CLOSED= 且 TABS 仍是 N（I10）
+node cli.mjs text --url https://example.com/                   # 须打 TAB_CLOSED=、BYTES>0 且 TABS 仍是 N（I10）
 node cli.mjs close-tab --match example.com                     # 须 CLOSED_TABS= 且不报「会剩 0 个页面」（I9）
 node cli.mjs close
 ```

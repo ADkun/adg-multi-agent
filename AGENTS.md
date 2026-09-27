@@ -86,6 +86,6 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 4. 改了插件的 `src/` → 重启后复核激活行形状（见上表）。
 5. 交付前逐条对照 `docs/docs-guide.md` 的写作规范与附件规范的「质量红线清单」。
 6. 引用任何实测数字前先读 `docs/evidence.md` 的**未观测清单**与**活证据复核快照**：人向手册里若干"未观测"条目的**依据**已被本机日志更新（新阶梯下的注入确已发生，见 `docs/evidence.md` 第 9 节），处置权在人类。**但有一条不是冲突、不许读成冲突**：「恢复的子代理被再次提醒」仍是未观测——日志证明的是**驻留期重置机制**在跑，"那个子代理是被恢复的"无从判定（`subagent/end` 对"结束"与"被恢复"发同一事件）。
-7. `cd browser && node --test test` → 全绿（本仓库实测 **34 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md` 第 5 节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
+7. `cd browser && node --test test` → 全绿（本仓库实测 **36 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md` 第 5 节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留且正文非空** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
 
 **能力的边界（不许越界宣称）**：`tools/check-preset.mjs` 是**逐行文本扫描器，不是 YAML 解析器**；它证明不了文件能被 YAML 解析，也证明不了插件真的挂载，**更完全不覆盖插件那一层**。`README.md` 与 `docs/evidence.md` 里的实测都带状态分层（源码级事实 / 检验 / 真机实测 / 未观测）——引用时必须保留该分层，**未观测的结论不许写成实测**。

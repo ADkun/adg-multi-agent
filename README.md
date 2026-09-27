@@ -1026,7 +1026,7 @@ browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动
   cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
   lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
   lib/cdp.mjs           # 最小 CDP 通道 + 会话便捷层（socketFactory 可注入，便于无浏览器测试）
-  test/browser.test.mjs # 34 个单元用例（不需要浏览器）
+  test/browser.test.mjs # 36 个单元用例（不需要浏览器）
   AGENTS.md             # 模块路由：命令、模块特有红线、跨模块路由、生效方式
   design.md             # 对象设计：BrowserTarget / BrowserInstance / PageSession / PageTab 与 I1..I10
   testing-guide.md      # 不变量→用例全表、三个状态机迁移矩阵、消费侧契约、未观测清单
