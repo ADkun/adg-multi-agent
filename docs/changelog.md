@@ -9,6 +9,21 @@ last_reviewed: 2026-09-25
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-27（晚）— 标签页卫生（I9 / I10）：`tabs` 与 `close-tab`、一次性读取不留页
+
+- **问题（实测）**：一轮真实任务之后实例里堆了 **19 个标签页**（12 个携程酒店详情页、3 个只差 query 的列表页、2 个重复的去哪儿首页……）。成因是源码级事实：旧实现里 `text/eval/shot --url <新地址>` 为读一页会 `Target.createTarget` 开新标签，读完只 `cdp.close()`（断连）**从不关目标**，`open` 同样只开不关。
+- `browser/lib/cdp.mjs`：新增 `closeTarget(port, targetId)`（浏览器级端点发 `Target.closeTarget`）与纯函数 `pickTabsToClose(targets, {match, tab})`；`pageSession` 现在返回 `created`（这一页是不是本次调用自己开的）与 `target`；顺手修掉 `closeBrowser` 注释里引用不存在的 `design.md I9`（应为 I8）。
+- `browser/cli.mjs`：新增 `tabs`（只列标签页，清理前先看）与 `close-tab`（`--match <子串>` 关掉所有匹配的 / `--tab <n>` 关那一个）；`text` / `eval` / `shot` 新增 `--keep`，默认把**自己开的临时标签**读完收走（打 `TAB_CLOSED=`），只关 `created` 的页；USAGE 增加"标签页卫生"段。
+- `browser/design.md`：新增第四个对象 **PageTab（清理型）** 与两条不变量 —— **I9**（关标签页必须点名，且不许关到 0 个页面：那等于绕过 `close`）、**I10**（谁开的谁收：`text/eval/shot --url` 的临时页自己收，`open`/`launch` 的页不自动关）；「对外接口」补 `TAB_EXISTS` / `TAB_OPENED` / `TAB_CLOSED` / `CLOSED_TABS`；非功能红线加一条（禁止关别人的页 / 禁止关到 0 个，5 → 6 条）；For Agents 与「不负责」同步。
+- `browser/test/browser.test.mjs`：**27 → 34 个用例**。新增 A29..A33（I9 纯函数 + 源码级断言：点名、不猜、越界、缺值、拒绝关到 0 个、`Browser.close` 仍只出现 1 次）与 A35/A36（I10：`created` 标记、三个读取命令都必须走收尾、`--keep` 放行）。
+- `browser/testing-guide.md`：I1..I8 → **I1..I10**；不变量全表新增 4 行（两条单元 + 两条真机 A34/A37）；新增第三个状态机矩阵 **PageTab**（含"用户早先开的页绝不自动关"一行）；未观测清单新增"哪一页已经不需要了这个判断没有自动化"；最小闭环加 `tabs` / 一次性读页零残留 / `close-tab` 护栏三步。真机实测：`text --url <新地址>` 后 `TABS` 21 → 21（零残留）、`--keep` → 22、`close-tab --match` → 21；护栏在一次性实例（端口 9444 + 临时 profile）验：命中全部 → 退出码 1 且 `ALIVE=true`。
+- `browser/AGENTS.md`：命令块补 `tabs` / `close-tab`（用例 27 → 34），红线加一条（禁止关别人的标签页 / 关到 0 个），跨模块路由加一行。
+- `preset/agent.cordis.yml`：`agent-browser` 的 persona 补一段**标签页卫生**（一次性读取会自己收、`--keep` 才留、收尾用 `close-tab --match <站点>` 点名清并保留用户正在用的页、拒绝关到 0 个）；顶注第 11 条与 design.md 的不变量编号同步（I1 / I3 / I8 / I9 / I10）。I11 / I12 语义不动。
+- `README.md`：「浏览器工具链与登录态资产」的"三条不变的行为" → **四条**（新增标签页不堆积，附 19 个标签页的实测来源）；示例补 `tabs` / `close-tab`；目录结构补 `PageTab` / 34 个用例 / 三个矩阵。
+- `docs/evidence.md` §13：新增「标签页堆积：问题与修复」小节（19 个页的构成、成因、修复后四组实测数字、护栏输出原文），单元测试 27/27 → **34/34**，未观测清单加一条（收尾点名清理没有真实 Adg 会话为证），重测脚本补三行。
+- 根 `AGENTS.md`：Quality Gates 第 7 条同步（27 → 34，真机闭环加"零残留"与"拒绝关到 0 个页面"）。`docs/registry.md`：三个 browser 行的描述同步。
+- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`browser/lib/target.mjs`（标签页规则全在 cdp/cli 两层，`target.mjs` 的纯函数不涉及目标选择）。
+
 ## 2026-09-27 — 浏览器工具链入仓：新模块 `browser/` + `agent_browser` 收敛到单一入口
 
 - **新增模块 `browser/`**：`cli.mjs`（唯一入口：`launch` / `status` / `profile` / `open` / `text` / `eval` / `shot` / `close`）、`lib/target.mjs`（纯函数：profile / 端口 / Chrome / 启动参数 / 复用决策）、`lib/cdp.mjs`（最小 CDP 通道 + 会话便捷层，`socketFactory` 可注入）、`test/browser.test.mjs`（**27 个用例**，不需要浏览器）、`package.json`（私有、零依赖、`engines.node >= 22`）、`AGENTS.md` / `design.md` / `testing-guide.md`（不变量 I1..I8）。有头启动优先、实例活着就复用、`close` 是唯一关浏览器的入口。零依赖：只用 `node:` 内建与全局 `fetch` / `WebSocket`。

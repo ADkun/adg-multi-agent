@@ -220,24 +220,27 @@ Edge 只做到 `--dump-dom` 退出码 0。
 node "$env:DSH_HOME\browser\cli.mjs" help        # 契约以它为准（选项、输出行、退出码）
 node "$env:DSH_HOME\browser\cli.mjs" profile     # 排错第一站：profile / 端口 / Chrome
 node "$env:DSH_HOME\browser\cli.mjs" launch --url "https://example.com/login"
-node "$env:DSH_HOME\browser\cli.mjs" text --match example.com --out page.txt
+node "$env:DSH_HOME\browser\cli.mjs" text --url "https://example.com/a" --out page.txt
 node "$env:DSH_HOME\browser\cli.mjs" eval --file probe.js --match example.com
+node "$env:DSH_HOME\browser\cli.mjs" tabs        # 看现在开着哪些页（清理前先看这个）
+node "$env:DSH_HOME\browser\cli.mjs" close-tab --match hotels.ctrip.com   # 收掉自己开的那些页
 node "$env:DSH_HOME\browser\cli.mjs" close       # 唯一让登录态落盘的动作
 ```
 
 **登录态是资产，不是每任务重来的消耗品。** profile 固定在 `${DSH_HOME:-~/.dsh}/browser-profile`、**与会话工作区无关** —— 旧口径是"放工作区里一个固定目录，例如 `.browser-profile`"，工作区一换 profile 就换，**这正是"浏览器代理经常被登录拦住"的直接成因**。于是流程变成：第一次撞登录墙 → 用户在那个有头窗口里登录一次 → 每次任务收尾 `close`（cookie 落盘）→ 之后同一个 profile 免登录。要沿用别处已有的 profile 就传 `--profile <绝对路径>`，**不要复制**目录。
 
-**三条不变的行为**（不变量见 `browser/design.md` 的 I1 / I3 / I5 / I8）：
+**四条不变的行为**（不变量见 `browser/design.md` 的 I1 / I3 / I5 / I8 / I9 / I10）：
 
 | 行为 | 为什么 |
 |---|---|
 | `launch` 幂等：端口活着就 `STATE=REUSED`，**不重启** | 重启会丢内存里的会话态，而"用户刚登录完"正是最不该被打断的时刻 |
 | 任务进行中**不 `close`**；只有本轮交互全部完成、用户不再需要在窗口里操作时才 `close` | `close` 会关掉那个有头窗口；用户可能正登录到一半 |
 | 选页必须命中：`--match` / `--tab` 不命中就**报错**，不随便挑一页 | 静默挑错页会让"读到的内容"与"以为在读的内容"不一致（实测报错原文见 `docs/evidence.md` §13） |
+| **标签页不堆积**：`text/eval/shot --url <新地址>` 自己开的临时页读完自己收（`--keep` 才留）；存量用 `close-tab` 点名清；不点名不关、**也不许关到只剩 0 个页面** | 一次真实的酒店比价任务在窗口里留下 **19 个标签页**（12 个携程详情页 + 只差 query 的列表页），"读得越多、页越乱"；而关到 0 个页面等于绕过 `close`，用户开着登录表单的页更绝不能被自动关掉（见 `docs/evidence.md` §13） |
 
-**边界（不做的事）**：不代填账号密码、不读取 profile 的 cookie 库、不做验证码识别与指纹伪装、不加 `--no-sandbox` 之类降权旗标、不引入 playwright / puppeteer（旧形态三条伪装旗标齐全，见 `browser/design.md`「非功能红线」）。**登录永远由人在有头窗口里完成** —— 短信与图形验证码都靠"把窗口开好 → 停手 → 调度者转达"这条人工介入链路（见上一节），自动化只负责把页面开到那一步。
+**边界（不做的事）**：不代填账号密码、不读取 profile 的 cookie 库、不做验证码识别与指纹伪装、不加 `--no-sandbox` 之类降权旗标、不引入 playwright / puppeteer（旧形态三条伪装旗标齐全，见 `browser/design.md`「非功能红线」）；**不判断**哪一页"已经不需要了"—— 只关自己刚开的页与调用方点名的页。**登录永远由人在有头窗口里完成** —— 短信与图形验证码都靠"把窗口开好 → 停手 → 调度者转达"这条人工介入链路（见上一节），自动化只负责把页面开到那一步。
 
-**未观测**：真实站点的登录墙端到端（用户真的登录 → 专家真的抓到登录后内容）**没有跑过**；专家是否真的照 persona 用这套工具，也没有真实 Adg 会话为证。实测到的是机制 —— 逐条见 `docs/evidence.md` §13。
+**未观测**：真实站点的登录墙端到端（用户真的登录 → 专家真的抓到登录后内容）**没有跑过**；专家是否真的照 persona 用这套工具（含收尾点名清理），也没有真实 Adg 会话为证。实测到的是机制 —— 逐条见 `docs/evidence.md` §13。
 
 ### 证据档位与未观测
 
@@ -1016,13 +1019,13 @@ tools/
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
 browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
-  cli.mjs               # 唯一入口：launch / status / profile / open / text / eval / shot / close
+  cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
   lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
   lib/cdp.mjs           # 最小 CDP 通道 + 会话便捷层（socketFactory 可注入，便于无浏览器测试）
-  test/browser.test.mjs # 27 个单元用例（不需要浏览器）
+  test/browser.test.mjs # 34 个单元用例（不需要浏览器）
   AGENTS.md             # 模块路由：命令、模块特有红线、跨模块路由、生效方式
-  design.md             # 对象设计：BrowserTarget / BrowserInstance / PageSession 与 I1..I8
-  testing-guide.md      # 不变量→用例全表、两个状态机迁移矩阵、消费侧契约、未观测清单
+  design.md             # 对象设计：BrowserTarget / BrowserInstance / PageSession / PageTab 与 I1..I10
+  testing-guide.md      # 不变量→用例全表、三个状态机迁移矩阵、消费侧契约、未观测清单
 install.ps1             # Windows 安装脚本（preset + 技能 + 插件 + 挂载行 + browser 工具链）
 install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 ```

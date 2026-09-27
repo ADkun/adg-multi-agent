@@ -332,7 +332,7 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 ## 13. 浏览器工具链：规范 profile / 幂等复用 / 登录态跨重启（真机实测，2026-09-27）
 
 **这一节回答三件事**：规范 profile 该落在哪（为什么不再放会话工作区）、实例复用是不是真的幂等、
-登录态能不能跨浏览器重启。根 `README.md`「浏览器工具链与登录态资产」、`browser/design.md`（I1 / I3 / I8）
+登录态能不能跨浏览器重启；外加第四件：**标签页为什么会堆积、修复后靠什么保证不再堆积**。根 `README.md`「浏览器工具链与登录态资产」、`browser/design.md`（I1 / I3 / I8 / I9 / I10）
 与 `browser/testing-guide.md` 引用本节。
 
 **旧形态的直接成因（本机观测，不是推测）**：`D:\dsh\.browser-tools\` 下有 130+ 个一次性脚本
@@ -365,7 +365,21 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 | 优雅关闭 | `node cli.mjs close` | `ALIVE=false`、`CLOSED=true`；随后 `Default\Network\Cookies` 出现在磁盘上（20,480 B） |
 | **登录态跨重启** | 写 `document.cookie='adg_probe=1; path=/; max-age=3600'` → `close` → 重新 `launch --url https://example.com` → `eval document.cookie` | **`RESULT="adg_probe=1"`** —— 同一个 profile 里 cookie 活过了浏览器重启 |
 
-**单元测试**：`cd browser && node --test --test-isolation=none test` → **27/27 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
+**标签页堆积：问题与修复（2026-09-27，同一个实例）**
+
+| 观测 | 值 |
+|---|---|
+| 用了一轮之后的实际状态 | `TABS=**19**` —— 12 个携程酒店详情页（`hotels.ctrip.com/hotels/<id>.html?checkin=…`）、3 个只差 query 的携程列表页、2 个完全相同的去哪儿首页、1 个美团、1 个 Trip.com |
+| 成因（源码级事实） | 旧实现里 `text/eval/shot --url <新地址>` 为读一页会 `Target.createTarget` 开一个新标签，读完只 `cdp.close()`（断连）**从不关目标**；`open` 同样只开不关 → 「读得越多、页越乱」 |
+| 修复后：一次性读取 | `text --url https://example.com/` → 打 `TAB_CLOSED=1AA3AA0C…`，`TABS` **21 → 21**（零残留）；同一地址加 `--keep` → **21 → 22**（按需保留） |
+| 修复后：存量清理 | `close-tab --match example.com` → `CLOSED_TABS=1`，`TABS` **22 → 21**（回到起点） |
+| 修复后：护栏（一次性实例，端口 9444 + 临时 profile） | `close-tab --match example.com`（3 个页全命中）→ `ERROR=关掉它（们）会剩 0 个页面，那等于关浏览器；要关浏览器请用 node cli.mjs close`、**退出码 1**、`ALIVE=true`（浏览器没被带下去）；不给选择器 → 退出码 1；`--tab 9` 越界 → 退出码 1；`--tab 0` → `CLOSED_TABS=1`、`TABS` 3 → 2 |
+
+→ 结论：**「代理自动关掉不需要的标签页」只对"自己刚开的临时页"做自动化**（`created` 标记，确定无疑）；
+「哪一页已经不需要了」这种语义判断留在专家侧（收尾时 `close-tab --match <站点>` 点名），
+工具侧只留两条护栏：不点名不关、不关到 0 个页面。
+
+**单元测试**：`cd browser && node --test --test-isolation=none test` → **34/34 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
 
 **部署实测**：`install.ps1` 把 `browser/` 拷到 `C:\Users\cenqian\.dsh\browser\`；用**部署后的副本**重跑了一遍
 `profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
@@ -382,16 +396,24 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 - **多实例并发同一端口**：没有观测 —— `browser/testing-guide.md` 的迁移矩阵里按「第二次 `launch` 撞端口 → 超时分支报错」
   登记为**推断**，不是实测。
 - **`install.sh` 未在 Windows 上执行过**：本机没有 `sh` / `bash`，改动只做了人工核对（`install.ps1` 那一侧是真跑过的）。
+- **收尾点名清理没有真实 Adg 会话为证**：工具侧的护栏与自动收页都是实测的（见上表），但「专家会不会在任务收尾时
+  主动 `close-tab` 点名清理、会不会关掉该留的页」**未观测**。量法：转写里检索 `close-tab` 与 `TABS=` 的变化；
+  一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
 
 **怎么重测**（逐条照抄）：
 
 ```sh
-cd browser && node --test --test-isolation=none test          # 须 27/27
+cd browser && node --test --test-isolation=none test          # 须 34/34
 node cli.mjs launch                                           # 须 STATE=STARTED
 node cli.mjs launch                                           # 须 STATE=REUSED
 node cli.mjs eval --js "document.cookie='adg_probe=1; path=/; max-age=3600'; document.cookie"
 node cli.mjs close                                            # 须 ALIVE=false
 node cli.mjs launch --url https://example.com                 # 须 STATE=STARTED
 node cli.mjs eval --match example.com --js "document.cookie"   # 须含 adg_probe=1
+node cli.mjs tabs | grep '^TABS='                             # 记下 N
+node cli.mjs text --url https://example.com/                   # 须打 TAB_CLOSED= 且 TABS 仍是 N（I10）
+node cli.mjs close-tab --match example.com                     # 须 CLOSED_TABS= 且不报「会剩 0 个页面」（I9）
 node cli.mjs close
 ```
+
+（I9 的「会剩 0 个页面」分支要在**一次性实例**上验：`--port 9444 --profile <临时目录>`，别在用户正在用的窗口里试。）

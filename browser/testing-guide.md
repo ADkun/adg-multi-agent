@@ -32,6 +32,10 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 | I7 CDP 通道的四条协议行为 | A22 `I7 id 关联：乱序返回也能各归各位`；A23 `I7 错误映射成 Error，并带上方法名`；A24 `I7 事件通知与未知 id 被忽略，不炸掉连接`；A25 `I7 关闭后 send 拒绝，在途请求也被拒绝`；A26 `I7 连不上时报错，不静默返回半个客户端` | 单元测试 | 已实现（用可注入的假 socket，不需要浏览器） |
 | I8 只有 `close` 能关浏览器 | A27 `I8 关浏览器只有一个入口：closeBrowser 发 Browser.close` | 单元测试（源码级断言） | 已实现（断言 `Browser.close` 全文只出现 1 次、`pageSession` 的 `close` 是 `cdp.close()`） |
 | I8（同上，行为侧） | A28 真实会话里 `text` / `eval` / `shot` 跑完后浏览器**仍在**（`status` 报 `ALIVE=true`），只有 `close` 能让它变 `false` | 真机实测 | 已实现（2026-09-27 冒烟：`status` → `ALIVE=true`，`close` → `ALIVE=false`） |
+| I9 关标签页必须点名，且不许关到 0 个页面 | A29 `I9 --match 关掉所有匹配的页，没命中必须报错`；A30 `I9 --tab 关且只关一个；越界、负数、缺值都必须报错`；A31 `I9 不给选择器就不关：不猜要关哪个`；A32 `I9 拒绝关到 0 个页面（那等于关浏览器，绕过 close）`；A33 `I9 关标签页只走 Target.closeTarget，且 closeBrowser 仍是唯一的 Browser.close` | 单元测试（纯函数 + 源码级断言） | 已实现 |
+| I9（同上，行为侧） | A34 真机：临时实例里 `close-tab --match` 命中全部 → 拒绝且退出码 1、浏览器仍 `ALIVE=true`；不给选择器 / `--tab 9` 越界 → 同样拒绝；`--tab 0` → `CLOSED_TABS=1`、`TABS` 3→2 | 真机实测 | 已实现（2026-09-27，端口 9444 的一次性 profile） |
+| I10 一次性读取不留标签页 | A35 `I10 pageSession 标出「这一页是不是本命令自己开的」`；A36 `I10 读取命令的收尾只关自己开的页，且受 --keep 控制`（含"text / eval / shot 三个命令都要走这个收尾"的计数断言） | 单元测试（源码级断言） | 已实现 |
+| I10（同上，行为侧） | A37 真机：`text --url <全新地址>` → 打完 `TAB_CLOSED=` 后 `TABS` **不变**（零残留）；同一地址加 `--keep` → `TABS` +1；`close-tab --match example.com` → `CLOSED_TABS=1` 并回到原值 | 真机实测 | 已实现（2026-09-27，用户实例端口 9333：21 → 21 → 22 → 21） |
 
 ## 2. 状态机迁移矩阵（全表）
 
@@ -52,6 +56,16 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 |---|---|---|---|
 | `open` | → `closed`（只断 CDP，**不关浏览器**，I8） | — | 允许 |
 | `closed` | — | 自环（幂等） | 禁止：`ERROR=CDP 连接已关闭` |
+
+### PageTab（`design.md`）
+
+`TABS` 是**当前**标签页数；`created` 是「本次调用自己开的那一页」。
+
+| 起始 \ 事件 | `text/eval/shot --url <新地址>` 收尾 | 同一条命令加 `--keep` | `close-tab --match/--tab` | `close-tab` 会剩 0 个页面 | `close`（关浏览器） |
+|---|---|---|---|---|---|
+| 本命令自己开的临时页（`created=true`） | → `closed`（打 `TAB_CLOSED=`） | 自环（留着） | → `closed`（若被点名匹配） | 禁止：报「会剩 0 个页面」 | 强制 `closed` |
+| 用户早先开的页 / `open` `launch` 开的页（`created=false`） | 自环（**绝不自动关**） | 自环 | → `closed`（仅当被 `--match` / `--tab` 点名） | 禁止：同上 | 强制 `closed` |
+| 已关闭的 target | 自环（幂等，不报错） | 自环 | 自环（幂等） | — | 自环 |
 
 ## 3. 跨模块消费侧契约测试
 
@@ -74,15 +88,19 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 - **macOS / Linux 上的 Chrome 探测与有头启动**：候选路径写进了代码（A20 只测了 win32 的候选形状），**没有**在那两个平台上跑过。
 - **多实例并发**：两个 Adg 会话同时 `launch` 同一端口的行为没有观测（矩阵里按「第二次 launch 撞端口 → 超时分支报错」登记为**推断**，不是实测）。
 - **无头（`--headless`）路径**：本模块**不提供**，也不打算提供 —— 卡在有头窗口正是「让人来登录 / 过验证」的载体（`preset/design.md` I12）。
+- **「哪一页已经不需要了」这个判断没有自动化**：本模块只有两条确定规则（自己开的临时页自己收；调用方点名的页才关）。专家收尾时是否真的会点名清理、以及会不会把该留的页关掉，没有真实 Adg 会话为证。量法：转写里检索 `close-tab` 的调用与 `TABS=` 的变化；一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
 
 ## 5. 交付前的最小闭环
 
 ```sh
-cd browser && node --test --test-isolation=none test     # 须 27/27 通过
+cd browser && node --test --test-isolation=none test     # 须 34/34 通过
 node cli.mjs profile                                     # 须报出 profile / 端口 / Chrome
 node cli.mjs launch --url https://example.com            # 须 STATE=STARTED 或 STATE=REUSED
 node cli.mjs launch                                      # 须 STATE=REUSED（I3）
+node cli.mjs text --url https://example.com/            # 须打 TAB_CLOSED= 且 tabs 数不变（I10）
+node cli.mjs tabs                                        # 记下 TABS=N
+node cli.mjs close-tab --match example.com               # 须 CLOSED_TABS= 且不报「会剩 0 个页面」
 node cli.mjs close                                       # 须 ALIVE=false + CLOSED=true
 ```
 
-以上四条真机口径在 2026-09-27 本机实测跑通（原始输出见 `docs/evidence.md` §13）。
+N>1 时 `close-tab --match` 一次命中全部「会剩 0 个页面」的情形必须被拒（I9）；要在**一次性实例**上验这条，别在用户正在用的窗口上试。以上真机口径在 2026-09-27 本机实测跑通（原始输出见 `docs/evidence.md` §13）。

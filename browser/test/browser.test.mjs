@@ -1,4 +1,4 @@
-// `browser/` 的不变量用例（编号与 design.md 的 I1..I8 一一对应）。
+// `browser/` 的不变量用例（编号与 design.md 的 I1..I10 一一对应）。
 //
 // 全部零依赖、零副作用：不 spawn 浏览器、不联网、不读写 profile。
 // CDP 客户端用「可注入的假 socket」测，所以协议行为（id 关联 / 错误映射 / 事件丢弃 / 关闭后拒绝）
@@ -23,7 +23,7 @@ import {
   resolveProfile,
   PROFILE_DIRNAME,
 } from '../lib/target.mjs';
-import { assertRuntime, connect, pickPage } from '../lib/cdp.mjs';
+import { assertRuntime, connect, pickPage, pickTabsToClose } from '../lib/cdp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LIB = path.join(HERE, '..', 'lib');
@@ -315,4 +315,71 @@ test('I8 关浏览器只有一个入口：closeBrowser 发 Browser.close', () =>
   // pageSession 的 close 只断连：它必须是 `cdp.close()`，不是 closeBrowser。
   assert.match(src, /close: \(\) => cdp\.close\(\)/);
   assert.match(src, /调用方负责 `close\(\)` —— 它只断开 CDP，\*\*不关浏览器\*\*/);
+});
+
+// ---------- I9：标签页清理（不猜、不关别人的、不关到 0 个） ----------
+
+// 三个可驱动的页；`match: 'example'` 会一次命中全部三个 —— 用来验「不许关到 0 个」。
+const TABS = [
+  { id: 't0', type: 'page', url: 'https://a.example/1', title: '甲', webSocketDebuggerUrl: 'ws://x/0' },
+  { id: 't1', type: 'page', url: 'https://a.example/2', title: '乙', webSocketDebuggerUrl: 'ws://x/1' },
+  { id: 't2', type: 'page', url: 'https://b.example/login', title: '登录页', webSocketDebuggerUrl: 'ws://x/2' },
+];
+
+test('I9 --match 关掉所有匹配的页，没命中必须报错', () => {
+  assert.deepEqual(pickTabsToClose(TABS, { match: 'a.example' }).targets.map((t) => t.id), ['t0', 't1']);
+  assert.deepEqual(pickTabsToClose(TABS, { match: '登录页' }).targets.map((t) => t.id), ['t2']);
+  assert.match(pickTabsToClose(TABS, { match: 'nope' }).reason, /没有 url \/ title 匹配/);
+  assert.match(pickTabsToClose(TABS, { match: true }).reason, /缺少子串/);
+  assert.match(pickTabsToClose(TABS, { match: '' }).reason, /缺少子串/);
+});
+
+test('I9 --tab 关且只关一个；越界、负数、缺值都必须报错', () => {
+  assert.deepEqual(pickTabsToClose(TABS, { tab: '1' }).targets.map((t) => t.id), ['t1']);
+  assert.match(pickTabsToClose(TABS, { tab: '9' }).reason, /越界/);
+  assert.match(pickTabsToClose(TABS, { tab: '-1' }).reason, />= 0 的整数/);
+  assert.match(pickTabsToClose(TABS, { tab: '1.5' }).reason, />= 0 的整数/);
+  assert.match(pickTabsToClose(TABS, { tab: true }).reason, /缺少序号/);
+});
+
+test('I9 不给选择器就不关：不猜要关哪个', () => {
+  assert.match(pickTabsToClose(TABS, {}).reason, /不猜要关哪个/);
+});
+
+test('I9 拒绝关到 0 个页面（那等于关浏览器，绕过 close）', () => {
+  // 全部三个都匹配 -> 一个都不许关
+  assert.match(pickTabsToClose(TABS, { match: 'example' }).reason, /剩 0 个页面/);
+  // 只剩一个页面时，关它同样被拒
+  assert.match(pickTabsToClose([TABS[0]], { tab: '0' }).reason, /剩 0 个页面/);
+  assert.match(pickTabsToClose([TABS[0]], { match: 'a.example' }).reason, /剩 0 个页面/);
+  // 两个页面里关一个：允许
+  assert.equal(pickTabsToClose(TABS.slice(0, 2), { tab: '0' }).targets.length, 1);
+});
+
+test('I9 关标签页只走 Target.closeTarget，且 closeBrowser 仍是唯一的 Browser.close', () => {
+  const src = fs.readFileSync(path.join(LIB, 'cdp.mjs'), 'utf8');
+  assert.equal((src.match(/Browser\.close/g) ?? []).length, 1);
+  assert.equal((src.match(/Target\.closeTarget/g) ?? []).length, 1);
+  assert.match(src, /export async function closeTarget\(/);
+});
+
+// ---------- I10：一次性读取不留标签页 ----------
+
+test('I10 pageSession 标出「这一页是不是本命令自己开的」', () => {
+  const src = fs.readFileSync(path.join(LIB, 'cdp.mjs'), 'utf8');
+  assert.match(src, /let created = false/);
+  assert.match(src, /created = true/, 'newUrl 分支必须把它标成 created');
+  assert.match(src, /tabs: picked\.pages,\s*created,/, 'created 必须随会话一起返回');
+});
+
+test('I10 读取命令的收尾只关自己开的页，且受 --keep 控制', () => {
+  const cli = fs.readFileSync(path.join(HERE, '..', 'cli.mjs'), 'utf8');
+  assert.match(cli, /async function closeTempTab\(port, created, session, keep\)/);
+  assert.match(cli, /if \(!created \|\| keep \|\| !id\) return/, '别人开的页与 --keep 都必须放行');
+  // text / eval / shot 三个读取命令都要走这个收尾 —— 漏一个就重新开始堆标签页。
+  const calls = cli.match(/await closeTempTab\(port, created, session, args\.keep\)/g) ?? [];
+  assert.equal(calls.length, 3, 'text / eval / shot 三个读取命令都要收掉自己开的临时标签');
+  // 三个命令都必须把 created 取出来（只 destructure session 就丢了这条信息）。
+  const destructured = cli.match(/const \{ session, created \} = await sessionFor\(/g) ?? [];
+  assert.equal(destructured.length, 3, 'text / eval / shot 都要拿到 created');
 });

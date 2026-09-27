@@ -93,6 +93,45 @@ export function pickPage(targets, opts = {}) {
 }
 
 /**
+ * 从 `/json/list` 里筛出「要关掉哪些标签页」（design.md I9）。
+ * 只负责选，**不做任何猜测**：没给选择器、没命中、越界、缺值、会关到 0 个页面，一律返回 `reason`。
+ * `--match` 关掉**所有**匹配的页（这是清理存量标签页的主力）；`--tab` 只关那一个。
+ */
+export function pickTabsToClose(targets, opts = {}) {
+  const pages = pickPage(targets, {}).pages;
+  const guard = (selected) => {
+    if (selected.length === 0) return { targets: [], reason: '没有选中任何标签页' };
+    if (selected.length >= pages.length) {
+      return {
+        targets: [],
+        reason: '关掉它（们）会剩 0 个页面，那等于关浏览器；要关浏览器请用 node cli.mjs close',
+      };
+    }
+    return { targets: selected, reason: null };
+  };
+
+  const { match, tab } = opts;
+  if (match === true || match === '') return { targets: [], reason: '--match 后面缺少子串' };
+  if (match !== undefined) {
+    const hit = pages.filter(
+      (t) => String(t.url ?? '').includes(match) || String(t.title ?? '').includes(match),
+    );
+    if (hit.length === 0) return { targets: [], reason: `没有 url / title 匹配 "${match}" 的页面` };
+    return guard(hit);
+  }
+
+  if (tab === true) return { targets: [], reason: '--tab 后面缺少序号' };
+  if (tab !== undefined) {
+    const n = Number(tab);
+    if (!Number.isInteger(n) || n < 0) return { targets: [], reason: `--tab 必须是 >= 0 的整数（收到 ${String(tab)}）` };
+    if (n >= pages.length) return { targets: [], reason: `--tab ${n} 越界（当前 ${pages.length} 个页面）` };
+    return guard([pages[n]]);
+  }
+
+  return { targets: [], reason: 'close-tab 需要 --match <子串> 或 --tab <n>（不猜要关哪个）' };
+}
+
+/**
  * 建一条 CDP 连接。`socketFactory` 默认是真 WebSocket，测试时注入假 socket。
  * 返回对象只有 `send` / `close`：id 关联、错误映射、事件丢弃都在这里完成。
  */
@@ -220,11 +259,24 @@ export async function createTarget(port, url, opts = {}) {
   }
 }
 
-/** 优雅关闭浏览器 —— 这是让登录态落盘的唯一可靠动作（design.md I9）。 */
+/** 优雅关闭浏览器 —— 这是让登录态落盘的唯一可靠动作（design.md I8）。 */
 export async function closeBrowser(port, opts = {}) {
   const cdp = await connect(await browserWsUrl(port, opts), { socketFactory: opts.socketFactory });
   try {
     await cdp.send('Browser.close', {});
+  } finally {
+    cdp.close();
+  }
+}
+
+/**
+ * 关掉一个标签页目标（design.md I9）。必须在**浏览器级**端点上发 ——
+ * 页面级端点只能驱动它自己那一页，关不掉别人，也关不掉自己所在的那个 target。
+ */
+export async function closeTarget(port, targetId, opts = {}) {
+  const cdp = await connect(await browserWsUrl(port, opts), { socketFactory: opts.socketFactory });
+  try {
+    await cdp.send('Target.closeTarget', { targetId });
   } finally {
     cdp.close();
   }
@@ -238,10 +290,13 @@ export async function pageSession(port, opts = {}) {
   assertRuntime();
   const { match, index, newUrl, timeoutMs = 30000, socketFactory } = opts;
   let picked;
+  // `created` 记录「这一页是不是本命令自己开的」—— 只有自己开的临时标签才允许自动收走（I10）。
+  let created = false;
   if (newUrl) {
     const targetId = await createTarget(port, newUrl, { socketFactory });
     await sleep(600);
     picked = pickPage(await listTargets(port), { id: targetId });
+    created = true;
   } else {
     picked = pickPage(await listTargets(port), { match, index });
   }
@@ -253,6 +308,7 @@ export async function pageSession(port, opts = {}) {
     cdp,
     target: picked.page,
     tabs: picked.pages,
+    created,
     goto: (url) => goto(cdp, url, timeoutMs),
     text: () => readPage(cdp),
     evalJs: (expr) => evalJs(cdp, expr),

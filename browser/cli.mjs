@@ -30,27 +30,35 @@ const USAGE = `用法：node cli.mjs <命令> [选项]
 命令：
   launch     开一个有头窗口（实例已存活则直接复用，不重启）
   status     报端口是否活着、浏览器版本、当前标签页
+  tabs       只列标签页（序号 | 标题 | 地址）—— 清理前先看这个
   profile    报解析出来的 profile / 端口 / Chrome 路径（排错用）
-  open <url> 新开一个标签页
+  open <url> 新开一个标签页（已有同地址则复用，不重复开）
   text       读当前页的标题 / 地址 / 可见文本
   eval       在页面里求值（--js "<表达式>" 或 --file <脚本路径>）
   shot       截图（--out <png 路径> [--full]）
+  close-tab  关掉标签页：--match <子串> 关掉所有匹配的，--tab <n> 关那一个
   close      优雅关闭浏览器（登录态落盘的唯一可靠动作）
 
 通用选项：
   --port <n>       调试端口（默认 ${DEFAULT_PORT}，或环境变量 ADG_BROWSER_PORT）
   --profile <dir>  profile 目录（默认 <DSH_HOME>/browser-profile，或 ADG_BROWSER_PROFILE）
   --url <u>        launch/open 可重复；text/eval/shot 用来指定操作哪一页
-  --match <子串>   按 url / title 子串选页
-  --tab <n>        按序号选页（0 起）
+  --match <子串>   按 url / title 子串选页；close-tab 用它关掉所有匹配的页
+  --tab <n>        按序号选页（0 起）；close-tab 用它关那一个
   --out <file>     text 写正文到文件；shot 指定 png 路径
   --wait <秒>      launch 等待端口起来的秒数（默认 30）
   --full           shot 截整页
+  --keep           text/eval/shot --url 为读新地址而开的**临时标签**默认读完就关，加这个保留它
+
+标签页卫生：open / launch 开的页会留着（给用户看或后续继续用）；
+text / eval / shot --url <新地址> 只是"来读一次"，读完整条命令自己开的临时标签会被收走，
+所以一次性抓取不会留下页。存量清理用 close-tab（它拒绝关到只剩 0 个页面 —— 那等于关浏览器）。
 
 例：
   node cli.mjs launch --url "https://example.com/login"
-  node cli.mjs text --match example.com --out "$env:TEMP\\page.txt"
+  node cli.mjs text --url "https://example.com/a" --out "$env:TEMP\\page.txt"
   node cli.mjs eval --file .\\probe.js --match example.com
+  node cli.mjs close-tab --match hotels.ctrip.com
   node cli.mjs close
 `;
 
@@ -122,14 +130,34 @@ async function ensureOpen(port, url) {
 async function sessionFor(port, args) {
   const url = args.urls[0];
   let opts = { index: args.tab === undefined ? undefined : Number(args.tab), match: args.match };
+  let created = false;
   if (url) {
     const targets = await cdp.listTargets(port).catch(() => []);
     const hit = (Array.isArray(targets) ? targets : []).find(
       (t) => t.type === 'page' && String(t.url ?? '') === url,
     );
     opts = hit ? { match: hit.url } : { newUrl: url };
+    created = !hit;
   }
-  return cdp.pageSession(port, opts);
+  const session = await cdp.pageSession(port, opts);
+  return { session, created: created || session.created === true };
+}
+
+/**
+ * 一次性读取命令的收尾：断开 CDP，并且**只收走本命令自己开的临时标签**（design.md I10）。
+ * 别人开的页一律不碰（那可能是用户正在登录的窗口）；`--keep` 明确要留就不关。
+ */
+async function closeTempTab(port, created, session, keep) {
+  const id = session.target?.id;
+  session.close();
+  if (!created || keep || !id) return;
+  try {
+    await cdp.closeTarget(port, id);
+    print(`TAB_CLOSED=${id}`);
+    print('HINT=这是一次性读取自己开的临时标签，读完就收走了；要保留它加 --keep');
+  } catch (e) {
+    print(`TAB_CLOSE_FAILED=${e?.message ?? String(e)}`);
+  }
 }
 
 async function main() {
@@ -227,11 +255,35 @@ async function main() {
     return;
   }
 
+  if (cmd === 'tabs') {
+    await requireAlive(port);
+    await printTabs(port);
+    print('HINT=清理存量用 node cli.mjs close-tab --match <子串>（或 --tab <n> 关一个）');
+    return;
+  }
+
   if (cmd === 'open') {
     const url = args._[1] ?? args.urls[0];
     if (!url) throw new UsageError('open 需要 URL：node cli.mjs open <url>');
     await requireAlive(port);
     await ensureOpen(port, url);
+    await printTabs(port);
+    return;
+  }
+
+  if (cmd === 'close-tab') {
+    await requireAlive(port);
+    const picked = cdp.pickTabsToClose(await cdp.listTargets(port), {
+      match: args.match,
+      tab: args.tab,
+    });
+    if (picked.reason) throw new Error(picked.reason);
+    for (const t of picked.targets) {
+      await cdp.closeTarget(port, t.id);
+      print(`TAB_CLOSED=${t.title ?? ''} | ${t.url ?? ''}`);
+    }
+    print(`CLOSED_TABS=${picked.targets.length}`);
+    await sleep(300);
     await printTabs(port);
     return;
   }
@@ -255,7 +307,7 @@ async function main() {
 
   if (cmd === 'text') {
     await requireAlive(port);
-    const session = await sessionFor(port, args);
+    const { session, created } = await sessionFor(port, args);
     try {
       const t = await session.text();
       const body = String(t.body ?? '');
@@ -272,7 +324,7 @@ async function main() {
         process.stdout.write(`${body}\n`);
       }
     } finally {
-      session.close();
+      await closeTempTab(port, created, session, args.keep);
     }
     return;
   }
@@ -284,12 +336,12 @@ async function main() {
     if (typeof expr !== 'string' || expr.trim() === '') {
       throw new UsageError('eval 需要 --js "<表达式>" 或 --file <脚本路径>');
     }
-    const session = await sessionFor(port, args);
+    const { session, created } = await sessionFor(port, args);
     try {
       const value = await session.evalJs(expr);
       print(`RESULT=${value === undefined ? 'undefined' : JSON.stringify(value, null, 2)}`);
     } finally {
-      session.close();
+      await closeTempTab(port, created, session, args.keep);
     }
     return;
   }
@@ -297,14 +349,14 @@ async function main() {
   if (cmd === 'shot') {
     await requireAlive(port);
     if (!args.out) throw new UsageError('shot 需要 --out <png 路径>');
-    const session = await sessionFor(port, args);
+    const { session, created } = await sessionFor(port, args);
     try {
       const abs = await session.shot(String(args.out), { full: Boolean(args.full) });
       print(`SHOT=${abs}`);
       const t = await session.text().catch(() => ({}));
       print(`URL=${t.url ?? ''}`);
     } finally {
-      session.close();
+      await closeTempTab(port, created, session, args.keep);
     }
     return;
   }

@@ -12,6 +12,7 @@ last_reviewed: 2026-09-27
 不负责（逐条防越权）：
 
 - 不拥有 Chrome：用的是**系统已装的** Chrome / Edge（标准位置探测 + `ADG_CHROME` 覆盖），不下载、不安装、不打包浏览器；
+- 不拥有用户浏览器里**既有的**标签页：本模块只关它自己刚开的临时页、以及调用方用 `--match` / `--tab` 明确点名的页（I9 / I10）。「哪一页已经不需要了」这种语义判断不在本模块 —— 它只在工具侧留护栏（不点名不关、不关到 0 个）；
 - 不拥有 profile 里的登录态：本模块只**指向**一个目录，从不在其中读写 cookie 库、不导出凭据、不给任何站点代填账号密码 —— 登录永远由人**在有头窗口里**完成；
 - 不拥有沙箱与权限：本机沙箱（`workspace-write` / `read-only`）下浏览器起不来是 host-plane 的事实，本模块只能在失败时**如实报错**，不做降级、不重试换参数（闸门本身在 preset 侧，见 `preset/design.md` I11）；
 - 不拥有用户问答通道：撞上登录墙 / 验证码时的**转达**由调度者做（`preset/design.md` I12），本模块只负责「把窗口开好」与「如实报出状态」；
@@ -55,17 +56,27 @@ last_reviewed: 2026-09-27
 
 ### PageSession（句柄型）
 
-一次「连上某一页并操作它」的句柄：短生命周期、对外只暴露 `goto` / `text` / `evalJs` / `shot` / `close`，自带超时回收（`timeoutMs`，默认 30s）。
+一次「连上某一页并操作它」的句柄：短生命周期、对外只暴露 `goto` / `text` / `evalJs` / `shot` / `close`，外加一个 `created` 标记（这一页是不是本次调用自己开的 —— I10 的判据）与 `target`（被操作的页面目标）。
 
 - 状态机：`open` → `closed`。迁移唯一入口：`pageSession()` 创建、`close()` 结束；`open` 调用 `close`、`closed` 再调用 `close` 都是自环（幂等）。
 - 不变量：
   - I5: 页面选择必须**确定性**且**不可猜测**：只认 `type === 'page'`、带 `webSocketDebuggerUrl`、非 `devtools://` 的目标；`--match` 未命中、`--tab` 越界或为负、目标列表为空，四种情形都必须报错，禁止「随便挑一页」。
   - I7: CDP 通道的协议行为必须守四件事：请求按 `id` 关联（乱序返回各归各位）、CDP 错误映射成带方法名的 `Error`、事件通知与未知 `id` 被忽略、连接关闭后 `send` 与在途请求都拒绝。
 
+### PageTab（清理型）
+
+一个**标签页目标**，以及「谁有权关掉它」。来源是实测：一次真实的酒店比价任务在用户窗口里留下 **19 个标签页**（12 个携程酒店详情页，另有只差 query 的列表页与重复的首页）—— 旧实现里 `text/eval/shot --url <新地址>` 为了读一页会新开标签，读完就再也不管，于是「读得越多、页越乱」。
+
+- 状态机：`open` → `closed`。迁移唯一入口：`Target.createTarget` 创建、`Target.closeTarget` 关闭 —— 后者必须在**浏览器级**端点上发（页面级端点关不掉别人，也关不掉自己所在的 target）。幂等：已关闭的 target 再关一次不报错。
+- 不变量：
+  - I9: 关标签页必须**显式点名**，且**不许关到 0 个页面**。`close-tab` 只接受 `--match <子串>`（关掉所有匹配的）或 `--tab <n>`（关那一个）；不给选择器、没命中、越界、缺值、以及「这一关会剩下 0 个页面」五种情形一律报错。最后一条是护栏 I8 的必要条件：把页面关到 0 个会让 Chrome 自己退出，那等于**绕过 `close`**（而 `close` 才带着「登录态落盘」的语义与提示）。
+  - I10: **谁开的谁收**：`text` / `eval` / `shot --url <新地址>` 为读一页而开的临时标签，命令结束时要自己收走（`--keep` 明确要留才留）；`open` / `launch` 开的页**不**自动关（它们是「把窗口留给用户」的动作）。判据来自 `pageSession` 的 `created` —— 没有它就分不清「这一页是我开的」与「这一页用户早就开着了」，而后者绝不能被自动关掉。
+  - 边界（I9 / I10 都适用）：本模块**不判断**哪一页「已经不需要了」。它只关 (a) 自己刚开的临时页、(b) 调用方点名匹配的页 —— 语义判断留给专家（收尾时点名清站点），护栏留在工具侧。
+
 ## 对外接口
 
 - 命令行契约：`cli.mjs` 的 `USAGE` 常量（**唯一真相源**，命令名、选项、退出码都在那里；本文不复制选项表）。`node cli.mjs help` 打印它。
-- 输出行契约：`KEY=value` 单行（`STATE` / `PORT` / `PROFILE` / `CHROME` / `BROWSER` / `TABS` / `TAB <i> | <title> | <url>` / `SHOT` / `OUT` / `RESULT`），失败写 stderr 的 `ERROR=<msg>`。退出码：0 成功 / 1 运行期错误 / 2 用法错误（与 `tools/check-preset.mjs` 的 0/1/2 同形）。
+- 输出行契约：`KEY=value` 单行（`STATE` / `PORT` / `PROFILE` / `CHROME` / `BROWSER` / `TABS` / `TAB <i> | <title> | <url>` / `TAB_EXISTS` / `TAB_OPENED` / `TAB_CLOSED` / `CLOSED_TABS` / `SHOT` / `OUT` / `RESULT`），失败写 stderr 的 `ERROR=<msg>`。退出码：0 成功 / 1 运行期错误 / 2 用法错误（与 `tools/check-preset.mjs` 的 0/1/2 同形）。
 - 库接口：`lib/target.mjs`（纯函数层）与 `lib/cdp.mjs`（通道层）；`cdp.mjs` 的 `connect()` 接受可注入的 `socketFactory`，这是测试能在无浏览器机器上跑的原因。
 
 ## 非功能红线
@@ -75,12 +86,13 @@ last_reviewed: 2026-09-27
 - 禁止在人不在场的情况下关闭有头窗口。来源：`live → closed` 会丢内存会话态；用户可能正登录到一半。要用 `close` 必须先确认本轮交互已完成。
 - 禁止代填账号密码、禁止导出/读取 profile 的 cookie 库、禁止验证码识别或指纹伪装。来源：旧形态的 `start-chrome-headed.ps1` 带了伪装旗标与伪 UA；这三件事既不稳定（站点风控升级比脚本快），也越过了「登录由人完成」的边界（`preset/design.md` I12）。
 - 禁止把「浏览器起不来」写成需要重试的情形：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）时必须停手如实报（`preset/design.md` I11）。
+- 禁止关掉**不是本任务开的**标签页（尤其用户正在登录 / 正在看的那个），也禁止用 `close-tab` 把页面关到 0 个来间接关浏览器（I9 / I10）。来源：用户窗口里既有登录态也有人正在用的页 —— 一个"清理得干净"的动作如果关掉了用户登录到一半的表单，代价远大于多留几个标签页。
 
 ## For Agents
 
 动手前先读：`browser/AGENTS.md` → 本文件 → 改命令行契约再读 `preset/agent.cordis.yml` 的 `agent-browser` persona。
 
-绝不能做：上面 5 条非功能红线；I3（重启活着的实例）；I8（用 `PageSession.close()` 关浏览器）。
+绝不能做：上面 6 条非功能红线；I3（重启活着的实例）；I8（用 `PageSession.close()` 关浏览器）；I9 / I10（关掉别人开的页、或把页面关到 0 个）。
 
 停止并升级人类：要推翻「登录由人完成」这条边界；要改 profile 的规范默认路径；要引入第三方依赖；要增加任何形式的验证码自动化。
 
