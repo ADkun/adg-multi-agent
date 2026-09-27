@@ -15,6 +15,7 @@ last_reviewed: 2026-09-25
 - 不拥有沙箱与审批栈，**也不拥有它们的判定入口**：`sandbox-policy` / `permission` / `approval` 三行都在 host-plane 的 `dsh-base/cordis.patch.yml`，`dsh-tool-subagent` 没有权限字段、子代理的审批策略在委派时被钉成 `never`，所以「让 `agent_browser` 能起浏览器」这件事在 preset 侧**只能表达成提示级的流程闸门**（I11），不能表达成权限强制；
 - 不拥有**用户问答通道**（`ask_user_question`）：它由调度者独占使用，专家行只能把未决问题写进最终结果、由调度者转达（I12）；专家行里禁止出现「问用户」这类要求。
 - 不拥有**文件写入的可用范围**：那是 host-plane 的 `dsh-fs-sandbox` 与逐会话沙箱策略。preset 只能规定"写在哪个目录、什么时候删"（I14），**保证不了写得进去** —— `read-only` 下一切写入都会被拒，所以 I14 要求直接退化成"不造工件、digest 随委派 prompt 传递"。
+- 不拥有**浏览器工具链本身**：有头启动、最小 CDP 通道、profile 的规范落点（`<DSH_HOME>/browser-profile`）与实例复用规则都在 `browser/`（I1 / I3 / I8）。preset 只引用它的命令行契约 —— 所以「profile 放哪」这类事**不许**在 persona 里另立一套口径（旧口径"放工作区里一个固定目录"正是登录态随工作区清零的成因）。
 - 不拥有持久化与模型路由；
 - 不做上下文压缩阈值、单条工具结果截断、抓取与检索上限 —— 承载它们的三行（`compaction-basic` / `tool-result-pruner` / `tool-web`）刻意只声明插件、不写 `config`，一律用插件出厂默认值；
 - 不做运行时的步数收敛提醒 —— 那是 host-plane 插件 `dsh-adg-token-budget`（包名是历史名称，它不比较任何 token 阈值）；
@@ -26,13 +27,14 @@ last_reviewed: 2026-09-25
 
 - 依赖（组合层）：host 组合提供的 `tools` / `fs` / `subagents` / `workflows` / `skills` / `goals` / `sessionProjections` 注册表，经 `cordis:group` 的 `isolate` realm 发布（`delegation` 组带 `workflowEngine: true`，`compaction` 组带 `compaction` + `toolResultPruner`，`planning` 组带 `planMode`）。无需经契约的理由：这些是宿主服务，preset 只是消费方，实例的创建与回收都不在本模块。`dsh-agent-presets` 负责 standing mount 与 generation（组合文件 stamp 变化起新 generation）。I13 的「恢复既有专家」依赖 `subagents` 的 continuable 语义（`@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化会话重建），同样是消费方。
 - 依赖（同仓库）：`tools/check-preset.mjs` 是它的静态校验器；`skills/adg-add-agent/SKILL.md` 是它的修改入口手册。
-- 被依赖：`plugin/dsh-adg-token-budget` 通过 `session.header.agentPreset === 'adg'` 识别自己要治理的子代理 —— **preset 是它的输入事实来源**，但插件不读这个文件，只读会话头；`install.ps1` / `install.sh` 复制并部署它；`tools/check-preset.mjs` 校验它。
+- 被依赖：`plugin/dsh-adg-token-budget` 通过 `session.header.agentPreset === 'adg'` 识别自己要治理的子代理 —— **preset 是它的输入事实来源**，但插件不读这个文件，只读会话头；`install.ps1` / `install.sh` 复制并部署它；`tools/check-preset.mjs` 校验它；`browser/` 是 `agent_browser` persona 所消费的**命令行契约**（persona 只写命令名、`KEY=value` 输出行与纪律，不复制选项表 —— 唯一的真相源是 `browser/cli.mjs` 的 `USAGE`）。
 - 跨模块改动路由：
   1. 改专家名册 → 先读 `preset/AGENTS.md`，再读 `skills/adg-add-agent/SKILL.md`，改完跑 `node tools/check-preset.mjs`，然后**重启 dsh**；
   1b. 改调度 persona 的分派规则或派发拓扑规则（I13）→ 先读 `preset/testing-guide.md` 的 I10 / I13 用例，再读根 `README.md`「多智能体的 token 消耗：已落地与可选手段」（成本口径与量法）；
   2. 改承载体积旋钮的三行 → 先读 `docs/evidence.md`（§2 成本基线、§3 三个体积旋钮的实际生效值、§8 未观测清单、§10 怎么重新测量）；
   3. 改「治理哪些会话」→ 先读 `plugin/dsh-adg-token-budget/design.md`（治理面与 `presets` 配置的不变量），再读 `plugin/dsh-adg-token-budget/src/config.js` 的 `DEFAULT_CONFIG.presets`。
   4. 改 preset id（`adg`）→ 先读 `plugin/dsh-adg-token-budget/design.md` 的跨模块消费侧契约：id 取自 `.agent-presets/` 下的**目录名**（`@deepseek-ai/dsh-agent-presets` 的 `PRESET_ID = /^[a-z0-9][a-z0-9-]*$/`），改它等于改治理面，必须与插件的 `presets` 同时改。
+  5. 改 `agent_browser` 的浏览器那一段（工具链命令 / profile 口径 / 人工介入措辞）→ 先读 `browser/AGENTS.md` 与 `browser/design.md`（被消费的命令行契约），再读本模块的 I11 / I12、根 `README.md`「浏览器工具链与登录态资产」与 `docs/evidence.md` §13。
 
 ## 核心数据模型
 

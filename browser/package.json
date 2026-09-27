@@ -1,0 +1,13 @@
+{
+  "name": "adg-browser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Adg 浏览器工具链：有头 Chrome 启动器 + 最小 CDP 驱动（零依赖）",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test"
+  }
+}

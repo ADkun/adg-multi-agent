@@ -42,13 +42,14 @@
 
 ## 安装
 
-装到三个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根）：
+装到四个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根）：
 
 | 仓库里的路径 | 安装到 |
 |---|---|
 | `preset/`（两个文件） | `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
 | `plugin/dsh-adg-token-budget/` 的 `package.json` / `src/` / `README.md` / `examples/` / `LICENSE` | `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`（**真拷贝**，`test/` 与 `INSTALL.md` 不进部署） |
+| `browser/`（浏览器工具链，零依赖） | `${DSH_HOME:-~/.dsh}/browser/`（**重新跑一次安装脚本即生效，不用重启 dsh**） |
 
 安装脚本还会往 `${DSH_HOME:-~/.dsh}/profiles/web/cordis.patch.yml` 补一行挂载（默认
 `enabled: false`，先备份成 `cordis.patch.yml.bak-adg-token-budget`）—— 插件那一层是什么、
@@ -119,7 +120,7 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 | `agent_file` | 文件与文档的检索定位、深入阅读与问答、复制/移动/重命名/批量归类、格式转换与文档生成 | 图片内容理解走 `read_image`（把图片交给模型看，需要模型路由支持图像输入，调用报错就如实说明）；文本类文档（PDF/Word/Excel/PPT）用 `pwsh` 调本机已有工具提文本。OCR（图片里的文字）、人像/场景检索、跨设备传输**取决于本机工具链**（Python 库、Office、同步盘目录等）：persona 要求先用 `pwsh` 探测可用工具，缺什么就直说「本机缺少 X，无法完成」并给替代方案，不允许假装完成 |
 | `agent_computer` | 系统与硬件信息查询、系统设置修改、优化清理、故障排查、窗口与桌面管理、进程/服务/计划任务控制 | 不依赖模拟点击的 **Windows API 路线可用**（PowerShell / CIM / P-Invoke）。会改变系统状态的操作要先说明影响与回退；不可逆或高风险操作必须先停下、写明「需要用户确认后才能执行」 |
 | `agent_app` | 桌面软件启停/安装卸载与内部功能调用、Android 模拟器上的 App、微信小程序 | **GUI 视觉识别 + 模拟点击在 DSH 没有对应工具**：只能走 CLI / adb / winget / 软件自带接口。凡是「看界面点按钮」类需求**必须明说不具备**，并给出替代（应用 CLI、adb 命令、官方 API、或请用户手动完成） |
-| `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | **本会话必须是「完全权限」（`danger-full-access`）—— 硬约束，理由与源码依据见下一节「浏览器专家需要完全权限」**：在 `workspace-write` / `read-only` 下本机 Chrome / Edge **根本起不来**（受限令牌禁止创建 Chromium 内部 IPC 必需的有名管道），所以调度者会先停下来问用户。能跑起来时：优先 Playwright / Puppeteer / Edge CDP（用 `pwsh` 调 node 脚本）；没有可用自动化运行时就**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证按「登录墙与验证码：人工介入协议」办：专家开好有头窗口后停手并如实报，由调度者转达用户 |
+| `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | **本会话必须是「完全权限」（`danger-full-access`）—— 硬约束，理由与源码依据见下一节「浏览器专家需要完全权限」**：在 `workspace-write` / `read-only` 下本机 Chrome / Edge **根本起不来**（受限令牌禁止创建 Chromium 内部 IPC 必需的有名管道），所以调度者会先停下来问用户。能跑起来时走仓库里的 **`browser/` 工具链**（`cli.mjs` 一个入口、零依赖、有头、profile 固定在 `<DSH_HOME>/browser-profile`，见「浏览器工具链与登录态资产」）；工具链不可用、或目标本来就静态可取时**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证按「登录墙与验证码：人工介入协议」办：专家开好有头窗口后停手并如实报，由调度者转达用户 |
 | `agent_search` | 多轮联网检索与多源资料综述、关键信息引用溯源 | **只联网**：`allow` 里只有 `web_search` / `web_fetch`，本地文件与系统级请求被硬性排除（这不是偏好）。天气、汇率、股价这类简单事实查询、以及一两次抓取就能答完的已知 URL 定点核对由调度智能体**直接回答**，不派给它 |
 | `agent_researcher` | 在本仓库/本机文件里定位实现、配置与出处，只读、带行号 | **硬只读** —— `allow` 里没有 `write` / `edit` / `pwsh`，真的改不动东西；公网发现式调研归 `agent_search`，它自己的 `web_search` / `web_fetch` 只用于已知 URL 的定点核对 |
 | `agent_coder` | 按已确定的方案改工作区代码，并运行编译/测试自证 | 只在当前工作区内改动文件；不做需求解读、方案设计与系统级运维 |
@@ -207,9 +208,36 @@ Edge 只做到 `--dump-dom` 退出码 0。
 | 「试过了还是被挡」 | 停手，把结论交回你换方案；**同一条路径的人工介入每任务至多一轮** | 停手，报「人工验证未通过」，不再要求第二次尝试 |
 | 「换种方式」 | 走降级路径（`web_fetch` 静态抓取／换来源），或按你的替代方案改派其它专家 | 说明这次拿不到哪些内容 |
 
-**专家侧的窗口是怎么开的（真机实测，2026-09-26）**：有头浏览器（**不加** `--headless`）＋固定 `--user-data-dir`＋固定 `--remote-debugging-port`，**分离启动**（不等在工具调用里）。实测三件事：①启动那个工具调用退出后浏览器**还活着**（`GET /json/version` 仍返回 200）；②另一个进程能**重连**并继续驱动同一页面（`Page.navigate` + `Runtime.evaluate` 成功）；③它是**真的窗口**（`MainWindowHandle` 非 0、标题可读），所以你能在里面操作。定位这个实例靠**端口号 / profile 目录**，不要靠 pid —— 实测启动进程可能已经退出、浏览器却还活着。
+**专家侧的窗口是怎么开的（真机实测，2026-09-26）**：有头浏览器（**不加** `--headless`）＋固定 `--user-data-dir`＋固定 `--remote-debugging-port`，**分离启动**（不等在工具调用里）。实测三件事：①启动那个工具调用退出后浏览器**还活着**（`GET /json/version` 仍返回 200）；②另一个进程能**重连**并继续驱动同一页面（`Page.navigate` + `Runtime.evaluate` 成功）；③它是**真的窗口**（`MainWindowHandle` 非 0、标题可读），所以你能在里面操作。定位这个实例靠**端口号 / profile 目录**，不要靠 pid —— 实测启动进程可能已经退出、浏览器却还活着。**这套动作现在已经固化在 `browser/` 工具链里**（`launch` 幂等、profile 与端口都固定、分离启动），见下一小节。
 
-**未观测**：真实站点的登录／验证码流程**没有端到端跑过**（本次只验了机制：窗口存活 + CDP 重连 + 可驱动）；「登录态跨任务复用」**也未观测** —— 往那个 profile 里写 cookie 后 30 秒内没在磁盘上看到 cookie 库（Chrome 惰性刷盘），所以**同一轮里复用那个还活着的实例是实测的，关掉浏览器之后再靠 profile 复用没有证据**（见 `docs/evidence.md` §12）。
+**未观测**：真实站点的登录／验证码流程**没有端到端跑过**（现在验到的仍只是机制：有头窗口 + 幂等复用 + cookie 跨浏览器重启存活）。「关掉浏览器之后再靠 profile 复用登录态」这条**已被 2026-09-27 的实测推翻一半**：旧观测是"往 profile 写 cookie 后 30 秒内磁盘上没有 cookie 库"（Chrome 惰性刷盘），而现在的实测是 —— 优雅关闭（`cli.mjs close`）之后 cookie 库**确实落盘**，且同一个 cookie **活过了浏览器重启**（`RESULT="adg_probe=1"`）。所以"让用户登录一次、以后靠同一个 profile 免登录"在机制上已经成立（见 `docs/evidence.md` §13）；仍未观测的是**真实站点**上真的走完这一步。
+
+### 浏览器工具链与登录态资产
+
+`agent_browser` 用的不是"每个任务现写一个脚本"，而是仓库里的 **`browser/`** 工具链：**一个入口** `cli.mjs`、**零依赖**（只用 Node 内建 + 全局 `fetch` / `WebSocket`，要求 **Node ≥ 22**）、**有头窗口**、**实例活着就复用**。装完之后在 `${DSH_HOME:-~/.dsh}/browser/` —— persona 里写的就是这条路径。
+
+```powershell
+node "$env:DSH_HOME\browser\cli.mjs" help        # 契约以它为准（选项、输出行、退出码）
+node "$env:DSH_HOME\browser\cli.mjs" profile     # 排错第一站：profile / 端口 / Chrome
+node "$env:DSH_HOME\browser\cli.mjs" launch --url "https://example.com/login"
+node "$env:DSH_HOME\browser\cli.mjs" text --match example.com --out page.txt
+node "$env:DSH_HOME\browser\cli.mjs" eval --file probe.js --match example.com
+node "$env:DSH_HOME\browser\cli.mjs" close       # 唯一让登录态落盘的动作
+```
+
+**登录态是资产，不是每任务重来的消耗品。** profile 固定在 `${DSH_HOME:-~/.dsh}/browser-profile`、**与会话工作区无关** —— 旧口径是"放工作区里一个固定目录，例如 `.browser-profile`"，工作区一换 profile 就换，**这正是"浏览器代理经常被登录拦住"的直接成因**。于是流程变成：第一次撞登录墙 → 用户在那个有头窗口里登录一次 → 每次任务收尾 `close`（cookie 落盘）→ 之后同一个 profile 免登录。要沿用别处已有的 profile 就传 `--profile <绝对路径>`，**不要复制**目录。
+
+**三条不变的行为**（不变量见 `browser/design.md` 的 I1 / I3 / I5 / I8）：
+
+| 行为 | 为什么 |
+|---|---|
+| `launch` 幂等：端口活着就 `STATE=REUSED`，**不重启** | 重启会丢内存里的会话态，而"用户刚登录完"正是最不该被打断的时刻 |
+| 任务进行中**不 `close`**；只有本轮交互全部完成、用户不再需要在窗口里操作时才 `close` | `close` 会关掉那个有头窗口；用户可能正登录到一半 |
+| 选页必须命中：`--match` / `--tab` 不命中就**报错**，不随便挑一页 | 静默挑错页会让"读到的内容"与"以为在读的内容"不一致（实测报错原文见 `docs/evidence.md` §13） |
+
+**边界（不做的事）**：不代填账号密码、不读取 profile 的 cookie 库、不做验证码识别与指纹伪装、不加 `--no-sandbox` 之类降权旗标、不引入 playwright / puppeteer（旧形态三条伪装旗标齐全，见 `browser/design.md`「非功能红线」）。**登录永远由人在有头窗口里完成** —— 短信与图形验证码都靠"把窗口开好 → 停手 → 调度者转达"这条人工介入链路（见上一节），自动化只负责把页面开到那一步。
+
+**未观测**：真实站点的登录墙端到端（用户真的登录 → 专家真的抓到登录后内容）**没有跑过**；专家是否真的照 persona 用这套工具，也没有真实 Adg 会话为证。实测到的是机制 —— 逐条见 `docs/evidence.md` §13。
 
 ### 证据档位与未观测
 
@@ -236,7 +264,7 @@ Edge 只做到 `--dump-dom` 退出码 0。
 | 文件与文档（检索、整理、转换、生成） | `agent_file` |
 | 系统 / 硬件 / 设置 / 清理 / 故障排查 | `agent_computer` |
 | 软件与 App 操作（CLI、adb、winget、小程序） | `agent_app` |
-| 网页登录 / 填表 / 点击 / 多页抓取 | `agent_browser`（**需本会话为完全权限**；不是的话调度者会先停下来问你 —— 见「浏览器专家需要完全权限」） |
+| 网页登录 / 填表 / 点击 / 多页抓取 | `agent_browser`（**需本会话为完全权限**；不是的话调度者会先停下来问你 —— 见「浏览器专家需要完全权限」；走 `browser/` 工具链：有头窗口 + 登录态跨会话复用） |
 | 全网检索与综述（只搜不点） | `agent_search` |
 | 在本地代码库与文件里定位事实与出处 | `agent_researcher` |
 | 改工作区代码并自证 | `agent_coder` |
@@ -987,13 +1015,21 @@ tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
-install.ps1             # Windows 安装脚本（preset + 技能 + 插件 + 挂载行）
+browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
+  cli.mjs               # 唯一入口：launch / status / profile / open / text / eval / shot / close
+  lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
+  lib/cdp.mjs           # 最小 CDP 通道 + 会话便捷层（socketFactory 可注入，便于无浏览器测试）
+  test/browser.test.mjs # 27 个单元用例（不需要浏览器）
+  AGENTS.md             # 模块路由：命令、模块特有红线、跨模块路由、生效方式
+  design.md             # 对象设计：BrowserTarget / BrowserInstance / PageSession 与 I1..I8
+  testing-guide.md      # 不变量→用例全表、两个状态机迁移矩阵、消费侧契约、未观测清单
+install.ps1             # Windows 安装脚本（preset + 技能 + 插件 + 挂载行 + browser 工具链）
 install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 ```
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是十处：
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是十一处：
   `persona` 增加调度名册与分派规则（步数收敛不写在调度者 persona 里，交给下面的插件在运行期
   注入）；`delegation` 组由通用委派行换成专家行；八个专家的 persona 末尾各留一句收敛纪律；
   `compaction` / `tool-web` 三行**不覆盖任何体积旋钮**（回归出厂默认，
@@ -1001,6 +1037,9 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
   `agent_browser` 多一条**权限前置闸门**（本机沙箱下浏览器起不来，见「浏览器专家需要完全权限」）；
   `agent_browser` 的登录墙／验证码多一条**人工介入协议**（子代理问不了用户，改由调度者转达，
   见「登录墙与验证码：人工介入协议」）；
+  `agent_browser` 的浏览器操作收敛到仓库里的 **`browser/` 工具链**（`cli.mjs` 一个入口、零依赖、
+  有头、profile 固定在 `<DSH_HOME>/browser-profile` 且与工作区无关，见
+  [浏览器工具链与登录态资产](#浏览器工具链与登录态资产)）；
   `persona` 多两条**派发拓扑**规则（同一实体 + 同一性质的任务只派一次；同一实体的后续任务接给
   已经读过它的那个专家）；再加两条**编排层**规则（大范围改动先让 `agent_researcher` 出
   `path:line` 再让 `agent_coder` 按位改；跨专家传递大材料走 digest，工件只落平台临时根、
@@ -1012,6 +1051,11 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 - **`agent_browser` 需要 `danger-full-access` 是本机的硬约束，不是本 preset 的选择。**
   它无法从 preset 侧修（父智能体不能指定子智能体权限、子代理不能自己升权、沙箱行在 host-plane），
   所以闸门做在调度侧、且是**提示级**的：见「浏览器专家需要完全权限」一节的三问三答与取舍。
+- **`browser/` 是第三条链路**（另两条是 preset 与插件）：它是 `${DSH_HOME:-~/.dsh}/browser/` 下的
+  **普通文件**，不是 preset 也不是插件 —— 改完**重新跑一次安装脚本就生效，不用重启 dsh**；
+  要求 **Node ≥ 22**（用全局 `WebSocket`，`lib/cdp.mjs` 的 `assertRuntime()` 会显式报错、不静默降级），
+  零第三方依赖（旧形态装的 `playwright-core` 已不再需要）。逐条不变量与实测见
+  `browser/design.md` 与 `docs/evidence.md` §13。
 - **人工介入也只能由调度者转达**：`dsh-user-questions` 的 `ask()` 只认 live runtime root，
   被委派的子代理拿到 `DELEGATED_CALLER`。这条同样是机制约束，不是本 preset 的选择。
 - 依赖标准模式本来就有的出厂包（`@deepseek-ai/dsh-tool-subagent`、`@deepseek-ai/dsh-persona`、

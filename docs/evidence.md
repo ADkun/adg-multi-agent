@@ -314,13 +314,84 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 
 - **真实站点的登录／验证码流程没有端到端跑过**：本次只验机制（窗口存活 + 跨调用 CDP 重连 + 能继续驱动），
   没有一次「用户真的在某网站登录／过验证码，专家真的接着抓到了登录后的内容」。
-- **「关掉浏览器之后再靠 profile 复用登录态」没有证据**：`probe4-cookie.js` 往那个 profile 写了 cookie，
-  **live store 里立即可见**（`Network.getCookies` 返回 `["adg_probe"]`），但 **30 秒内磁盘上始终没有 cookie 库**
-  （`Default\Network\Cookies` 不存在）—— Chrome 惰性刷盘，本次没观测到落盘。因此
-  「同一轮里复用那个还活着的实例」是实测的，「下一轮靠 profile 免登录」**不是**。
+  **2026-09-27 复核：仍未观测**（§13 只把"cookie 落盘并跨重启存活"升为实测，端到端那一步没有）。
+- **「关掉浏览器之后再靠 profile 复用登录态」已被 §13 复核并部分推翻（2026-09-27）**：本条当时观测到的是
+  `probe4-cookie.js` 往 profile 写了 cookie、**live store 立即可见**（`Network.getCookies` 返回 `["adg_probe"]`），
+  但 **30 秒内磁盘上始终没有 cookie 库**（`Default\Network\Cookies` 不存在）—— 当时的结论是"Chrome 惰性刷盘，本次没观测到落盘"。
+  **推翻的那一半**：落盘确实会发生，只是不在那 30 秒窗口里 —— 优雅关闭（CDP `Browser.close`）之后磁盘上出现了
+  `Default\Network\Cookies`，而且同一个 cookie **跨浏览器重启被读回**（详见 §13）。所以
+  「同一轮里复用那个还活着的实例」是实测的，「优雅关闭 → 下一轮靠同一个 profile 免登录」**也已升为实测**；
+  仍然未观测的是**真实站点**的登录态端到端复用。
 - **调度者是否真的每次都转达**：提示级协议，没有真实 Adg 会话为证（与 §11 那条同源）。
 
 **怎么重测**：先 `node probe3-launch.js`（它退出后浏览器应仍在）→ 隔一次 shell 再 `node probe3-attach.js`
 （应打印 `reattach OK` 并取回 `RESUMED`）；cookie 落盘口径用 `probe4-cookie.js` 重测。
 用完按 profile 关掉那个实例（`Get-CimInstance Win32_Process -Filter "Name='chrome.exe'"` 里
 `CommandLine -like '*<profile>*'` 的那些 pid），否则会留一个浏览器窗口在桌面上。
+
+## 13. 浏览器工具链：规范 profile / 幂等复用 / 登录态跨重启（真机实测，2026-09-27）
+
+**这一节回答三件事**：规范 profile 该落在哪（为什么不再放会话工作区）、实例复用是不是真的幂等、
+登录态能不能跨浏览器重启。根 `README.md`「浏览器工具链与登录态资产」、`browser/design.md`（I1 / I3 / I8）
+与 `browser/testing-guide.md` 引用本节。
+
+**旧形态的直接成因（本机观测，不是推测）**：`D:\dsh\.browser-tools\` 下有 130+ 个一次性脚本
+（`lib.js` 用 `playwright-core` 的 `connectOverCDP`；`start-chrome-headed.ps1` 用 PowerShell `Start-Process`
+起系统 Chrome，并额外传了 `--no-sandbox` / `--disable-blink-features=AutomationControlled` / 伪造 `--user-agent`）。
+旧 persona 写的是「profile 放**工作区里**一个固定目录，例如 `.browser-profile`」—— 工作区一换 profile 就换。
+**对既有登录态的只读取证**（把 `D:\dsh\.browser-profile\Default\Network\Cookies` 拷到临时目录后用
+`node:sqlite` 只读查询，不碰原文件）：
+
+| 观测 | 值 |
+|---|---|
+| cookie 库 | `D:\dsh\.browser-profile\Default\Network\Cookies`，94,208 B，最后写入 2026-09-27 17:40 |
+| 域名数 / 带 Secure 或 HttpOnly 的条数 | **32 / 58** |
+| 主要登录域 | `.ctrip.com`(22)、`.huazhu.com`(9)、`mpassport.huazhu.com`(5)、`passport.ctrip.com`(5)、`.qunar.com`(9)、`login.microsoftonline.com`(7)、`login.live.com`(6) |
+
+→ 登录态**确实在落盘**（这半推翻了 §12 当时的结论）；问题不在 Chrome 会不会存，而在**路径不稳**。
+
+**工具链闭环实测**（`browser/cli.mjs`，零依赖；Node v26.9.0、Chrome/152.0.7977.76、Windows）：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 解析 | `node cli.mjs profile` | `PROFILE=C:\Users\cenqian\.dsh\browser-profile`、`PROFILE_EXISTS=false`、`CHROME=C:\Program Files\Google\Chrome\Application\chrome.exe` |
+| 有头启动 | `node cli.mjs launch --url https://example.com` | `STATE=STARTED`、`BROWSER=Chrome/152.0.7977.76`、`TABS=1` |
+| **幂等复用** | 再跑一次 `node cli.mjs launch` | `STATE=REUSED`（**没有重启**）、`TABS=1`、标题 `Example Domain` |
+| 读页 | `node cli.mjs text --match example.com --out <文件>` | `TITLE=Example Domain`、`BYTES=129`、正文写进 `OUT=` 指定的文件（不占工具结果） |
+| 求值 | `node cli.mjs eval --match example.com --js "…innerText"` | `RESULT="Example Domain"` |
+| 页面内抛错 | `eval --js "throw new Error('boom-from-page')"` | `ERROR=页面内抛错：Error: boom-from-page`，**退出码 1** |
+| 选页未命中 | `eval --match example.com`（此时页面是 `chrome://newtab/`） | `ERROR=没有 url / title 匹配 "example.com" 的页面` —— **报错，而不是随便挑一页** |
+| 截图 | `node cli.mjs shot --match example.com --out <png>` | `SHOT=<png>`，26,278 B |
+| 优雅关闭 | `node cli.mjs close` | `ALIVE=false`、`CLOSED=true`；随后 `Default\Network\Cookies` 出现在磁盘上（20,480 B） |
+| **登录态跨重启** | 写 `document.cookie='adg_probe=1; path=/; max-age=3600'` → `close` → 重新 `launch --url https://example.com` → `eval document.cookie` | **`RESULT="adg_probe=1"`** —— 同一个 profile 里 cookie 活过了浏览器重启 |
+
+**单元测试**：`cd browser && node --test --test-isolation=none test` → **27/27 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
+
+**部署实测**：`install.ps1` 把 `browser/` 拷到 `C:\Users\cenqian\.dsh\browser\`；用**部署后的副本**重跑了一遍
+`profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
+`preset/agent.cordis.yml` **SHA256 相同**（`A6F26DFB…7F860`）。
+
+**未观测（不许把上面读成「登录流程已经跑通」）**：
+
+- **真实站点的登录墙端到端**：实测的是**机制**（有头窗口 / 幂等复用 / cookie 跨重启存活），**不是**
+  「用户真的在某网站登录、专家真的接着抓到了登录后的内容」。量法：让一次真实 Adg 会话在需要登录的站点上
+  走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
+- **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 调用；
+  出现「现场手写 CDP 脚本」即 persona 未被遵守。
+- **macOS / Linux**：Chrome 候选路径与有头启动**没有**在那两个平台上跑过（单元测试只钉了 win32 的候选形状）。
+- **多实例并发同一端口**：没有观测 —— `browser/testing-guide.md` 的迁移矩阵里按「第二次 `launch` 撞端口 → 超时分支报错」
+  登记为**推断**，不是实测。
+- **`install.sh` 未在 Windows 上执行过**：本机没有 `sh` / `bash`，改动只做了人工核对（`install.ps1` 那一侧是真跑过的）。
+
+**怎么重测**（逐条照抄）：
+
+```sh
+cd browser && node --test --test-isolation=none test          # 须 27/27
+node cli.mjs launch                                           # 须 STATE=STARTED
+node cli.mjs launch                                           # 须 STATE=REUSED
+node cli.mjs eval --js "document.cookie='adg_probe=1; path=/; max-age=3600'; document.cookie"
+node cli.mjs close                                            # 须 ALIVE=false
+node cli.mjs launch --url https://example.com                 # 须 STATE=STARTED
+node cli.mjs eval --match example.com --js "document.cookie"   # 须含 adg_probe=1
+node cli.mjs close
+```

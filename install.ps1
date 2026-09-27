@@ -19,6 +19,18 @@ Copy-Item (Join-Path $here 'preset\preset.yml') (Join-Path $presetDest 'preset.y
 Copy-Item (Join-Path $here 'preset\agent.cordis.yml') (Join-Path $presetDest 'agent.cordis.yml') -Force
 Copy-Item (Join-Path $here 'skills\adg-add-agent\SKILL.md') (Join-Path $skillDest 'SKILL.md') -Force
 
+# browser/ 工具链拷到用户根（与仓库路径同名，少一层映射）。它是普通文件、不是插件也不是 preset：
+# 重新跑一次本脚本就生效，**不需要重启 dsh**。先删后拷，避免上一层版本的残留。
+$browserSrc = Join-Path $here 'browser'
+$browserDest = Join-Path $root 'browser'
+if (Test-Path -LiteralPath $browserSrc) {
+  if (Test-Path -LiteralPath $browserDest) { Remove-Item -LiteralPath $browserDest -Recurse -Force }
+  Copy-Item -LiteralPath $browserSrc -Destination $browserDest -Recurse -Force
+  $browserNote = "browser/ 工具链 -> $browserDest"
+} else {
+  $browserNote = "未找到 $browserSrc，跳过 browser/ 工具链部署"
+}
+
 # 插件装到 profiles\node_modules：这是所有 profile 共享的模块解析根 —— 从 profile 目录
 # （web 的 cordis.yml 就在 profiles\web\）按 Node 的常规父级 node_modules 上溯正好走到这里，
 # 所以一份拷贝对所有 profile 都可用（本机的 dsh-windows-notifier 也在这个位置）。
@@ -85,11 +97,13 @@ Write-Host "  preset -> $presetDest"
 Write-Host "  skill  -> $skillDest"
 Write-Host "  plugin -> $pluginDest"
 Write-Host "  patch  -> $patchNote"
+Write-Host "  browser -> $browserNote"
 Write-Host ""
 Write-Host "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 Write-Host "（preset 改动按重启验收：已挂载的会话不会中途换组合，别在重启前拿它做验证。）"
 Write-Host "（插件行是另一回事：web profile 的 cordis.patch.yml 改 config: 热重载、不用重启；"
 Write-Host "  但换过插件 src\ 里的代码之后必须重启 —— 热重载不会重新 import 已加载的模块，"
 Write-Host "  所以这次改完 src\ 的代码，必须重启 dsh 才会生效。装好不等于已武装，见 README。）"
+Write-Host "（browser/ 工具链又是另一回事：用户根下的普通文件，重新跑本脚本即生效，不用重启 dsh。）"
 Write-Host ""
-Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src\ 里的代码之后同样必须重启。"
+Write-Host "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）+ browser/ 工具链；挂载行 -> $patchNote；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src\ 里的代码之后同样必须重启；browser/ 重新安装即生效。"

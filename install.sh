@@ -24,6 +24,19 @@ cp "$here/preset/preset.yml" "$root/.agent-presets/adg/preset.yml"
 cp "$here/preset/agent.cordis.yml" "$root/.agent-presets/adg/agent.cordis.yml"
 cp "$here/skills/adg-add-agent/SKILL.md" "$root/skills/adg-add-agent/SKILL.md"
 
+# browser/ 工具链拷到用户根（与仓库路径同名，少一层映射）。它是普通文件、不是插件也不是 preset：
+# 重新跑一次本脚本就生效，**不需要重启 dsh**。先删后拷，避免上一层版本的残留。
+browser_src="$here/browser"
+browser_dest="$root/browser"
+if [ -d "$browser_src" ]; then
+  rm -rf "$browser_dest"
+  mkdir -p "$browser_dest"
+  cp -R "$browser_src/." "$browser_dest/"
+  browser_note="browser/ 工具链 -> $browser_dest"
+else
+  browser_note="未找到 $browser_src，跳过 browser/ 工具链部署"
+fi
+
 # 插件装到 profiles/node_modules：这是所有 profile 共享的模块解析根 —— 从 profile 目录
 # （web 的 cordis.yml 就在 profiles/web/）按 Node 的常规父级 node_modules 上溯正好走到这里，
 # 所以一份拷贝对所有 profile 都可用（本机的 dsh-windows-notifier 也在这个位置）。
@@ -74,10 +87,12 @@ echo "  preset -> $root/.agent-presets/adg"
 echo "  skill  -> $root/skills/adg-add-agent"
 echo "  plugin -> $plugin_dest"
 echo "  patch  -> $patch_note"
+echo "  browser -> $browser_note"
 echo ""
 echo "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 echo "（已挂载的 preset 不会因文件变化重新组合，不重启看不到新的智能体名册。）"
 echo "（插件行是另一回事：web profile 的 cordis.patch.yml 热重载，改 enabled 立即生效、不用重启；"
 echo "  但插件只在 enabled: true 时才注册监听器，装好不等于已武装，见 README。）"
+echo "（browser/ 工具链又是另一回事：普通文件，重新跑本脚本即生效，不用重启。）"
 echo ""
-echo "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）；挂载行 -> $patch_note；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src/ 里的代码之后必须重启。"
+echo "小结：复制了 preset 2 个文件 + 技能 1 个 + 插件 5 项（package.json/src/README.md/examples/LICENSE）+ browser/ 工具链；挂载行 -> $patch_note；preset 改动必须重启 dsh 才生效；插件行改 config: 热重载，但换过 src/ 里的代码之后必须重启；browser/ 重新安装即生效。"

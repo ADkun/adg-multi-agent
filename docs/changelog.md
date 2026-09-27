@@ -9,6 +9,18 @@ last_reviewed: 2026-09-25
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-27 — 浏览器工具链入仓：新模块 `browser/` + `agent_browser` 收敛到单一入口
+
+- **新增模块 `browser/`**：`cli.mjs`（唯一入口：`launch` / `status` / `profile` / `open` / `text` / `eval` / `shot` / `close`）、`lib/target.mjs`（纯函数：profile / 端口 / Chrome / 启动参数 / 复用决策）、`lib/cdp.mjs`（最小 CDP 通道 + 会话便捷层，`socketFactory` 可注入）、`test/browser.test.mjs`（**27 个用例**，不需要浏览器）、`package.json`（私有、零依赖、`engines.node >= 22`）、`AGENTS.md` / `design.md` / `testing-guide.md`（不变量 I1..I8）。有头启动优先、实例活着就复用、`close` 是唯一关浏览器的入口。零依赖：只用 `node:` 内建与全局 `fetch` / `WebSocket`。
+- **新模块登记**：根 `AGENTS.md` 的 Project Map 与 Context Loading 各加一行、Quality Gates 加第 7 条（`cd browser && node --test test` 27/27）、关键红线加第 10 条、生效方式表加 `browser/` 一行（**重新安装即生效、不用重启**）、导语与命令块同步；`docs/registry.md` 索引表加 3 行、状态表 **13 → 16 条**、"三个模块" → **四个模块**、冷启动三问的"三套" → "四套"。
+- `preset/agent.cordis.yml`：`agent-browser` 的 persona 改为「只用 `$DSH_HOME/browser/cli.mjs` 一个入口」（禁止现场手写 CDP 脚本、禁止装 playwright / puppeteer / ws）；profile 口径由"工作区里一个固定目录"改为**固定在 `<DSH_HOME>/browser-profile`、与工作区无关**（旧写法换工作区就换 profile、登录态当场清零）；补「`launch` 幂等、`STATE=REUSED` 不要重启」「任务进行中不要 `close`」「撞墙前先用 `text` 确认是不是真的登录墙」；顶注「实质改动十处」→ **十一处**并加第 11 条。**I11 / I12 两半只改措辞、语义不动**（四组检索命中仍在）。
+- `install.ps1` / `install.sh`：部署集合加 `browser/` → `${DSH_HOME:-~/.dsh}/browser/`，输出与小结同步。（`install.ps1` 的 UTF-8 BOM 被编辑工具剥掉后**已补回**，实测前三个字节 `EF BB BF`；`install.sh` 本机没有 `sh`，只做了人工核对。）
+- `docs/evidence.md`：新增 **§13**（浏览器工具链真机实测：规范 profile、幂等复用、优雅关闭后 cookie 落盘并跨浏览器重启存活、部署校验、四条未观测、可照抄的重测脚本）；**§12** 的两条未观测按日期复核 —— "cookie 落盘"那半被 §13 **推翻并升为实测**，"真实站点端到端"那半仍标未观测。
+- `README.md`：新增「浏览器工具链与登录态资产」一节；`agent_browser` 名册行与「怎么用」派发表同步；「安装」的部署集合加 `browser/`。
+- `preset/design.md` / `preset/testing-guide.md`：依赖关系补 `browser/`（被依赖）；新增 **L4**（工具链路径与命令是否指向真实存在的东西：`$DSH_HOME/browser/cli.mjs` 的落点、persona 里的命令名与 `STATE=` / `PORT=` / `PROFILE=` 输出行对照 `cli.mjs` 的 `USAGE`）与 **M4**（禁止代填密码 / 读 cookie 库 / 验证码识别与指纹伪装三条边界是否还在）两条用例；M2 / M3 的措辞同步成"再 `launch` 走幂等复用"。
+- `preset/testing-guide.md`（**顺带修的既有缺陷**）：6 行的 `Select-String` 示例把**裸 `|`** 写在行内代码里 —— GFM 表格会在那里切断单元格（行内代码**不**保护 `|`，只有 `\|` 保护），其中一行还正好在解释"`\|` 是字面竖线"。6 处已转义为 `\|`；现在全仓 21 个 markdown 文件的表格列数逐行一致（检查脚本用完即删，未留在仓库里）。
+- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`bundle/`。
+
 ## 2026-09-26（晚·六）— 输出／交接去冗余纪律（I15）：分字段写、不回贴原文、未验证块必填
 
 - `preset/agent.cordis.yml` **规则 5**：补"五项**分字段写**（不要写成一整段散文：这段话专家每一步都会重读）"+ "**期望产出**里写明返回结构：结论 / 证据（`path:line` 或链接）/ 未验证或未纳入（必填）"。171 → 277 字符。

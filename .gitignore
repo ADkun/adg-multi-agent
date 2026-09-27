@@ -1,3 +1,7 @@
 Thumbs.db
 .DS_Store
 *.log
+
+# 插件的打包产物（bundle/dist/*.tgz）：构建产物不入库，需要时由 plugin/ 源码重新打包。
+# 部署走的是 install.ps1 / install.sh 的真拷贝，不经过这个 tgz。
+bundle/
