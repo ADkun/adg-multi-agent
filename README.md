@@ -195,7 +195,9 @@ Edge 只做到 `--dump-dom` 退出码 0。
 
 ### 登录墙与验证码：人工介入协议
 
-**能让你手动去登录／过验证码，但不能由浏览器专家直接问你。** 分工是：专家**把窗口开好并停下来说明** → 调度者用 `ask_user_question` **转达你的选择** → 按你的回答决定「重派／换方式／收手」。
+**能让你手动去登录／过验证码，但不能由浏览器专家直接问你；而且这是默认路径，不是失败。** 需要登录态才拿得到目标时，调度者就该照常派发、请你手动登录一次 —— 它**不许**在派发前就禁止专家登录（把「不登录」写进「本次不做」是明确的反例），也不许为了回避登录先降级成静态抓取。**只有你明确说过「不想登录／不想验证」时才走收手那条路。** 注意区分两件事：「登录由人在有头窗口里完成」约束的是**代理不许自己代填密码、不许绕过登录墙**，不是「不许请你登录」—— 这两件事曾被混为一谈，症状就是调度者给浏览器专家下「不登录」的要求（见 `docs/evidence.md` §12 的复核）。
+
+分工是：专家**把窗口开好并停下来说明** → 调度者用 `ask_user_question` **转达你的选择** → 按你的回答决定「重派／换方式／收手」。
 
 **为什么专家问不了（源码级事实）**：`ask_user_question` 由 `@deepseek-ai/dsh-tool-ask-user` 按 **preset** 注册（**不在**全局工具层，Adg 组合里那一行是给调度者的，见 `preset/agent.cordis.yml` 的 `tool-ask-user`）；而 `@deepseek-ai/dsh-user-questions` 的 `ask()` 在带上调用者 agent 时只认 **live runtime root**（`agents.roots()`），被委派的子代理会拿到 `DELEGATED_CALLER` —— 那句错误文本自己就规定了做法：
 「human interaction is unavailable while the calling agent is owned by another live agent; **include the unresolved question or decision in the child agent's final result**」。

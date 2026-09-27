@@ -26,6 +26,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 禁止把 digest 工件写进会话工作区 / 仓库，也禁止没删掉自己创建的工件就宣称"已清理干净"（I14）：工件只能落在平台临时根下、任务结束即删，`read-only` 下不造工件。
 - 禁止删掉或绕过 `agent_browser` 的权限闸门，也禁止把它写成安全边界（I11）：本机沙箱（`workspace-write` / `read-only`）下浏览器**根本起不来**（A/B 实测见 `docs/evidence.md` §11），而这件事**无法从 preset 侧强制**（父智能体不能指定子智能体权限、子代理不能自己升权、权限行都在 host-plane），所以闸门只能是**提示级**的流程约束。
 - 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「自己去问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`（`ask()` 带 agent 时只认 live runtime root），人工介入必须由调度者转达，且**同一条路径的人工介入每任务至多一轮**。
+- 禁止把「请用户手动登录」写成失败路径、或让调度者在**派发前**就预先禁止专家登录（**I12 下半**）：需要登录态才能拿到目标时，人工介入就是正常入口，只有用户明确说过不想登录／不想验证时才预先禁止（也别把「不登录」写进委派 prompt 的「本次不做」）。来源：用户实测上一版调度者会给 `browser` 下「不登录」的要求 —— 把「代理不许代填密码 / 不许绕过登录墙」误读成了「不许请用户登录」。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`（`design.md` 红线 4）。
 
 根 `AGENTS.md`「关键红线」里的其余各条同样适用于本模块，此处不重复。
