@@ -2,7 +2,7 @@
 title: 实测证据台账
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 # 实测证据台账（docs/evidence.md）
@@ -478,3 +478,119 @@ node cli.mjs close
 ```
 
 （I9 的「会剩 0 个页面」分支要在**一次性实例**上验：`--port 9444 --profile <临时目录>`，别在用户正在用的窗口里试。）
+
+## 14. `preset/` 的挂载形状在 dsh 0.1.7-rc.2 变了：旧目录机制被移除 + 引擎行包名改动（真机实测，2026-09-28）
+
+**症状**：用户升级 dsh 之后报告「预设加载不出来」。**两个独立成因**，两个都必须修 —— 只修一个仍然不可用。
+根 `README.md`「给 AI 的安装指令」、`preset/design.md`、`preset/testing-guide.md`、`tools/design.md` 引用本节。
+
+### 14.1 成因一：`.agent-presets/<id>/` 那套目录发现机制被整段移除（源码级事实 + 真机实测）
+
+- 旧装法把 `preset.yml` + `agent.cordis.yml` 拷到 `$DSH_HOME/.agent-presets/adg/`。0.1.7-rc.2 里
+  **没有任何组件会读这个目录**（`@deepseek-ai/dsh-agent-presets` 已被整包移到一边）。
+  本机那份旧目录（`adg/preset.yml` 412 B + `agent.cordis.yml` 72,242 B）已删除 —— **没有第二份文本了**。
+- 现在的形状是 **bundle**：包清单声明 `dsh.bundle.patch` → patch 里 `- insert:` → 一行 Loader 声明
+  `id: preset-adg`、`name: '@deepseek-ai/dsh-agent-preset'`、
+  `config: {id, name, description, order, plugins}`；`plugins` 用的还是旧的条目列表方言（`!!js` 照旧）。
+- 交付物：`tools/gen-preset-bundle.mjs` 从 `preset/preset.yml` + `preset/agent.cordis.yml` +
+  `preset/bundle.package.json` 生成 `bundle/adg-preset/{cordis.patch.yml,package.json}`
+  （实测 **80,547 B / 18 个顶层子插件条目 / id=adg / order=20**）；`install.ps1` / `install.sh`
+  把它拷到 `$DSH_HOME/bundles/dsh-adg-preset`（仓库可删可挪）并 `link:` 进 profile、写
+  `dsh.profile.bundles`。**生成物不许手改**：改就改 `preset/` 源文件再重跑。
+
+### 14.2 成因二：引擎行的包名改过 → 整份 preset 被判 `broken`（真机实测）
+
+- 旧名 `@deepseek-ai/dsh-workflow-worker-thread` 已从安装里消失（本机只剩被移开的 0.1.5-rc.3 目录）。
+  registry 报出的失败字符串是：
+  `broken: "workflow-worker-thread (@deepseek-ai/dsh-workflow-worker-thread): never started"`
+  → 该模式在新会话里直接不可用。
+- **它不影响挂载，只让整份 preset 变 `broken`**，所以 `check-preset.mjs`（文本扫描器）与
+  `--dump-config`（只证明 patch 被读到）**都发现不了** —— 只有运行期读 `agentPresets` 才看得见。
+- 出厂（**dsh 安装目录里**的）`presets/standard.patch.yml:119-122` 现在用的是 `@deepseek-ai/dsh-workflow-ptc`
+  （行 id `workflow-ptc`、`config: {provider: spawn}`）；`preset/agent.cordis.yml` 已按此改，
+  并在文件里留了注释记录这次改名与原诊断字符串。
+- **一般教训**：composition 里写的 `@deepseek-ai/*` 包名会随 dsh 升级**改名**；改完必须做真实挂载
+  （判据 `resolve('adg').broken` 为空）。
+
+### 14.3 两条路线都实测可用，最终选 bundle 路线（真机实测，含数字）
+
+| 路线 | 挂法 | 实测（2026-09-28） |
+|---|---|---|
+| **bundle（采用）** | `$DSH_HOME/bundles/dsh-adg-preset` + 该 profile 的 `dsh.profile.bundles` 选入 | 18:23:07 与 18:28:18 各一次：`resolve('adg').broken` 为空、`compositionInventory()` **35 行 / 32 启用 / 3 关闭 / 0 条件**、`fiberState === 2` 的 **32 行**、9 条 `@deepseek-ai/dsh-tool-subagent` 启用、fork **0** 行；引擎行 `workflow-ptc` 与 `tool-workflow` 都 active |
+| profile patch 里直接 insert 同一行声明 | profile 的 `cordis.patch.yml` | 18:24:27 一次，同样挂载成功（35 行的形状相同） |
+
+选 bundle 的理由：它是本版文档口径（技能 `editing-cordis-compositions`：preset 一律由 bundle patch
+声明）、`desktop` profile 本来就用这条路线、且 `list_bundles` 有生命周期。
+**一条护栏**：同一个 profile 里 `preset-adg` 只能有一个"家"（bundle **或** profile patch 二者之一）——
+两份同 id 的 insert 行是危险形状；web 上那条临时的 profile-patch 行已撤掉（现在 0 处）。
+- 3 行关闭的是：`tool-bash`（平台 `!!js` 在 Windows 上求值为 false）+ `tool-subagent-codex` +
+  `tool-subagent-claude-code`。`!!js` 行在组合挂载后落成具体布尔值。
+- **不挂探针也能拿到的活证据**（本次交付末实测，比挂临时插件安全）：Host 的 Config inspect provider
+  里 `listConfigs(name='@deepseek-ai/dsh-agent-preset')` 报 **5 条** `include:preset-*`
+  （`preset-standard` / `preset-ptc` / `preset-minimal` / `preset-cordis` / **`preset-adg`**），
+  `include:preset-adg` 的 `patchId=preset-adg`、schema 状态 `schema` —— 声明行确实在**活组合**里；
+  插件那一行 `include:adg-token-budget` 也在（`patchId=adg-token-budget`，`status: absent` 是**预期**的：
+  本插件不声明 `Config` schema，未知 config 键按 `src/config.js` 的设计本来就被忽略；
+  对照 `dsh-windows-notifier` 这类声明了 schema 的插件报的是 `schema`）。
+- 26 个 `name:` 里**只有上面那一个包真的缺**（逐个核对过安装目录）；
+  `@deepseek-ai/dsh-tool-subagent-control/list-agents` 是合法子路径导出（按目录存在性判断会误报）。
+
+### 14.4 这次踩到的两个机制坑（写下来别再踩）
+
+1. **`ctx.agentPresets` 在已被释放的 scope 里访问会抛
+   `cannot get required service "agentPresets" in inactive context`**；这一句放在 `setInterval`
+   里就是**未捕获异常 → Host 崩溃**（本机这次真崩过一次，`bundle/_preset-verify3/index.js:54`）。
+   探针要：属性访问放进 `try/catch`，并在 `scoped.on('dispose', …)` 里清掉定时器。
+2. **ESM registry 按文件 URL 缓存**：同一个目录的探针插件重新挂载**不会**重跑 `apply`
+   （第二次运行什么都没写出来）。要重跑就得换一个新目录（新 URL）。
+
+### 14.5 部署路径与解析口径的更正（真机实测）
+
+- **`$DSH_HOME/profiles/node_modules/` 这个"共享解析根"在本版被排除**：插件拷在那里时挂载行
+  解析不到这个包；改放 profile **自己的** `node_modules`（或 `link:` 稳定目录）才起得来。
+  解析是**两段锚定**：先从 dsh 安装目录，再落到当前 profile
+  （`@deepseek-ai/dsh-app-boot/lib/index.js:477-481`）。
+- 本机现状：`profiles/web/node_modules/dsh-adg-preset` 与 `dsh-adg-token-budget` 都是指向
+  `$DSH_HOME/bundles|plugins` 的 **link**；`profiles/web/node_modules/@deepseek-ai/*` **0 个目录**，
+  而全部 `@deepseek-ai/*` 行照样 active。
+- preset 声明**不在** profile patch 里（走 bundle）；插件挂载行**在** profile 的
+  `cordis.patch.yml`（web 149 行，`adg-token-budget` 一行）。
+- **`link:` 是重启安全的**（源码级事实，`@deepseek-ai/dsh-app-boot/lib/index.js:596-598`）：
+  启动时那次 fallback 修复**只**删目标落在 `<profile>/.dsh-module-fallback/node_modules` 里的链接，
+  原文是"pnpm-installed packages and every other symlink stay"，且没有该目录的 profile 完全不动。
+  所以 `link:` 进 profile 的 `dsh-adg-preset` / `dsh-adg-token-budget` 不会被下一次启动清掉。
+  反过来说，如果哪天 bundle 真的解析不到，dsh 给的诊断文本是
+  `Selected profile bundle "…" could not be loaded; repair or remove its bundle selection.`
+  （同文件 `:3179`）。
+
+### 14.6 一个**没修好**的环境问题（如实记录，别读成已解决）
+
+`profiles/web` 的 pnpm 状态在本次交付里**没有修好**，原因是 dsh 正在运行、`node_modules` 里的文件被占用：
+
+- 现象：`pnpm add` 报 `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR` /
+  `failed to remove existing directory … 另一个程序正在使用此文件 (os error 32)`；
+  `profiles/web/node_modules/.modules.yaml` 现在**缺失**，所以 pnpm 想整目录重建。
+- 另有一次失败发生在 `pnpm-lock.yaml` 已被重写之后（18:30:22）而清单保存失败
+  （`Failed to save the manifest file: 拒绝访问 (os error 5)`）—— **锁文件与清单有漂移**。
+- **影响：0。** 所有已声明的依赖都解析得到、所有行都是 active —— 本节两次真实挂载实测就是在漂移之后做的。
+- **修法（必须先关掉 dsh）**：关掉 dsh → 重跑 `install.ps1` / `install.sh`（它会重跑 `pnpm add link:…`），
+  或直接在该 profile 里 `pnpm install` 重建 `node_modules` / `.modules.yaml` / 锁文件。
+- **本机两个 profile 的当前形状不一样，如实记下来**：
+  - `desktop` 的 `pnpm add` **成功了** —— 它的清单是 `dsh-adg-preset: link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`
+    与 `dsh-adg-token-budget: link:C:/Users/cenqian/.dsh/plugins/dsh-adg-token-budget`（新形状）。
+  - `web` 只有 **bundle** 换成了新形状（`link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`，是符号链接）；
+    它的**插件 dep 还是旧的仓库 tgz**（`file:D:/dsh/adg-multi-agent/bundle/dist/dsh-adg-token-budget-0.2.0.tgz`，
+    在 `node_modules` 里落成普通目录 0.2.0）。功能上没影响（那一行现在是 active，文件已经在 `node_modules` 里、
+    不依赖仓库是否还在），但它**不是**新文档描述的形状；关掉 dsh 后重跑一次安装脚本就会改成
+    `link:$DSH_HOME/plugins/dsh-adg-token-budget`。
+- 脚本已按实测加固：**pnpm 失败只报告、不中断**（包已在位就不算失败），而且**只有在包真的出现在
+  profile 的 `node_modules` 里之后**才写 `dsh.profile.bundles` 与插件挂载行；
+  另有一条 5.1 专属坑：原生命令写 stderr 在 `$ErrorActionPreference='Stop'` 下会变成**终止错误**
+  （实测脚本在 web 那一步整个退出、exit 1，后面的 profile 根本没跑到），所以 pnpm 走 `cmd /c` 重定向到日志。
+
+**未观测（不许写成实测）**：① `desktop` profile 的**挂载**没有测过 ——
+`dsh --profile desktop --dump-config` 被拒（`error: profile "desktop" is managed exclusively by the
+Electron application`）；它的 bundle 依赖与挂载行都已按同一形状就位（本次 `pnpm add` 对它**成功**，
+清单里是 `link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`），但没有运行期证据。
+② Windows 上本机**没有 `sh`**，`install.sh` 这次的改动**没有在本机执行过**（只做了逐行 review 与语法对照）。
+③ 探针那次没有单独记录 `agentPresets.list()` 的条数（只记了 `resolve` 与 `compositionInventory()`）。

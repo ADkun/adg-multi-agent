@@ -2,6 +2,10 @@ Thumbs.db
 .DS_Store
 *.log
 
-# 插件的打包产物（bundle/dist/*.tgz）：构建产物不入库，需要时由 plugin/ 源码重新打包。
-# 部署走的是 install.ps1 / install.sh 的真拷贝，不经过这个 tgz。
+# 构建产物不入库。现在这里有两类：
+# 1) bundle/adg-preset/ —— tools/gen-preset-bundle.mjs 从 preset/ 源文件生成的 preset bundle
+#    （cordis.patch.yml + package.json）。见 dsh 0.1.7-rc.2 之后 preset 改走 bundle 声明
+#    （docs/evidence.md §14）；要改就改 preset/ 源文件再重跑生成，别手改生成物。
+# 2) bundle/dist/*.tgz —— 插件的打包产物，需要时由 plugin/ 源码重新打包。
+# 部署不经过这些产物：install.ps1 / install.sh 每次都会重新生成并拷到 $DSH_HOME 下的稳定目录。
 bundle/

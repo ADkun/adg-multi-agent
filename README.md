@@ -59,18 +59,21 @@ message 回到调度者 —— **不用递归也能交接回来**。
 
 ## 安装
 
-装到四个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根）：
+装到四个位置（`${DSH_HOME:-~/.dsh}` 是你的 dsh 用户根；**2026-09-28 起 preset 的形状变了**，
+见 [给 AI 的安装指令](#给-ai-的安装指令) 开头那段）：
 
 | 仓库里的路径 | 安装到 |
 |---|---|
-| `preset/`（两个文件） | `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` |
+| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（`bundle/adg-preset/`，构建产物、在 `.gitignore` 里），装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles` |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
-| `plugin/dsh-adg-token-budget/` 的 `package.json` / `src/` / `README.md` / `examples/` / `LICENSE` | `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`（**真拷贝**，`test/` 与 `INSTALL.md` 不进部署） |
+| `plugin/dsh-adg-token-budget/` 的 `package.json` / `src/` / `README.md` / `examples/` / `LICENSE` | `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`，再由目标 profile `pnpm add link:` 过去（`test/` 与 `INSTALL.md` 不进部署；**不要再放 `profiles/node_modules/`**，那个共享根在本版 dsh 的解析里被排除了） |
 | `browser/`（浏览器工具链，零依赖） | `${DSH_HOME:-~/.dsh}/browser/`（**重新跑一次安装脚本即生效，不用重启 dsh**） |
 
-安装脚本还会往 `${DSH_HOME:-~/.dsh}/profiles/web/cordis.patch.yml` 补一行挂载（默认
-`enabled: false`，先备份成 `cordis.patch.yml.bak-adg-token-budget`）—— 插件那一层是什么、
-怎么开、怎么确认已武装见 [第二层：子代理的步数收敛检查点](#第二层子代理的步数收敛检查点插件-dsh-adg-token-budget)。
+安装脚本还会往 `${DSH_HOME:-~/.dsh}/profiles/<profile>/cordis.patch.yml` 补一行挂载（默认
+`enabled: false`，先备份成 `cordis.patch.yml.bak-adg-token-budget`；目标 profile 默认是所有
+"能装 preset 的" profile，判据是它的 `dsh.profile.bundles` 含 `@deepseek-ai/dsh-web-app`）——
+插件那一层是什么、怎么开、怎么确认已武装见
+[第二层：子代理的步数收敛检查点](#第二层子代理的步数收敛检查点插件-dsh-adg-token-budget)。
 
 ### 方式 A：把仓库地址交给 AI（推荐）
 
@@ -98,7 +101,7 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 不过 2026-09-25 这次实测看到的是**另一套机制**：当前这版 `dsh-agent-presets` 的
 `ensureStanding()` 会比较 composition 文件的 stamp，文件变了就**起一个新的 generation**
 （源码注释原话："a changed file starts the next generation here, for this and later sessions"）。
-这次交付把改好的文件**部署到 `.agent-presets/adg/` 之后**重跑了挂载校验（第一次跑早了一步、
+**已过时**：下面这段讲的是 0.1.7 之前那套 standing mount + `.agent-presets/` 机制，本版 dsh 已整体移除（见[给 AI 的安装指令](#给-ai-的安装指令)）。当时这次交付把改好的文件**部署到 `.agent-presets/adg/` 之后**重跑了挂载校验（第一次跑早了一步、
 校验的是还没替换的旧文件，所以又跑了一次）：`resolve('adg')` 的 `broken` 为空、
 `standingKeyFor('adg')` 返回 mounted OK、`compositionInventory()` 报 34 行、
 **8 行启用的专家行**、`tool-subagent-fork` 0 行（`tool-subagent` 模块名出现 10 次，
@@ -477,7 +480,7 @@ node tools/check-preset.mjs
 ### 自检到底静态挡住了什么（别把它的覆盖范围想大）
 
 `tools/check-preset.mjs` 静态挡住的是这几类（运行它的方式见「怎么加一个智能体」与
-「给 AI 的安装指令」第 7 步）：
+「给 AI 的安装指令」第 8 步）：
 
 - 三个旋钮行的**结构**：行必须在、`name:` 必须是那个包名、不能 `disabled: true`、同一个 id 不能出现两次；
 - 万一某个旋钮键被**写回**：它必须**直挂**在该行的 `config:` 下（不能嵌更深、也不能提到与
@@ -494,7 +497,7 @@ node tools/check-preset.mjs
 YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 1}`、制表符缩进等，它都看不出来），
 也证明不了插件**真的挂载**：包能不能解析、行有没有被 `disabled`/条件表达式关掉、服务有没有发布
 到全局 realm，这些只有重启后按「给 AI 的安装指令」里那套 `resolve('adg')` /
-`standingKeyFor('adg')` / `compositionInventory()` 做一次**真实挂载**才能证明。
+`resolve('adg')` 的 `.broken` 为空 / `compositionInventory()` 做一次**真实挂载**才能证明。
 换句话说：自检通过 = "这些硬约束在文本上没被破坏"，**不等于** "运行期一定按这个口径生效"。
 
 ### persona 层保留的政策：专家侧的收敛纪律与调度侧的编排层规则
@@ -624,13 +627,13 @@ preset 侧撤销体积闸门之后，**成本纪律就集中在这一层**。
 
 > **包名与行 id 是历史名称。** `dsh-adg-token-budget` / `adg-token-budget` 里已经**没有 token
 > 预算**了：一行阈值都不再比较。名字保留下来，是为了让**部署路径**
-> （`${DSH_HOME}/profiles/node_modules/dsh-adg-token-budget`）、**挂载行 id** 和**热重载身份**
+> （`${DSH_HOME}/plugins/dsh-adg-token-budget`）、**挂载行 id** 和**热重载身份**
 > 都不变 —— 改名会让已经装好的机器需要重新部署、重新挂行。按名字找"预算"的读者请以上面这段为准。
 
 > **先说状态，分三段说：**
 >
 > **① 步数检查点在真机上真的注入过。** 插件部署在
-> `${DSH_HOME}/profiles/node_modules/dsh-adg-token-budget`、挂在
+> `${DSH_HOME}/plugins/dsh-adg-token-budget`、挂在
 > `${DSH_HOME}/profiles/web/cordis.patch.yml` 上，被运行中的 dsh 加载。
 > 2026-09-25 01:37 重启后确认新代码真的加载、01:38:47 武装；此后观测到**三次真实检查点注入**
 > （插件日志行 + 子代理转写里的那条消息，毫秒级对齐）：两次用的是旧措辞
@@ -872,24 +875,30 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 
 要改成全机生效：把同一行（`examples/cordis.patch.yml`）搬进 `${DSH_HOME:-~/.dsh}/cordis.patch.yml`。
 
-### 为什么装在 `profiles/node_modules`（而不是链到仓库）
+### 为什么装在 `$DSH_HOME/plugins`（而不是链到仓库）
 
-部署目标是 `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`，即**所有 profile 共享的模块解析根**
-（本机的 `dsh-windows-notifier` 也在同一位置）。这不是「看起来方便」，是 dsh 自己的解析机制：
+部署目标是 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`，再由目标 profile 用
+`pnpm add link:<那个目录>` 把它链进 `profiles/<profile>/node_modules/`。两个理由，都是本版 dsh 的实测口径：
 
-- 启动时 `ctx.baseUrl` 被设成**启动配置所在目录**（`@deepseek-ai/dsh-app-boot/lib/index.js:1529`），
-  web profile 的配置文件就在 `profiles/web/`（同目录还有 `cordis.patch.yml` / `package.json`）；
-- patch 行里的裸包名从这个 base 走 Node 的常规 `node_modules` 父级上溯
-  （`dsh-app-boot/lib/index.js:1322-1332` 的 `import()`），所以从 `profiles/web/` 上溯正好经过
-  `profiles/node_modules/`；
-- 同一份文件里写着这个共享根的作用：`$DSH_HOME/profiles/node_modules` 通过**「Node 的常规父级上溯」**
-  提供安装依赖闭包（`dsh-app-boot/lib/index.js:305-308`、`645-660`），一份拷贝服务所有 profile。
-- **真拷贝，不是 junction/symlink。** 部署后的插件独立于仓库：删掉、挪走、重命名这个仓库都不会让 dsh
-  启动失败（链过去就会）。而且 dsh 启动时的 fallback 修复只把**符号链接**当成自己拥有的条目
-  （`ownedPackageNames`，`dsh-app-boot/lib/index.js:460-466`），所以 `profiles/node_modules/` 下的普通目录
-  **不会被那次修复清掉** —— `dsh-windows-notifier` 就是实录：它在那里是普通目录，不是 junction。
+- **`profiles/node_modules/` 这个"所有 profile 共享的解析根"在本版 dsh 里已经不被采纳。**
+  2026-09-28 实测：插件照旧拷在 `${DSH_HOME}/plugins/dsh-adg-token-budget/` 时，
+  挂载行解析不到这个包；改放到 profile **自己的** `node_modules`（或 `link:` 过去）才起得来。
+  本机现在就是这个形状：`profiles/web/node_modules/dsh-adg-token-budget` 是指向
+  `$DSH_HOME/plugins/…` 的链接，而 `profiles/web/node_modules/@deepseek-ai/*` **一个目录都没有**
+  （实测 0 个），全部 `@deepseek-ai/*` 行照样 active —— 因为包名解析是**两段锚定**：
+  先从 dsh 安装目录解析，再落到当前 profile（`@deepseek-ai/dsh-app-boot/lib/index.js:477-481`）。
+- **部署出来的插件要独立于仓库。** 稳定目录在 `$DSH_HOME` 下，`link:` 指的是它、不是仓库，
+  所以删掉、挪走、重命名这个仓库都不会让 dsh 启动失败（`install.*` 每次都先把插件拷到稳定目录再链）。
+- **`link:` 也不会被 dsh 启动时的那次 fallback 修复清掉**（源码级事实：
+  `@deepseek-ai/dsh-app-boot/lib/index.js:596-598` 明文写"只有目标落在
+  `<profile>/.dsh-module-fallback/node_modules` 里的链接会被删；**pnpm 装的包与其它所有符号链接都保留**"，
+  且没有这个目录的 profile 根本不动）。所以重启之后 bundle 与插件仍然在 profile 的 `node_modules` 里。
 
-安装脚本**先删目标目录再拷**，所以重复执行是干净覆盖，不会留下上一个版本的残留文件。
+`install.ps1` / `install.sh` 每次安装**先删稳定目录再拷**，所以重复执行是干净覆盖，
+不会留下上一个版本的残留文件。**已知限制（本机实测）**：dsh 正在运行时 `pnpm` 会失败 ——
+它发现 `node_modules` 不是自己管的（`.modules.yaml` 缺失）就想整目录重建，而文件被运行中的 dsh
+占着（`os error 32` / `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`）；脚本会把这一条如实报告
+并继续（包已在位就不算失败），要真正装/换依赖请先关掉 dsh。
 
 ### 怎么开
 
@@ -928,7 +937,7 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 3. **还原备份** `…/profiles/web/cordis.patch.yml.bak-adg-token-budget`（安装脚本改文件前会写这份）。
 
 部署出来的插件目录本身不影响启动（没有行指向它就不会被 import）；想清干净就删
-`${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`。
+`${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`（以及它在 `profiles/<profile>/node_modules/` 下的链接）。
 
 ### 怎么确认它已经武装
 
@@ -995,7 +1004,7 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 | 事项 | 证据 |
 |---|---|
 | 决策逻辑（配置归一化、步数计数与 tier 判定、筛选条件、状态释放、每步最多一条消息） | **单元测试**：`cd plugin/dsh-adg-token-budget && node --test test`，只依赖 `node:test` / `node:assert`（checkout 里没有 `node_modules` 也能跑）；另做过**变异验证**：**步数档 17 个变异（M1..M17，含自定义措辞路径）全部被测试抓住**（详见插件 README 的「Mutation verification」） |
-| `package.json` 形状、ESM 可 import | 从**模拟的部署位置**（`…/profiles/node_modules/dsh-adg-token-budget/src/plugin.js`）import 起来验过 |
+| `package.json` 形状、ESM 可 import | 从**模拟的部署位置**（`…/$DSH_HOME/plugins/dsh-adg-token-budget/src/plugin.js`）import 起来验过 |
 | `createUserMessage` 的五个解析锚点都解析到同一份模块 | **实测**（详见插件自己的 README） |
 | 行能被 dsh 加载、不报 fatal | **实测**：`activation: inactive (enabled: false)` 就是宿主加载成功后写的 |
 | `agent/pre-step` 真的走到这个监听器 | **实测**：真机的三次检查点注入，以及几百行 dry-run 判定 |
@@ -1005,7 +1014,7 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 | **更早更密的阶梯 + 选择式措辞到底有没有用** | **未观测，而且是这个功能的核心问题**：分布（37 个子代理，中位数 39、p10 6）、成本（214 条约占 0.25%）、以及"第 12 步时只花了 10–14 万 token"都是实测的；"收到 14 条检查点的子代理是否比不收到时更早收敛"没有任何证据。量法写在插件 README 里：`audit-steps.mjs` 前后各跑一次，比分位数 |
 | `settled: released session state …` / 恢复的子代理被再次提醒 | `settled:` **已实测**（17:55:33，收敛后 29 秒）；**恢复的子代理被再次提醒仍未观测** |
 | **已移除的 token 两档**（`agent.cancel` 会被调用、软档会注入、阈值比较按真实账单在跑） | **历史实测，不代表当前行为**：`hard stage: cancel`（`usage=7651807`）、`would nudge` 最早 2,128,454、`would cancel` 最早 3,014,252，`usage=9824410` / `usage=48992135` 是真实累计值；437 行 `would cancel` + 36 行 `would nudge`，**0 次** dry-run 期发出的 `agent.cancel`；`soft stage: nudged` **从未观测**。这些代码路径**已删除**，今天不会再产生任何一行 |
-| `adg` preset 改动后能组合 | **实测**（把改好的文件部署到 `.agent-presets/adg/` 之后重跑的那一次）：`resolve('adg')` → `broken` 为空、`standingKeyFor('adg')` → mounted OK、`compositionInventory()` → 34 行 / 10 个 `tool-subagent` 模块行里 **8 行启用** / `tool-subagent-fork` 0 行（行数不变是预期的：这次改的是 persona 文本与政策，不是行的增删）。**2026-09-28 加第 9 个专家后按同一套口径重测**：mounted OK、35 行 / 11 个 `tool-subagent` 模块行里 **9 行启用**（新增的 `agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ 0 行 fork |
+| `adg` preset 改动后能组合 | **实测**（把改好的文件部署到 `.agent-presets/adg/` 之后重跑的那一次）：`resolve('adg')` → `broken` 为空、`compositionInventory()` → 34 行（当时那一步还写着 `standingKeyFor`，该 API 在本版已不存在） / 10 个 `tool-subagent` 模块行里 **8 行启用** / `tool-subagent-fork` 0 行（行数不变是预期的：这次改的是 persona 文本与政策，不是行的增删）。**2026-09-28 加第 9 个专家后按同一套口径重测**：mounted OK、35 行 / 11 个 `tool-subagent` 模块行里 **9 行启用**（新增的 `agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ 0 行 fork |
 | **`agent_general` 的子代理侧工具目录 = 它的 `allow` 名单（16 项）** | **未观测（源码级事实 + 静态自检，待一次真实委派确认）**：机制与其余专家完全相同（子代理 `composeFrom` 继承组合 → `tools.restrict({allow})` 取交集），而已实测过的 `agent_coder` 正是"可见目录恰好等于 allow 名单"；本次的 `read_image` 是条件性注册名，`tools/check-preset.mjs` 会为它出一条 WARN。**真机验收点**：重启后在 Adg 新对话里说"把这件事交给子代理"，看它是否照规则 17 派发、以及它的任务末尾是否被自动追加 "Your parent agent id is … send_message" 那段指引 |
 
 ### 安全设计（为什么它坏了也拖不垮 GUI）
@@ -1020,7 +1029,7 @@ dsh 把加载失败的行报成 fatal 启动错误**；更糟的是对一个**�
 - **没有 `static inject`，也不 `ctx.get` 任何服务。** 它只 `ctx.on('agent/pre-step')` 和（可选的）
   `ctx.on('subagent/end')`；这两个事件拿不到时降级成 no-op，靠的是 `typeof ctx?.on !== 'function'`
   的检查，不会让行停在 `pending`。
-- **没有静态 import 任何 `@deepseek-ai/*`。** 插件是以普通目录部署在 `profiles/node_modules/` 下的，
+- **没有静态 import 任何 `@deepseek-ai/*`。** 插件是以普通目录部署在 `$DSH_HOME/plugins/` 下、再 `link:` 进 profile 的，
   需要什么就在**调用时**用 `createRequire` 解析，解析失败也都可存活（必要时回落到本地构造函数）。
 - **没有顶层副作用**，没有 `process.exit`，没有网络，除了配置的 `logFile` 不写任何文件。
 - **状态有界**：每会话状态放在按 `agent.id` 索引的 `Map` 里，条目只记两个小字段
@@ -1106,7 +1115,7 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 - **插件是另一条链路**（名字 `dsh-adg-token-budget` 是历史名称，它**不比较任何 token 阈值**）：
   它是 host-plane 的单半边行（没有浏览器半边），挂在 `web` profile 的
   patch 层上，`config:` 改动热重载、不用重启（**改 `src/` 里的代码则要重启** —— 热重载不重新 import
-  已加载的模块）；部署出来的是 `profiles/node_modules/` 下的**真拷贝**，
+  已加载的模块）；部署出来的是 `$DSH_HOME/plugins/` 下的稳定目录（再 `link:` 进 profile），
   所以仓库被删/被挪都不影响已经装好的 dsh。它只依赖宿主本来就有的 `agent/pre-step`
   （状态释放在可选的事件 `subagent/end` 上），拿不到时它自己降级成 no-op
   （见 [安全设计](#安全设计为什么它坏了也拖不垮-gui)）。
@@ -1122,26 +1131,49 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 
 （人类可忽略；把仓库地址交给 AI 时让它照此执行。）
 
+> **2026-09-28 起形状变了 —— 先读这一段，别照旧文档装。**
+> dsh 0.1.7-rc.2 **移除了** `$DSH_HOME/.agent-presets/<id>/` 那套目录发现机制（旧的
+> `@deepseek-ai/dsh-agent-presets` 包也已被移到一边）。旧装法（往 `.agent-presets/adg/` 拷
+> `preset.yml` + `agent.cordis.yml`）装出来的东西**没有任何组件会去读** —— 这就是"更新 dsh
+> 之后预设加载不出来"的根因，**不是配置写错了**。现在 preset 是一个 **bundle**：包清单声明
+> `dsh.bundle.patch`，patch 里 `insert` 一行 `@deepseek-ai/dsh-agent-preset` 声明行
+> （`config` 里是 `id` / `name` / `description` / `order` / `plugins`）。
+> 同一版 dsh 还**改过一个包名**（引擎行 `@deepseek-ai/dsh-workflow-worker-thread` →
+> `@deepseek-ai/dsh-workflow-ptc`），用旧名会让整份 preset 变成 `broken` 而不可用 ——
+> 装完必须按第 8 步做真实挂载校验。实测依据：`docs/evidence.md` §14。
+
 1. `git clone <repo-url> <tempdir>`
-2. 复制 `<tempdir>/preset/preset.yml` 与 `<tempdir>/preset/agent.cordis.yml`
-   → `${DSH_HOME:-~/.dsh}/.agent-presets/adg/`
-3. 复制 `<tempdir>/skills/adg-add-agent/SKILL.md`
+2. **生成 bundle**：`node <tempdir>/tools/gen-preset-bundle.mjs`。
+   它读 `preset/preset.yml`（显示元数据）+ `preset/agent.cordis.yml`（整个插件条目列表）+
+   `preset/bundle.package.json`（包清单模板），写 `<tempdir>/bundle/adg-preset/{cordis.patch.yml,package.json}`。
+   **`bundle/` 是构建产物（在 `.gitignore` 里），任何情况下都不要手改生成物** —— 要改就改
+   `preset/` 下的源文件再重跑；`install.ps1` / `install.sh` 每次安装都会重跑一遍。
+3. **装 bundle**：用 `plugin_manager` 的 `install_bundle`，`target` 给 bundle 目录的绝对路径 ——
+   包安装与 `dsh.profile.bundles` 选中由它自己完成，**不要**用 shell 命令复刻这两步。
+   想让"仓库被删/被挪也不影响已装好的 dsh"，先把 `bundle/adg-preset/` 整个拷到
+   `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，再拿那个**稳定目录**当 `target`
+   （`install.ps1` / `install.sh` 就是这么做的）。装完 `list_bundles` 里应能看到 `dsh-adg-preset`。
+4. 复制 `<tempdir>/skills/adg-add-agent/SKILL.md`
    → `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md`
-4. **部署插件**（包名 `dsh-adg-token-budget` 是历史名称，它不比较任何 token 阈值）：把 `<tempdir>/plugin/dsh-adg-token-budget/` 里的
-   `package.json`、`src/`、`README.md`、`examples/`、`LICENSE` 复制到
-   `${DSH_HOME:-~/.dsh}/profiles/node_modules/dsh-adg-token-budget/`。
-   **`test/` 与 `INSTALL.md` 不要拷**；**先删目标目录再拷**（重复执行要干净覆盖）；**真拷贝，不要建 junction/symlink**
-   （部署出来的插件必须独立于仓库，否则仓库一删/一挪 dsh 就启动失败）。
-   目标目录是**所有 profile 共享的模块解析根**，理由见
-   [为什么装在 `profiles/node_modules`](#为什么装在-profilesnode_modules而不是链到仓库)。
-5. **补挂载行**：目标 `<dshHome>/profiles/web/cordis.patch.yml`（`<dshHome>` = `${DSH_HOME:-~/.dsh}`）。
+5. **部署插件**（包名 `dsh-adg-token-budget` 是历史名称，它不比较任何 token 阈值）：把
+   `<tempdir>/plugin/dsh-adg-token-budget/` 里的 `package.json`、`src/`、`README.md`、`examples/`、
+   `LICENSE` 复制到 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`，然后在目标 profile 里
+   `pnpm add link:<那个目录>`（等价于 `dsh plugin --profile <name> add link:<dir>`）。
+   **`test/` 与 `INSTALL.md` 不要拷**；**先删目标目录再拷**（重复执行要干净覆盖）。
+   **不要再往 `$DSH_HOME/profiles/node_modules/` 放**：那个"所有 profile 共享的模块解析根"
+   在本版 dsh 的模块解析里**被显式排除**（本机实测放那儿解析不到，插件行挂不起来），
+   改成 profile 自己的 `node_modules` 或 `link:` 稳定目录，理由见
+   [为什么装在 `$DSH_HOME/plugins`](#为什么装在-dsh_homeplugins而不是链到仓库)。
+6. **补挂载行**：目标 `<dshHome>/profiles/<profile>/cordis.patch.yml`（`<dshHome>` = `${DSH_HOME:-~/.dsh}`；
+   `install.*` 默认处理所有"能装 preset 的 profile"，判据是该 profile 的 `dsh.profile.bundles`
+   含 `@deepseek-ai/dsh-web-app` —— 声明 `agentPresets` 服务的 `agent-preset-registry` 正是它提供的）。
    - 先备份成 `cordis.patch.yml.bak-adg-token-budget`，并**在输出里说明**；
-   - 文件里**已经出现 `dsh-adg-token-budget`** → 什么都别改，只报告「挂载行已存在」（第 4 步的复制照做）；
-   - 末行**不是恰好 `[]`** → **不要猜**：放弃这次编辑，明确告诉用户「请手工把
-     `plugin/dsh-adg-token-budget/examples/cordis.patch.yml` 里的行贴进去」，第 4 步的复制照旧完成；
-   - 否则：保留原有注释头，把 `[]` 这一行换成一条 `insert:` 行（形状照 `examples/cordis.patch.yml`，
-     那份例子里的 `enabled: false` 已经是**取消注释**的，所以照抄就是"挂上但不动作"），
-     `logFile` 写成 `<dshHome>` 的**真实绝对路径**拼 `/adg-token-budget.log`（写成单引号 YAML 字符串）。
+   - 文件里**已经出现 `dsh-adg-token-budget`** → 什么都别改，只报告「挂载行已存在」；
+   - 末行**恰好是 `[]`**（全新 profile）→ 把这一行换掉再写我们的块；否则**按追加处理**
+     （文件已被手工改过时不猜结构，只在末尾追加一行注释块 + `insert:`）；
+   - 块里的 `insert:` 形状照 `plugin/dsh-adg-token-budget/examples/cordis.patch.yml`
+     （那份例子里的 `enabled: false` 已经是**取消注释**的，照抄就是"挂上但不动作"），
+     `logFile` 写成 `<dshHome>` 的**真实绝对路径**拼 `/adg-token-budget.log`（单引号 YAML 字符串）。
      写文件用**不带 BOM 的 UTF-8**。
    - 最后告诉用户：**这一行热重载，改 `config:` 不用重启**（但**改了包里的代码就要重启**：
      热重载只重放 config，不会重新 `import` 已经加载过的模块 —— 见
@@ -1153,31 +1185,37 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
      **不要在"代码还是旧版"的状态下把 `dryRun` 关掉**：旧代码不认新字段，缺省的 `budgetTokens`
      就是 300 万，会把那条已移除的硬档真武装。
      **行 id / 包名里的 "token-budget" 是历史名称**（现在不比较任何 token 阈值），照抄即可，不要改名。
-6. 目标目录通常在工作区之外，写入会被沙箱拒绝一次；按提示用 `sandbox_permissions`
+7. 目标目录通常在工作区之外，写入会被沙箱拒绝一次；按提示用 `sandbox_permissions`
    升级重试同一条命令（用户会在界面上批准）。
-7. 校验：挂一个注入 `agentPresets` 的临时插件（见技能 `editing-cordis-compositions`），
-   - `await resolve('adg')` 的 `broken` 必须为空；
-   - `await standingKeyFor('adg')` 走一次真实挂载（能报出包解析不到、配置非法、行未激活、
-     服务发布到全局 realm 四类错误）；
-   - `await compositionInventory()` 里 `adg` 必须出现 **9 行启用的专家行**：`agent-file`、`agent-computer`、
-     `agent-app`、`agent-browser`、`agent-search`、`agent-researcher`、`agent-coder`、
-     `agent-reviewer`、`agent-general`，且**没有** `tool-subagent-fork` 行。注意判据要写准：`compositionInventory()`
-     报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **11 次**（上面 9 行 +
-     `tool-subagent-codex` / `tool-subagent-claude-code` 这两行 `enabled: false` 的），
-     按"模块名出现 9 次"去断言会误报失败 —— 本机实测就是这个 11/9/0 的形状（加第 9 个专家之前是 10/8/0）。
-   - 也可以直接 `node tools/check-preset.mjs` 做静态自检（零依赖，exit 0 表示通过）；
-     校验已安装的那一份时传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
-     注意它只是**文本扫描器**：exit 0 不等于"文件能解析、插件已挂载"，
-     所以上面两条真实挂载的检查不能省（`resolve` / `standingKeyFor` 才是运行期证据）。
+8. **校验（只有真实挂载算证据）**：挂一个注入 `agentPresets` 的临时插件
+   （见技能 `editing-cordis-compositions`），
+   - `await agentPresets.resolve('adg')` 的 `broken` 必须为空 —— 它是"这份组合能不能用"的唯一判据，
+     报的是具体哪一行起不来（例如 `workflow-ptc (@deepseek-ai/dsh-workflow-ptc): never started`）；
+   - `await agentPresets.list()` 里应能看到 `adg`（**`standingKeyFor` 在本版 dsh 里已经不存在**，
+     别照旧文档调它）；
+   - `await agentPresets.compositionInventory()` 里 `adg` 必须出现 **9 条启用的专家行**：`agent-file`、
+     `agent-computer`、`agent-app`、`agent-browser`、`agent-search`、`agent-researcher`、`agent-coder`、
+     `agent-reviewer`、`agent-general`，且**没有** `tool-subagent-fork` 行。判据要写准：
+     `compositionInventory()` 报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **11 次**
+     （上面 9 条 + `tool-subagent-codex` / `tool-subagent-claude-code` 这两条 `enabled: false` 的），
+     按"模块名出现 9 次"去断言会误报失败 —— 本机实测就是这个 11/9/0 的形状
+     （加第 9 个专家之前是 10/8/0）。**2026-09-28 实测的完整形状**：`broken` 为空、`adg` 共 **35 行**、
+     **32 行启用且 `fiberState === 2`（真挂载）**、3 行关闭（`tool-bash` 与两条 codex/claude-code）、
+     9 条 `@deepseek-ai/dsh-tool-subagent` 启用、fork **0** 条、引擎行 `workflow-ptc` 处于挂载态。
+   - 也可以直接 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过；**现在只有仓库这一份文本**，
+     不再有"已安装的第二份"可以传路径）。注意它只是**文本扫描器**：exit 0 不等于"文件能解析、
+     插件已挂载"，所以上面那条真实挂载的校验不能省。
    - 插件那半边它**完全没覆盖**：插件能不能 import、行有没有激活，只能按
      [怎么确认它已经武装](#怎么确认它已经武装) 看宿主日志与 `logFile`。
-8. 明确告诉用户：**preset 改动要重启 dsh 验收**，之后在新建对话里选择「Adg 多智能体模式」。
-   （插件那一行不用等重启 —— **但只有 `config:` 是这样**。本次交付的插件**代码是新的**
+9. 明确告诉用户：**preset 改动仍按"重启 dsh + 新会话"验收**（bundle 层不是只在启动时读 ——
+   实测 profile 的 `cordis.patch.yml` 或 profile 清单变动会触发整份 patch 栈重读、并让声明重新注册，
+   但**已挂载的会话不会中途换组合**，所以验收口径不变）。重启后在新建对话里选择「Adg 多智能体模式」。
+   （插件那一行不用等重启 —— **但只有 `config:` 是这样**。若本次交付的插件**代码是新的**
    （激活行多了 `stepNudge=` / `stepTiers=` / `stepText=`，且**不再出现** `budgetTokens=` /
-   `softThreshold=` / `softRatio=` / `cacheReadWeight=` / `softNudge=` / `hardDryRun=`），所以：
+   `softThreshold=` / `softRatio=` / `cacheReadWeight=` / `softNudge=` / `hardDryRun=`），则要：
    部署代码 → 重启 dsh → 确认 `logFile` 里的激活行正在写新字段、且不再有任何 token 字段
-   → 这时才把 `dryRun` 从 `true` 改成 `false`（即上线顺序的第三步，也是终点）。
+   → 这时才把 `dryRun` 从 `true` 改成 `false`（上线顺序的第三步，也是终点）。
    别把"装了"说成"验过了"：**步数检查点已经在真机上注入过**，但**新阶梯下的注入**、
    以及"提醒到底有没有效果"都还没有证据，而且 token 两档已经不存在了。）
-9. 如果用户还需要在**创造模式**里说「给 Adg 加一个智能体」被识别，确认第 3 步的技能已就位——
-   `<dshHome>/skills` 是 `dsh-skill-filesystem` 的用户技能根（rank 400），两种模式都会扫描且热加载。
+10. 如果用户还需要在**创造模式**里说「给 Adg 加一个智能体」被识别，确认第 4 步的技能已就位——
+    `<dshHome>/skills` 是 `dsh-skill-filesystem` 的用户技能根（rank 400），两种模式都会扫描且热加载。

@@ -2,7 +2,7 @@
 title: dsh-adg-token-budget 模块测试指南
 owner: Adg 插件维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 # 测试与验证指南（`dsh-adg-token-budget`）
@@ -97,7 +97,7 @@ cd plugin/dsh-adg-token-budget && node --test test
 
 | 不变量 | 为什么单测兜不住 | 兜底方式 |
 |---|---|---|
-| **I3** | 除 `@deepseek-ai/*` 解析路径外，无法在无宿主的单测里"证明装载期没发生静态 import" | 人工 review 导出面 + 在真机部署位置（`profiles/node_modules/`）确认整行能挂起；变异表无对应项 |
+| **I3** | 除 `@deepseek-ai/*` 解析路径外，无法在无宿主的单测里"证明装载期没发生静态 import" | 人工 review 导出面 + 在真机部署位置（`$DSH_HOME/plugins/dsh-adg-token-budget/`，由 profile 的 `node_modules` 链接指向它）确认整行能挂起；变异表无对应项 |
 | **I13** | 相对路径关闭文件日志这条分支**没有任何断言**（测试里只有"目录不可写"） | 人工 review `createLogger`；变异表无对应项 |
 
 ## 2. 状态机迁移矩阵（全表）
@@ -162,11 +162,14 @@ cd plugin/dsh-adg-token-budget && node --test test
    `agentPreset` 与 `delegationDepth` 由 session header 写入，不来自名册。验证方式：
    改/增删专家行后重跑 `node tools/check-preset.mjs`（命令见根 `AGENTS.md`），
    并在一次真实委派后确认子代理转写里本插件的提醒仍出现。
-2. **换 preset id 或改 `preset.yml`**：必须同时改挂载行的 `presets:`（`examples/cordis.patch.yml` 里的
+2. **换 preset id 或改 `preset/preset.yml`**：id 来自生成 patch 里声明行的 `config.id`（值由
+   `tools/gen-preset-bundle.mjs` 的 `PRESET_ID` 决定），`preset.yml` 只提供显示元数据、改它**不**动 id。
+   换 id 时必须同时改挂载行的 `presets:`（`examples/cordis.patch.yml` 里的
    注释键），否则插件的 `presetIsGoverned` 会 fail-open —— 表现为**静默不提醒**，不是报错。
    验证方式：新 preset id 下跑一次真实委派，确认 `logFile` 里出现决策行；没有决策行即命中此漂移。
-3. **怎么确认这份理解没漂移**：把插件侧的 header 读取路径与
-   `${DSH_HOME}/.agent-presets/adg/` 下的实际产物对齐 —— 读一个真实子代理转写里的 header
+3. **怎么确认这份理解没漂移**：把插件侧的 header 读取路径与 `preset/agent.cordis.yml`
+   （**唯一真相源**；生成物 `bundle/adg-preset/cordis.patch.yml` 由 `tools/gen-preset-bundle.mjs` 产出，
+   装进 profile 后被注册的那一行才是运行期事实）对齐 —— 读一个真实子代理转写里的 header
    （`session.v3.jsonl.zstd` 解压后）确认字段名与取值形态（`agentPreset` 为字符串、
    `delegationDepth` 为安全整数）。字段名一旦变化，`presetIsGoverned` 会 fail-open 而
    `isDelegatedChild` 会判成顶层 —— 两者都**不会抛错**，只能靠这条对齐发现。
@@ -186,6 +189,10 @@ Select-String -Path ..\..\install.ps1,..\..\install.sh -Pattern 'examples|LICENS
 判据：若 `package.json` 的 `files` 里新增/删除了名目，而 `INSTALL.md` 第 1 节与两个安装脚本的
 拷贝清单没跟着变，就是脱钩 —— 后果是"手动部署多带/少带了东西"或"部署出来的包与 npm 包不一致"。
 （本检查是**文本级**的：它证明不了拷贝逻辑正确，只证明三处名目一致。）
+
+**落点不在本节的判据里**：部署目标是稳定插件根 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`
+（由 profile 的 `node_modules` 链接指向它），**不是**共享的 `profiles/node_modules/` —— 后者在本版
+dsh 的模块解析里被排除（**实测**：放那儿解析不到、行挂不起来）。见 `design.md`「依赖关系」。
 
 ## 4. 无破坏性路径的源码级检查
 
@@ -250,7 +257,8 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 - **更早更密的阶梯是否让子代理更快收敛**（量法见 `INSTALL.md` 第 4 节末；比 p50/p75/p90，不比均值）；
 - `dry-run step stage: …` 这类校准行是否在本机出现过（本机从未停留在校准态）；
 - **改目录名能否强制重新 `import`**（热重载不重新 import 已加载模块这条机制本身有真机实测支持，
-  但"改名目录可以绕过"这一对策从未验证过）。
+  但"改名目录可以绕过"这一对策从未验证过。现在的落点是 `$DSH_HOME/plugins/dsh-adg-token-budget/`
+  加一条 profile 内的 `link:`，改名还要同步链接与 profile 清单 —— 这件事同样**未观测**）。
 
 冲突登记：上表中与本次复核结果相冲突的原记载，**处置权在人类**——引用任何"是否观测过"的结论前，
 先读 `docs/evidence.md` §9（本节的权威来源）。

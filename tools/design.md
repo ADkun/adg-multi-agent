@@ -2,17 +2,17 @@
 title: check-preset.mjs 校验器 模块设计
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 ## 职责与边界
 
-负责：对 `preset/agent.cordis.yml`（以及安装到 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 的那一份）做**零依赖的逐行静态扫描**，把"这些硬约束在文本上被破坏"的情形提前拦下来——行尾/末尾换行/BOM、专家行字段齐全、`toolName` 唯一且形如 `agent_<name>`、`allow` 只写已注册工具名、不存在通用委派行、调度名册与专家行双向一致、承载三组体积旋钮的三行结构完好（含"万一某键被写回时"的合法性），并在 stdout 打印两行生效值摘要。
+负责：对 `preset/agent.cordis.yml`（**仓库里的这一份就是唯一真相源** —— 旧 `${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 机制在 dsh 0.1.7-rc.2 已被移除，不再有"已安装的第二份文本"）做**零依赖的逐行静态扫描**，把"这些硬约束在文本上被破坏"的情形提前拦下来——行尾/末尾换行/BOM、专家行字段齐全、`toolName` 唯一且形如 `agent_<name>`、`allow` 只写已注册工具名、不存在通用委派行、调度名册与专家行双向一致、承载三组体积旋钮的三行结构完好（含"万一某键被写回时"的合法性），并在 stdout 打印两行生效值摘要。
 
 不负责（逐条，防越权）：
 
 - **不是 YAML 解析器。** 证明不了整份文件能被 YAML 解析，更证明不了解析结果等于写的人以为的结构。
-- **不证明插件真的挂载。** 包能否解析、行是否被 `disabled` 或条件表达式关掉、服务是否发布了全局 realm——这三类只有真实挂载（`resolve('adg')` / `standingKeyFor('adg')` / `compositionInventory()`）能证明。
+- **不证明插件真的挂载。** 包能否解析、行是否被 `disabled` 或条件表达式关掉、服务是否发布了全局 realm——这三类只有真实挂载能证明：`agentPresets.resolve('adg')` 的 `.broken` 为空（**判据**）与 `agentPresets.compositionInventory()` 的形状（`entryId` / `moduleName` / `enabled` / `fiberState`）。`standingKeyFor` 在本版 dsh 里**已不存在**，别照旧文档调它。
 - **不校验 `plugin/dsh-adg-token-budget`。** 插件那一层它完全没覆盖：能否 import、行有没有激活、`stepNudge` / `stepTiers` 生效值是什么，只能看宿主日志与 `logFile`。
 - **不修改任何文件。** 只读目标，不写、不格式化、不修 BOM。
 - **不部署。** 复制到用户根是 `install.ps1` / `install.sh` 的职责。
@@ -30,7 +30,7 @@ last_reviewed: 2026-09-25
   - `preset/AGENTS.md`——该模块把本模块当门禁引用。
 - 跨模块改动路由：
   - 改 composition 的 tool 行 → **必须同步 `tools/check-preset.mjs` 的 `KNOWN_TOOLS`**（理由见下一条），改完读 `preset/design.md`；
-  - 改三个旋钮插件的版本或包名 → 同步 `FACTORY_DEFAULTS` 与 `EXPECTED_ROWS` 的 `name` / `allowedKeys`，并读 `docs/evidence.md`。
+  - 改三个旋钮插件的版本或包名 → 同步 `FACTORY_DEFAULTS` 与 `EXPECTED_ROWS` 的 `name` / `allowedKeys`，并读 `docs/evidence.md`。**包名会随 dsh 升级改名**（2026-09-28 实例：引擎行 `@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`），所以这一步是**每次 dsh 升级后**都要重核的，不是一次性的。
 
 ## 核心数据模型
 
@@ -78,7 +78,7 @@ last_reviewed: 2026-09-25
 node tools/check-preset.mjs [<path-to-agent.cordis.yml>]
 ```
 
-省略参数时校验仓库里的 `preset/agent.cordis.yml`；传路径即校验那一份（例如已安装的那份）。退出码契约：`0` 通过（允许 WARN）、`1` 有 ERROR、`2` 目标不存在/不是普通文件。stdout 打印报告，其中两条是生效值摘要行：`体积旋钮（生效值）` 与 `裁剪后实际吐出（按生效配置算）`；读不到目标时的原因走 stderr。
+省略参数时校验仓库里的 `preset/agent.cordis.yml`；传路径即校验那一份**文本**（路径参数还在，但**没有第二份"已安装的文本"**可传了 —— 安装侧的真相是 profile 里注册的声明行，它由 `tools/gen-preset-bundle.mjs` 生成）。退出码契约：`0` 通过（允许 WARN）、`1` 有 ERROR、`2` 目标不存在/不是普通文件。stdout 打印报告，其中两条是生效值摘要行：`体积旋钮（生效值）` 与 `裁剪后实际吐出（按生效配置算）`；读不到目标时的原因走 stderr。
 
 模块内导出面：**无**。`KNOWN_TOOLS` / `CONDITIONAL_TOOLS` / `SCHEDULER_ONLY` / `FACTORY_DEFAULTS` / `EXPECTED_ROWS` / `PRUNER_MARKER_CHARS` 都只是本文件内的常量，不 `export`——要读它们只能读源码。调用方（技能、安装脚本、CI）一律只按"退出码 + stdout 摘要行"消费。
 
@@ -87,6 +87,7 @@ node tools/check-preset.mjs [<path-to-agent.cordis.yml>]
 - 禁止引入第三方依赖或 YAML 库（来源：零依赖是它的部署前提——本仓库没有 `node_modules`，安装脚本与技能都假设"克隆下来直接能跑"）。
 - 禁止钉死体积旋钮取值（来源：撤销 preset 侧体积闸门那次实测——截断与提前压缩会把工具已取到的事实切掉）。
 - 禁止把"文本扫描通过"说成"挂载成功"（来源：README「自检到底静态挡住了什么」——`exit 0` 与真实挂载是两件事）。
+- 禁止教人传"已安装的那一份"路径，也禁止把 `$DSH_HOME/bundles/` 或 `bundle/` 下的生成物当校验对象的真相源（来源：`.agent-presets/<id>/` 机制已被 dsh 0.1.7-rc.2 移除，仓库里那份是**唯一**文本真相源；生成物每次安装都被覆盖）。
 - 改 tool 行必须同步 `KNOWN_TOOLS`（来源：`restrict()` 实测抛 `names unknown global tool`——漏同步会让合法名字被误报，或让拼错的名字漏报）。
 - 禁止在校验过程中写目标文件（来源：评审决定——校验器必须能在只读介质上跑）。
 

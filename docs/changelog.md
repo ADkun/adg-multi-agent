@@ -2,12 +2,49 @@
 title: 变更记录
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 # 变更记录
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
+
+## 2026-09-28（晚）— dsh 0.1.7-rc.2 之后 preset 挂不上：旧目录机制被移除 + 引擎行包名改名，安装链路整体改成 bundle
+
+- **两个独立成因，都必须修（详见 `docs/evidence.md` §14）**：① dsh 0.1.7-rc.2 **移除**了
+  `$DSH_HOME/.agent-presets/<id>/` 那套目录发现机制，而 `install.ps1` / `install.sh` 仍在往那里拷文件 ——
+  拷过去的东西没有任何组件会读，这就是用户报的「预设加载不出来」；② 同一版里引擎行的包名从
+  `@deepseek-ai/dsh-workflow-worker-thread` 变成 `@deepseek-ai/dsh-workflow-ptc`，旧名会让 registry
+  判整份 preset `broken`（`… : never started`），该模式在新会话里直接不可用。
+- 新增 `tools/gen-preset-bundle.mjs`（零依赖，构建脚本）：从 `preset/preset.yml` +
+  `preset/agent.cordis.yml` + `preset/bundle.package.json` 生成
+  `bundle/adg-preset/{cordis.patch.yml,package.json}`（实测 80,547 B / 18 个顶层条目 / id=adg / order=20），
+  产物目录在 `.gitignore` 里、**不许手改**。
+- 新增 `preset/bundle.package.json`：bundle 清单模板（包名 `dsh-adg-preset`）。
+- `preset/agent.cordis.yml`：引擎行 `workflow-worker-thread` → `workflow-ptc`
+  （`name: '@deepseek-ai/dsh-workflow-ptc'`、`config: {provider: spawn}`），行旁留注释记录改名与原诊断字符串。
+- `install.ps1` / `install.sh` 重写：生成 bundle → 拷到 `$DSH_HOME/bundles/dsh-adg-preset` → 自动识别
+  "能装 preset 的 profile"（判据：其 `dsh.profile.bundles` 含 `@deepseek-ai/dsh-web-app`，因为声明
+  `agentPresets` 服务的 `agent-preset-registry` 由它提供）→ `pnpm add link:` 装 bundle 与插件 →
+  写 `dsh.profile.bundles` → 把插件挂载行追加进该 profile 的 `cordis.patch.yml`（保留备份）→
+  部署技能与 `browser/`。插件部署位置从 `profiles/node_modules/`（本版解析已排除该共享根）改为
+  `$DSH_HOME/plugins/` + `link:`。pnpm 失败不再中断脚本、只如实报告；**只有包真的出现在 profile 的
+  `node_modules` 里之后**才写清单与挂载行。
+- 文档同步：`README.md`（安装表、"给 AI 的安装指令"整节重写、"为什么装在 `$DSH_HOME/plugins`"、
+  历史段落加"已过时"标注）、根 `AGENTS.md`（命令块、生效方式表新增"包名会随 dsh 改名"一行、
+  模块地图 `tools/` 行、Quality Gates 第 3 条指向新步骤号）、`preset/*`、`tools/*`、
+  `plugin/dsh-adg-token-budget/*`（含 `INSTALL.md` 的部署路径）、`skills/adg-add-agent/SKILL.md`
+  （改成"改仓库源文件 + 重跑生成与安装"）、`browser/*` 的交叉引用。
+- **实测（本机，web profile）**：bundle 路线 18:23:07 与 18:28:18 各一次、profile-patch 路线 18:24:27
+  一次，三次数值一致 —— `resolve('adg').broken` 为空、`compositionInventory()` 35 行 / 32 启用 /
+  3 关闭 / 0 条件、9 条 `tool-subagent` 启用、fork 0 行、32 行 `fiberState === 2`。
+- **未观测**：`desktop` profile 的挂载（`dsh --profile desktop --dump-config` 被
+  `managed exclusively by the Electron application` 拒绝）；`install.sh` 在本机没跑过（Windows 无 `sh`）。
+- **遗留的环境问题（如实记录，未修好）**：`profiles/web/node_modules/.modules.yaml` 缺失、锁文件与清单
+  有漂移 —— dsh 正在运行时 pnpm 无法重建目录；**影响为 0**（依赖都能解析、行都 active），
+  关掉 dsh 后重跑安装脚本或 `pnpm install` 即修复（`docs/evidence.md` §14.6）。
+  同一原因导致 `web` 的**插件** dep 还是旧的仓库 tgz（`desktop` 已换成新形状的 `link:`）——
+  功能无影响，关掉 dsh 后重跑一次安装脚本即对齐（同 §14.6）。
 
 ## 2026-09-28 — 新增第 9 个专家 `agent_general`（交接专用全功能**叶子**）：只在用户显式要求时派，靠运行时注入的 `send_message` 指引回报上级
 

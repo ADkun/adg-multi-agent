@@ -47,3 +47,5 @@ cd browser && node --test --test-isolation=none test            # DSH 沙箱（w
 ## 生效方式
 
 `browser/` 是**用户根下的普通文件**，不是 dsh 插件也不是 preset：改完重新跑一次 `install.ps1` / `install.sh` 就生效，**不需要重启 dsh**（与 `preset/` 的生效方式不同，别承诺错）。preset 里引用本模块的 persona 改动仍然按 preset 的口径走：重启 dsh + 新对话验收。
+
+**跟 `install.*` 的其余步骤解耦**：这两个脚本现在还会生成/重装 preset bundle（`$DSH_HOME/bundles/dsh-adg-preset` + `link:` 进 profile）与插件（`$DSH_HOME/plugins/dsh-adg-token-budget`），`browser/` 的拷贝排在它们**之前**；所以即使后面那几步因 dsh 正在运行而报 `pnpm` 失败（脚本以 exit 2 结束），**已拷好的 `browser/` 仍然是最新的** —— 判据是 `node "${DSH_HOME:-~/.dsh}/browser/cli.mjs" profile` 正常报出 `DSH_HOME=` / `PROFILE=` / `PROFILE_EXISTS=` / `PORT=` / `CHROME=`（或直接比对用户根 `browser/` 与仓库 `browser/` 的文件）。

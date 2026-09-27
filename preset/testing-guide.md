@@ -2,31 +2,32 @@
 title: preset 模块测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 # preset 模块测试指南
 
-对象与不变量编号见 `design.md`（I1..I16 一一对应，本文不重复定义）。类型只有三种：**静态自检**（`tools/check-preset.mjs` 真的会拦）、**真实挂载**（重启 dsh 后按根 `README.md`「给 AI 的安装指令」第 7 步做）、**人工 review**（脚本抓不到，必须有人看）。
+对象与不变量编号见 `design.md`（I1..I16 一一对应，本文不重复定义）。类型只有四种：**静态自检**（`tools/check-preset.mjs` 真的会拦）、**构建**（`tools/gen-preset-bundle.mjs` 真的会拦：`preset/preset.yml` 没有可用的 `name`、或 `preset/agent.cordis.yml` 顶层不是条目列表时 exit 1）、**真实挂载**（重启 dsh 后按根 `README.md`「给 AI 的安装指令」第 8 步做：`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()`）、**人工 review**（脚本抓不到，必须有人看）。
 
 ## 命令（可直接照抄）
 
 ```sh
-node tools/check-preset.mjs                                                          # 校验仓库里的 preset/
-node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"  # 校验已安装的那一份
+node tools/check-preset.mjs        # 校验仓库里的 preset/（**唯一真相源**；没有"已安装的第二份文本"可传了）
+node tools/gen-preset-bundle.mjs   # 生成 bundle/adg-preset/{cordis.patch.yml,package.json}（构建产物，不手改）
 ```
 
-零依赖（只用 `node:fs` / `node:path` / `node:url`，不引 YAML 库）。退出码：**0 = 通过**（允许 WARN，WARN 不是失败）；**1 = 不通过**（有 ERROR，其含义只有一个：这次委派必然抛错）；**2 = 读不到目标文件**（路径不存在/打不开，或存在但不是普通文件）。
+零依赖（只用 `node:fs` / `node:path` / `node:url`，不引 YAML 库）。退出码：**0 = 通过**（允许 WARN，WARN 不是失败）；**1 = 不通过**（有 ERROR，其含义只有一个：这次委派必然抛错）；**2 = 读不到目标文件**（路径不存在/打不开，或存在但不是普通文件）。路径参数仍在（可校验任意一份文本），但**没有第二份"已安装的文本"了** —— 旧的 `${DSH_HOME}/.agent-presets/<id>/` 发现机制在 dsh 0.1.7-rc.2 已被移除，`preset/agent.cordis.yml` 是唯一真相源；安装侧的真相是 profile 里注册的那一行声明（由 `bundle/adg-preset/cordis.patch.yml` 生成物提供）。
 
 ## 1. 不变量 → 用例 → 类型（全表）
 
 | 不变量 | 用例 | 类型 | 已实现？ |
 |---|---|---|---|
-| I1 `validated` ≠ `mounted` | A1 `node tools/check-preset.mjs` 退出码 0 后，**不得**据此宣称已挂载；必须做一次真实挂载 | 真实挂载 | 未实现（脚本无挂载能力）；人工 review 兜底 |
-| I1（同上） | A2 对脚本源码提断言：它没有挂载能力——只 import `node:fs` / `node:path` / `node:url`，且不含挂载调用 | 静态自检 | 已实现（本次实测）：`Select-String -Path tools\check-preset.mjs -Pattern 'ctx\.load\|agentPresets\|compositionInventory'` → 0 命中；`^import` 只命中上述三个内建模块。**注意** `standingKeyFor` 在该文件的注释里出现过（指向 README 的挂载校验步骤），因此不能拿它当「脚本会挂载」的判据 |
+| I1 `validated` ≠ `mounted` | A1 `node tools/check-preset.mjs` 退出码 0 后，**不得**据此宣称已挂载；必须做一次真实挂载（判据：`agentPresets.resolve('adg')` 的 `.broken` 为空） | 真实挂载 | 未实现（脚本无挂载能力）；人工 review 兜底 |
+| I1（同上） | A2 对脚本源码提断言：它没有挂载能力——只 import `node:fs` / `node:path` / `node:url`，且不含挂载调用 | 静态自检 | 已实现（本次实测）：`Select-String -Path tools\check-preset.mjs -Pattern 'ctx\.load\|agentPresets\|compositionInventory'` → 0 命中；`^import` 只命中上述三个内建模块。**注意**：该文件的注释里提到过 `standingKeyFor`（说明它在本版 dsh 里**已不存在**、别调），那不是挂载判据，本身也只是注释层 —— 2026-09-28 已把它同步成"按 README 第 8 步 + `agentPresets.resolve('adg')` 的 `.broken` 为空"（见「过期检测」） |
+| I3c 生成物不许手改、也不许当真相源 | A3 `node tools/gen-preset-bundle.mjs` 重跑一次后：`bundle/adg-preset/cordis.patch.yml` 的 `plugins:` 段必须与 `preset/agent.cordis.yml` 逐行一致（只差一层缩进），且 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/` 下那两份与生成物逐字节一致 | 构建 | 已实现（重跑即覆盖，手改必被抹掉）。**判违例看语义**：有人拿 `$DSH_HOME/bundles/` 或 `bundle/` 下的文件当"源文件"改 |
 | I2 未重启不得宣称生效 | B1 改完只跑自检 + 不重启，然后**明确记录**此时不得引导用户进入 Adg 模式 | 人工 review | 未实现（脚本无法观测重启）。依据：`docs/evidence.md` §5「热重载边界（真机实测）」 |
 | I2（同上） | B2 改完重启，在**新对话**里选择「Adg 多智能体模式」，核对模型可见的 `agent_*` 工具面等于当前名册 | 真实挂载 | 未实现（需 Host 侧调用）；人工 review 兜底 |
-| I2（同上） | B3 登记未裁决的冲突：根 `README.md`「装完必须重启 dsh」一节并存两条实测陈述（一条说改 composition 后 `compositionInventory()` 仍返回旧行；另一条说文件 stamp 变了会起新 generation，并注明「新会话会不会自动加入新 generation」**没有实测**）。本模块**不选边**，操作口径取最保守的一条（必须重启 + 新对话验收）。**禁止**在文档或回复里宣称「不重启也会生效」 | 人工 review | 未实现（冲突属文档层事实，无脚本可判） |
+| I2（同上） | B3 登记新的触发口径（2026-09-28 实测）：profile 的 `cordis.patch.yml` 或 profile 清单变动会让整份 patch 栈重读（`dsh-hmr` 的 `refresh()` 走 `readProfilePatches`），重读后声明会重新注册；**但「已挂载的会话不会中途换组合」不变**，所以操作口径仍是"重启 dsh + 新对话验收"。**禁止**在文档或回复里宣称「不重启也会生效」；**未观测**的是：不重启时新开的会话会不会直接加入重注册后的声明（没有实测，不许写成会） | 人工 review | 未实现（冲突属文档层事实，无脚本可判） |
 | I3 成本结论须有实测数字 | C1 任何「改 `stepTiers` 相关口径以外的成本结论」的改动，必须附前后对比数字（重测口径照抄 `docs/evidence.md` §10）；拿不出就不许改 | 人工 review | 未实现（凭据由人持有） |
 | I4 `toolName` 唯一且形如 `agent_<name>` | D1 制造重复 `toolName`（同文件出现两次 `toolName: agent_coder`）→ 必须 ERROR | 静态自检 | 已实现。`toolName "X" 重复（第 N 行与第 M 行）：每个委派工具名必须全局唯一` |
 | I4（同上） | D2 形状不合法（如 `toolName: coder`）→ 必须 ERROR | 静态自检 | 已实现。`第 N 行 agent-coder：toolName "coder" 不符合 agent_<name> 约定`（正则为 `^agent_[a-z0-9_]+$`） |
@@ -72,15 +73,15 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 
 起始状态为行，事件为列。**自环**=合法但状态不变；**禁止**格标注原因。状态定义见 `design.md`「PresetRevision」。
 
-| 起始 \ 事件 | `node tools/check-preset.mjs` 退出 0 | 退出 2 | `install.ps1` / `install.sh` → `.agent-presets/adg/` | `install.*` → 其它目录名 | `dsh-agent-presets` 首挂（stamp 变化） | 重启 dsh | 新会话加入该 generation | 重启前宣称「已生效」 |
+| 起始 \ 事件 | `node tools/check-preset.mjs` 退出 0 | 退出 2 | `install.*`：生成 bundle + 落到 `$DSH_HOME/bundles/dsh-adg-preset/` + `link:` 进 profile + 写进 `dsh.profile.bundles` | 改声明行的 `config.id`（换 preset id） | registry 读到声明行（profile patch / 清单变动触发整栈重读） | 重启 dsh | 新会话加入该组合 | 重启前宣称「已生效」 |
 |---|---|---|---|---|---|---|---|---|
-| `drafted` | → `validated` | 自环（文件不可读，状态不变） | 禁止：未 `validated` 就部署 = 未经过校验的文本进本机 | 禁止：换目录名即换 preset id，会切断 `session.header.agentPreset === 'adg'` 的治理面 | 禁止：`drafted` 不在 `.agent-presets/` 里，无可挂载对象 | 自环（重启读的是已部署的那一份） | 禁止：没有 generation 可加入 | 禁止（I2） |
-| `validated` | 自环（重复自检） | 自环 | → `deployed` | 禁止：同上，id 漂移 | 禁止：跳过了 `deployed`，本机没有新文本 | 自环（同上） | 禁止：无 generation | 禁止（I1 + I2） |
-| `deployed` | 自环（此刻校验的是仓库副本还是安装副本，须在记录里写明传参） | 自环 | 自环（幂等覆盖；同一文本不产生新语义） | 禁止：id 漂移 | **触发条件未裁决**：根 `README.md`「装完必须重启 dsh」并存两说（旧行说改文件后 `compositionInventory()` 仍返回旧行；新说 stamp 变了起新 generation，但「新会话会不会自动加入新 generation」没有实测）。照实登记，不选边；操作口径取最保守的一条 → 走「重启 dsh」这一列 | 若无新 stamp：自环；若有新 stamp：按上格口径只写「已可组合」，**不得**写成「已生效」；结论仍是重启后在新对话验收 | 禁止：未 `mounted` 前没有 generation | 禁止（I1） |
-| `mounted` | 自环 | 自环 | 自环：**已挂载会话不换组合**，部署一份新文本不会改动现有 generation | 禁止：id 漂移 | → `mounted`（新 generation） | 自环：重启本身不迁移状态，重启之后由新会话带来 `live` | → `live`（仅新会话） | 禁止（I2） |
-| `live` | 自环 | 自环 | 自环（现有会话固定在其 generation 上） | 禁止：id 漂移 | → `mounted`（新 generation；旧 `live` 会话不受影响） | 自环：**旧会话不会跟着换组合**，别在重启后拿旧会话验收 | 自环（该 generation 已 `live`） | 禁止（I2） |
+| `drafted` | → `validated` | 自环（文件不可读，状态不变） | 禁止：未 `validated` 就部署 = 未经过校验的文本进本机 | 禁止：换 id 即切断 `session.header.agentPreset === 'adg'` 的治理面 | 禁止：本机没有这一行声明可读 | 自环（重启读的是已注册的那一行声明） | 禁止：没有组合可加入 | 禁止（I2） |
+| `validated` | 自环（重复自检） | 自环 | → `deployed` | 禁止：同上，id 漂移 | 禁止：跳过了 `deployed`，本机没有新文本 | 自环（同上） | 禁止：无组合 | 禁止（I1 + I2） |
+| `deployed` | 自环（校验的永远是仓库那份源文本——**没有第二份"已安装的文本"可传**） | 自环 | 自环（幂等覆盖；同一文本不产生新语义） | 禁止：id 漂移 | **→ `mounted`**：声明被重新注册（2026-09-28 实测，触发条件是 profile patch / 清单变动）；**但已挂载的会话不换组合** | → `mounted`（重启必然重读整份 patch 栈并重新注册） | **未观测**：不重启时新开的会话会不会直接加入重注册后的声明。保守口径：只写「声明已重新注册」，**不得**写成「已在会话里生效」 | 禁止（I1） |
+| `mounted` | 自环 | 自环 | 自环：**已挂载会话不换组合**，部署一份新文本不会改动现有会话的组合 | 禁止：id 漂移 | 自环（同一版声明重复注册） | 自环：重启本身不迁移状态，重启之后由新会话带来 `live` | → `live`（仅新会话） | 禁止（I2） |
+| `live` | 自环 | 自环 | 自环（现有会话固定在它起步时的组合上） | 禁止：id 漂移 | 自环（旧 `live` 会话不受影响；新声明留给下一个新会话） | 自环：**旧会话不会跟着换组合**，别在重启后拿旧会话验收 | 自环（该组合已有会话在用） | 禁止（I2） |
 
-迁移唯一入口：`install.ps1` / `install.sh`（`preset → deployed`），其后由 `dsh-agent-presets` 的 standing mount 接续。禁止绕过对象直接改状态。
+迁移唯一入口：`install.ps1` / `install.sh`（`validated → deployed`），其后由 registry 的注册与组合接续（`deployed → mounted`）。禁止绕过对象直接改状态（手工往 `$DSH_HOME/bundles/` 贴文件、或手改 `bundle/adg-preset/` 的生成物都算绕过）。
 
 ## 3. 跨模块消费侧契约测试
 
@@ -91,15 +92,15 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 插件默认配置 `presets: Object.freeze(['adg'])` —— `plugin/dsh-adg-token-budget/src/config.js:43`；
 - 判定 `presets.includes(session.header.agentPreset)` —— `plugin/dsh-adg-token-budget/src/budget.js:66-69`；
 - 装上时的挂载行由 `install.ps1` 写入，值为 `presets: ['adg']`；
-- preset id **取自目录名**，不是文件里的字段 —— `@deepseek-ai/dsh-agent-presets`：id = 目录名（须匹配 `^[a-z0-9][a-z0-9-]*$`），而 `preset.yml` 只提供显示元数据 `name` / `description` / `order`。
+- preset id **取自生成 patch 里那一行声明行的 `config.id`**（不再是目录名）—— 值由 `tools/gen-preset-bundle.mjs` 的 `PRESET_ID` 决定，`preset/preset.yml` 只提供显示元数据 `name` / `description` / `order`（缺 `order` 时生成器用它的 `DEFAULT_ORDER`）。**源码级事实**：旧口径（id = 目录名，须匹配 `^[a-z0-9][a-z0-9-]*$`）随 `@deepseek-ai/dsh-agent-presets`（复数）一起消失（**实测**，dsh 0.1.7-rc.2）。
 
 因此三条断言：
 
 1. 改 `preset/preset.yml` 的 `name`（模式选择器里的显示名）**不会**改 preset id，**不影响**治理面 —— 改动这类文案不需要重新审视插件；
-2. 真正会漂移的是 preset id：把 `.agent-presets/adg/` 改名，或让 `install.*` 部署到别的目录名 —— 此时插件不再治理该模式（按 `budget.js` 的 fail-open 契约，未命中即不干预，**静默**）。
-3. 复核口径：`presets` 的值与安装目录名必须同时为 `adg`。任一不是，即契约已漂移。
+2. 真正会漂移的是 preset id：改 `tools/gen-preset-bundle.mjs` 的 `PRESET_ID`（或手工改生成物里声明行的 `config.id`）—— 此时插件不再治理该模式（按 `budget.js` 的 fail-open 契约，未命中即不干预，**静默**）。
+3. 复核口径：插件挂载行的 `presets` 值、生成物声明行的 `config.id`、以及 `session.header.agentPreset` 三者必须同时为 `adg`。任一不是，即契约已漂移。
 
-漂移检测（人工 review）：改任何与 preset 标识相关的路径或挂载行后，重新核对上面两条源码位置，并确认 `install.ps1` 里的 `$presetDest = Join-Path $root '.agent-presets\adg'` 与插件挂载行的 `presets: ['adg']` 仍然一致。
+漂移检测（人工 review）：改任何与 preset 标识相关的源或挂载行后，重新核对上面两条源码位置，并确认生成物声明行里的 `id: adg`（`bundle/adg-preset/cordis.patch.yml`）与插件挂载行的 `presets: ['adg']` 仍然一致。
 
 ### 3.2 `skills/adg-add-agent/SKILL.md` 消费的是专家行的**字段形状**
 
@@ -121,7 +122,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | 语义越界：`persona` 内容与 `allow` 不匹配 | 只查 persona 存在与长度（< 60 字仅 WARN） |
 | 同名 `id` 出现在不是「4 空格 + `- id: agent-`」的位置 | 专家行识别依赖固定缩进前缀 `^ {4}- id: (agent-[a-z0-9-]+)$` |
 | 专家行内部空行之后的内容 | 扫描遇到空行会跳过，块结束判定也可能提前 |
-| `preset/preset.yml` 的任何问题（含 `name` 与名册不一致、目录 id 不是 `adg`） | 它只读 `agent.cordis.yml`（或显式传入的那一份），完全不看 `preset.yml` |
+| `preset/preset.yml` 的任何问题（含 `name` 与名册不一致、`order` 不是数字） | 它只读 `agent.cordis.yml`（或显式传入的那一份），完全不看 `preset.yml`；**兜底在构建层**：`node tools/gen-preset-bundle.mjs` 会以 exit 1 报「preset/preset.yml 里没有可用的 `name:`」或「order 不是数字」 |
 
 因此**不许**由它单独支撑的结论（一律改用真实挂载或人工 review）：
 
@@ -137,10 +138,18 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 ## 5. 交付前的最小闭环
 
 ```sh
-node tools/check-preset.mjs                                                            # 仓库副本：须 exit 0
-node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"  # 安装副本：须 exit 0
+node tools/check-preset.mjs        # 源文本：须 exit 0
+node tools/gen-preset-bundle.mjs   # 生成/刷新 bundle：须 exit 0（产物不许手改）
 ```
 
-其后必须做一次真实挂载（根 `README.md`「给 AI 的安装指令」第 7 步；`skills/adg-add-agent/SKILL.md`「校验与生效」记录了 `standingKeyFor('adg')` 的口径），再做一次重启 + 新对话验收。静态自检通过 ≠ 生效。
+其后必须做一次真实挂载（根 `README.md`「给 AI 的安装指令」第 8 步：`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()` 的形状），再做一次重启 + 新对话验收。静态自检通过 ≠ 生效；生成物形状正确也 ≠ 挂载。
 
-当前仓库实测基线（本次复核）：`node tools/check-preset.mjs` → `通过：0 个错误，1 个警告`（WARN 是 `agent-file` 的 `read_image` 属条件性注册），退出码 **0**；传不存在的路径与传目录均退出 **2**。
+当前仓库实测基线（2026-09-28 复核）：`node tools/check-preset.mjs` → `通过：0 个错误，2 个警告`（两条 WARN 都是 `read_image` 属条件性注册：`agent-file` 与 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。
+
+## 6. 过期检测（踩坑登记）
+
+| 会过期的东西 | 症状 | 怎么发现（可照抄） |
+|---|---|---|
+| composition 里写的 `@deepseek-ai/*` 包名。**2026-09-28 真踩过**：引擎行的 `@deepseek-ai/dsh-workflow-worker-thread` 已从安装里消失，取而代之是 `@deepseek-ai/dsh-workflow-ptc`（行 id `workflow-ptc`、`config: {provider: spawn}`） | **不是**挂载失败，而是 registry 判**整份 preset `broken`**：`workflow-worker-thread (@deepseek-ai/dsh-workflow-worker-thread): never started` —— Adg 模式在新会话里直接不可用 | 真实挂载校验：`agentPresets.resolve('adg')` 的 `.broken` 必须为空；它按行报出起不来的包名。**dsh 每次升级后都要做**，别等"模式从选择列表里消失了"再查（`docs/evidence.md` §14） |
+| `tools/check-preset.mjs` 注释里的挂载校验指引 | 注释若写着 `standingKeyFor('adg')`，就指向一个在本版 dsh 里**已不存在**的 API；照它写的校验步骤会直接失败 | 人工 review（脚本行为不受影响，是注释层过期）。**2026-09-28 已同步**：那份注释现在写的是「按 README 第 8 步 + `agentPresets.resolve('adg')` 的 `.broken` 为空」，并顺带说明"没有第二份已安装的文本"。改动 `tools/check-preset.mjs` 的头部注释时要连这一条一起看 |
+| 文档里的 README 步骤号 | 旧文写「按第 7 步做真实挂载」，而现在的第 8 步才是真实挂载（第 7 步是沙箱提权） | 引用 README 步骤前先核对根 `README.md`「给 AI 的安装指令」的当前编号 |

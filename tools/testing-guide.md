@@ -2,14 +2,14 @@
 title: check-preset.mjs 校验器 测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 # check-preset.mjs 测试指南
 
-对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。
+对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。同目录第二个脚本 `gen-preset-bundle.mjs` 的构建契约见第 5 节（它的设计记录在自己的头部注释里）。
 
-准备动作（下称"夹具 A"）：把 `preset/agent.cordis.yml` 复制到临时文件，只改副本，绝不改仓库里的那份。
+准备动作（下称"夹具 A"）：把 `preset/agent.cordis.yml` 复制到临时文件，只改副本，绝不改仓库里的那份。**注意现在只有这一份文本**：`${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 那份已随机制移除（dsh 0.1.7-rc.2，实测），不要再去找或去传它。
 
 ## 1. 不变量 I1..I9 的用例
 
@@ -37,7 +37,7 @@ last_reviewed: 2026-09-25
 | I7 | 用 `PRUNER_MARKER_CHARS = 39` 为常量，比较 `headChars: 2048` / `tailChars: 2010` 两例的摘要行 | CLI 冒烟 | 摘要里 `标记 39` 与实际算式一致；改常量必须同时改动摘要与判错 |
 | I8（WARN 不是失败） | 在干净副本上只制造一条 WARN（如 `allow` 加 `bash`） | CLI 冒烟 | 退出码 `0`，末行 `通过：0 个错误，1 个警告` |
 | I9（`exit 0` 的语义） | 文档与对外说明里检索"校验通过 = 已挂载"这类等价写法 | 人工 review | `tools/design.md`、`tools/AGENTS.md`、`skills/adg-add-agent/SKILL.md` 里都必须保留"不是 YAML 解析器 / 不证明挂载"的限定语 |
-| I9 | 真实挂载校验（`resolve('adg')` / `standingKeyFor('adg')` / `compositionInventory()`） | 未实现 | 本文件内没有任何自动化调用它；按 `README.md`「给 AI 的安装指令」第 7 步人工执行 |
+| I9 | 真实挂载校验（`agentPresets.resolve('adg')` 的 `.broken` 为空 + `agentPresets.compositionInventory()`；`standingKeyFor` 在本版 dsh 已不存在，别调它） | 未实现 | 本文件内没有任何自动化调用它；按 `README.md`「给 AI 的安装指令」第 8 步人工执行 |
 
 ## 2. 状态机迁移矩阵
 
@@ -74,14 +74,16 @@ last_reviewed: 2026-09-25
 
 ### 3.1 `install.ps1` / `install.sh` 消费 preset 与插件部署集合
 
-两个脚本消费的事实：preset 的**两个**文件路径（`preset/preset.yml`、`preset/agent.cordis.yml`）、技能路径、插件的**五项**部署集合（`package.json` / `src` / `README.md` / `examples` / `LICENSE`）、`profiles/node_modules/dsh-adg-token-budget` 与 `profiles/web/cordis.patch.yml` 两个落点。
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**五项**部署集合（`package.json` / `src` / `README.md` / `examples` / `LICENSE`），以及四个落点：bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`、插件稳定落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`、以及 `profiles/<profile>/cordis.patch.yml` 里的挂载行。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
-| 另建一个工作副本，删掉 `preset/preset.yml`，再跑安装后的 `node tools/check-preset.mjs` | CLI 冒烟 | 校验器**不会**报警（它只看 `agent.cordis.yml`）——这正是脱钩不会被它发现的原因，必须由下面的漂移用例兜住 |
-| 在 `install.ps1` / `install.sh` 中检索它们引用的仓库内路径，逐个 `Test-Path` | 人工 review | 每条被引用的仓库内路径都存在；任一条不存在即为**脱钩**（脚本里写的是 `preset/preset.yml`、`preset/agent.cordis.yml`、`skills/adg-add-agent/SKILL.md`、`plugin/dsh-adg-token-budget` 四项） |
+| 另建一个工作副本，删掉 `preset/preset.yml`，分别跑 `node tools/check-preset.mjs` 与 `node tools/gen-preset-bundle.mjs` | CLI 冒烟 | 校验器**不会**报警（它只看 `agent.cordis.yml`），而生成器会 **exit 1** 并报 `preset/preset.yml 里没有可用的 name:` —— 这条脱钩的兜底从"没有防线"变成了**构建层拦截** |
+| 在 `install.ps1` / `install.sh` 中检索它们引用的仓库内路径，逐个 `Test-Path` | 人工 review | 每条被引用的仓库内路径都存在；任一条不存在即为**脱钩**（脚本里写的是 `preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`、`skills/adg-add-agent/SKILL.md`、`plugin/dsh-adg-token-budget` 五项） |
 | 在脚本里检索插件项清单 `'package.json', 'src', 'README.md', 'examples', 'LICENSE'`，与 `plugin/dsh-adg-token-budget/` 下的实际条目对比 | 人工 review | 五项都在；新增部署项（或新增不该进部署的目录）时两个脚本必须同时改，只改一个即脱钩 |
 | 在插件目录下新增一个 `CHANGELOG.md`，不加入任何脚本的部署清单 | 人工 review | 判定为"新增文件不进部署"是**有意的**还是**漏的**——两种脚本的注释与 `INSTALL.md` 必须给出同一个答案，否则脱钩 |
+| 把一个包从目标 profile 的 `node_modules` 里挪走，重跑 `install.*` | CLI 冒烟 | 脚本必须**只报告、不写** `dsh.profile.bundles`、也不写挂载行（"写进列表"与"包装上了"必须同时成立，否则该 profile 会报未安装的 bundle） |
+| **dsh 正在运行时**重跑 `install.*`（有变更需要重装依赖时） | CLI 冒烟 | `pnpm add link:` 失败（`os error 32` / `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`），脚本**如实报告并继续**；包已在位**不算失败**。判据：包不在位即被上一条挡住 |
 | 比对 `install.ps1` 与 `install.sh` 的部署集合 | 未实现 | 现在没有自动化比对；两个脚本的清单必须逐项一致（本仓库声明"行为等价"） |
 
 **怎么发现脱钩（口径）**：脱钩的表现是"脚本复制成功、但目标侧少了一样东西"，而 `check-preset.mjs` 只看 composition 的文本，**天生看不见脱钩**。所以发现手段只有两条——上面那条"逐条 `Test-Path` 核对脚本内引用的仓库路径"（人工 review，改脚本后必做），以及安装后核对目标目录的实际条目数。前者是当前唯一的第一道防线。
@@ -126,13 +128,30 @@ last_reviewed: 2026-09-25
 
 | 故意不做的检查 | 为什么不做 | 由谁兜底 |
 |---|---|---|
-| 整份文件能否被 YAML 解析（缩进错位、括号不配、`key:` 后面重复） | 它是逐行正则扫描器，不引入 YAML 库 | **真实挂载**：`standingKeyFor('adg')` 会报"配置非法"；人工 review |
+| 整份文件能否被 YAML 解析（缩进错位、括号不配、`key:` 后面重复） | 它是逐行正则扫描器，不引入 YAML 库 | **真实挂载**：声明行起不来时 `agentPresets.resolve('adg')` 的 `.broken` 报出具体是哪一行（**实测**：`workflow-ptc (@deepseek-ai/dsh-workflow-ptc): never started`）；YAML 语法错误具体在哪一步炸**未观测**。人工 review |
 | 锚点 `&a` / 别名 `*a` | 逐行扫描看到的只是一个标量字符串 | **真实挂载**（解析期展开后才知道指向什么）；人工 review |
 | flow 风格（`{a: 1}`、`[]`、行内两个键） | 只处理 block 风格的 `key: value` | **真实挂载**；人工 review |
 | 制表符缩进 | 缩进只用空格数计算，tab 不会报错 | **真实挂载**（YAML 规范禁止 tab 缩进）；人工 review |
-| **专家行不在 4 空格缩进上** | 脚本的行匹配器写死 `^ {4}- id: (agent-…)`：缩进一变，**整段专家行检查静默跳过、脚本照旧报"通过"**。当前 `delegation` 是带 `isolate` 的 `cordis:group`、其条目恰好 4 空格 | **改 `delegation` 结构后必须人工确认**：跑 `node tools/check-preset.mjs`，报告里必须出现"专家行 8 个"；没有这一行就说明一个都没匹配上 |
+| **专家行不在 4 空格缩进上** | 脚本的行匹配器写死 `^ {4}- id: (agent-…)`：缩进一变，**整段专家行检查静默跳过、脚本照旧报"通过"**。当前 `delegation` 是带 `isolate` 的 `cordis:group`、其条目恰好 4 空格 | **改 `delegation` 结构后必须人工确认**：跑 `node tools/check-preset.mjs`，报告里必须出现"专家行 9 个"；没有这一行就说明一个都没匹配上 |
 | 同一行里写两个键 | 一行的正则只取第一个 `key: value` | **真实挂载**；人工 review |
-| 运行期是否真的挂载（包解析、行被条件表达式关掉、服务发布到全局 realm） | 静态扫描拿不到运行期信息 | **真实挂载**：`resolve('adg')` / `standingKeyFor('adg')` / `compositionInventory()`（按 `README.md`「给 AI 的安装指令」第 7 步） |
+| 运行期是否真的挂载（包解析、行被条件表达式关掉、服务发布到全局 realm） | 静态扫描拿不到运行期信息 | **真实挂载**：`agentPresets.resolve('adg')`（`.broken` 为空）/ `agentPresets.list()` / `agentPresets.compositionInventory()`（按 `README.md`「给 AI 的安装指令」第 8 步；`standingKeyFor` 在本版 dsh 已不存在，别调它） |
 | `plugin/dsh-adg-token-budget` 那一层（能否 import、行是否激活、`stepNudge` / `stepTiers` 生效值） | 本模块完全没覆盖它 | **宿主日志与 `logFile` 的激活行**；插件自己的 `node --test test` |
 | `install.ps1` / `install.sh` 的部署集合与落点 | 与本模块职责无关 | 人工 review（见 3.1） |
 | `KNOWN_TOOLS` 之外的名字是否在当前这台机器上注册 | 条件性注册求值不了 | **未覆盖**：`bash` / `read_image` / codex / claude-code 四类只在缺条件的部署上以"那一次委派抛错"暴露 |
+
+## 5. `gen-preset-bundle.mjs`（同目录第二个脚本）的构建契约
+
+它只做一件事：把 `preset/preset.yml`（顶层 `key: value` 标量）+ `preset/agent.cordis.yml`（**原样**缩进进 `config.plugins`）+ `preset/bundle.package.json`（原样拷贝）写成 `<outDir>/{cordis.patch.yml,package.json}`（默认 `bundle/adg-preset/`，在 `.gitignore` 里）。设计记录在脚本头部注释，用例只覆盖它的**输入守卫**与**形状**：
+
+| 用例 | 类型 | 判据 |
+|---|---|---|
+| `node tools/gen-preset-bundle.mjs`（干净仓库） | CLI 冒烟 | exit `0`；stdout 报输出目录 + `cordis.patch.yml <字节数> 字节 / N 个顶层子插件条目（preset id=adg, order=…）`，末行是"下一步：装进 profile"的提示；产物两份文件都在 |
+| 连跑两次 | CLI 冒烟 | 产物逐字节相同（只读源、只写这两个文件，无随机性） |
+| 临时副本里删掉 `preset/preset.yml` 的 `name:` 行 | CLI 冒烟 | exit `1`，stderr 报 `preset/preset.yml 里没有可用的 name: <显示名>` |
+| `preset/preset.yml` 写 `order: abc` | CLI 冒烟 | exit `1`，stderr 报 `order 不是数字` |
+| 把 `preset/agent.cordis.yml` 的第一条有效行改成不是 `- ` 开头 | CLI 冒烟 | exit `1`，stderr 报"第一条有效行不是 `- ` 开头的数组项" |
+| 往 `preset/agent.cordis.yml` 里塞一个制表符 / 一个 CR 行尾 | CLI 冒烟 | exit `1`（YAML 缩进不允许 tab；CR 会让缩进块带上 `\r`） |
+| 生成物形状 | 人工 review | 一行 `insert:` → Loader 行 `id: preset-adg` / `name: '@deepseek-ai/dsh-agent-preset'` / `config:` 里 `id: adg` + `name` + `description`（有才写）+ `order` + `plugins:`；条目缩进 = 10 空格；标量一律双引号（JSON 转义是合法 YAML） |
+| **手改过生成物**（改 `bundle/adg-preset/` 或 `$DSH_HOME/bundles/dsh-adg-preset/` 里的文件） | CLI 冒烟 | 重跑生成器 / 重跑 `install.*` 即被覆盖 —— 这就是"生成物不许手改"的兜底；判违例看语义：有人拿它们当源文件 |
+| 生成物的**运行期**效果（dsh 会不会挂载它） | 未实现 | 生成器只保证形状。要真实挂载：装进 profile（`plugin_manager` 的 `install_bundle`，或 `install.*`）后看 `agentPresets.resolve('adg').broken` 与 `compositionInventory()` 里的 `fiberState` |
+| 生成器与校验器的分工是否被混用 | 人工 review | `check-preset.mjs` 管 `agent.cordis.yml` 的**语义硬约束**；生成器管**形状与嵌缩进**。谁都不覆盖对方，别用其一代替其二 |

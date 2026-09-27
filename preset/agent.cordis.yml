@@ -652,8 +652,17 @@
 
     # workflow / ralph 只对调度智能体开放：专家的 toolFilter.allow 名单里没有它们，
     # 会在子代理里被裁掉，所以专家无法借它们绕过名册去开任意代理。
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    #
+    # 引擎行的包名在 dsh 0.1.7-rc.2 **换过**：旧的 `@deepseek-ai/dsh-workflow-worker-thread`
+    # （worker-thread 引擎）已从安装里移除，取而代之的是 `@deepseek-ai/dsh-workflow-ptc`
+    # （"Workflow orchestration in the shared sandboxed Node PTC runtime"）——
+    # 出厂 `presets/standard.patch.yml` 用的就是后者，形状是 `provider: spawn`。
+    # 沿用旧包名的后果不是"少一个工具"，而是 registry 判整份 preset **broken**
+    # （`workflow-worker-thread (@deepseek-ai/dsh-workflow-worker-thread): never started`），
+    # 于是 Adg 模式在新会话里根本不可用（2026-09-28 实测，见 docs/evidence.md §14）。
+    # 改这一行时记住：包名/行形状都对齐出厂 patch，别凭旧文档写。
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

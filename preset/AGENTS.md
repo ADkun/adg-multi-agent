@@ -1,15 +1,15 @@
 # AGENTS.md — preset（Adg preset 的定义）
 
-本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 9 个专家行（其中第 9 行 `agent-general` 是交接专用的**叶子**）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
+本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 9 个专家行（其中第 9 行 `agent-general` 是交接专用的**叶子**），外加三个交给 `tools/gen-preset-bundle.mjs` 生成 bundle 的源文件（`agent.cordis.yml` / `preset.yml` / `bundle.package.json`）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
 
 ## 独立命令
 
 ```sh
-node tools/check-preset.mjs                                                          # 校验仓库里的 preset/
-node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"  # 校验已安装的那一份
+node tools/check-preset.mjs      # 校验仓库里的 preset/（唯一真相源；exit 0 通过 / 1 有 ERROR / 2 读不到目标文件）
+node tools/gen-preset-bundle.mjs # 生成 bundle/adg-preset/{cordis.patch.yml,package.json}（构建产物，在 .gitignore 里）
 ```
 
-零依赖、逐行文本扫描。exit 0 = 通过（WARN 不算失败）；exit 1 = 有 ERROR（含义只有一个：这次委派必然抛错）；exit 2 = 读不到目标文件。改的是已安装的那一份就必须传路径，否则你校验的是仓库副本。
+`check-preset.mjs` 零依赖、逐行文本扫描。exit 0 = 通过（WARN 不算失败）；exit 1 = 有 ERROR（含义只有一个：这次委派必然抛错）；exit 2 = 读不到目标文件。**已经没有"已安装的那一份文本"可以传路径了** —— 旧 `${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 目录发现机制在 dsh 0.1.7-rc.2 被整体移除（**实测**），仓库里的 `preset/agent.cordis.yml` 就是唯一真相源；`gen-preset-bundle.mjs` 的产物每次安装都会被覆盖，**不许手改**。
 
 ## 模块特有红线
 
@@ -30,6 +30,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 禁止给人工介入设**次数上限**（I12）：默认不设上限，且这条口径对**所有专家、所有任务**适用（不只浏览器 —— 登录／验证码／二次验证／切会话权限／需要用户拍板都算）。唯一例外是**用户自己**要求「不要打扰」或「只介入一轮」，那就按用户口径停手、并如实报出因此拿不到的部分。原先的「同一条路径人工介入每任务至多一轮」已于 2026-09-27 按用户要求删除：它会把「还能请用户帮忙」误判成「已经没救了」，并诱导调度者**事前**就禁掉某条路径（上一版「要求不登录」的成因之一）。
 - 禁止把「请用户手动登录」写成失败路径、或让调度者在**派发前**就预先禁止专家登录（**I12 下半**）：需要登录态才能拿到目标时，人工介入就是正常入口，只有用户明确说过不想登录／不想验证时才预先禁止（也别把「不登录」写进委派 prompt 的「本次不做」）。来源：用户实测上一版调度者会给 `browser` 下「不登录」的要求 —— 把「代理不许代填密码 / 不许绕过登录墙」误读成了「不许请用户登录」。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`（`design.md` 红线 4）。
+- **composition 里写的每个 `@deepseek-ai/*` 包名必须对着当前这台安装核对**（实例：引擎行的 `@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`，2026-09-28 实测）：沿用旧名**不会**让 preset 挂载失败，而是让 registry 判**整份 preset `broken`**（`workflow-worker-thread (@deepseek-ai/dsh-workflow-worker-thread): never started`），该模式在新会话里直接不可用。来源与后果见 `design.md`「非功能红线」最后一条与 `docs/evidence.md` §14。
 
 根 `AGENTS.md`「关键红线」里的其余各条同样适用于本模块，此处不重复。
 
@@ -45,8 +46,14 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | 网页交互（`agent_browser`）的权限前提 | `design.md` I11 → `docs/evidence.md` §11（A/B 实测）→ 根 `README.md`「浏览器专家需要完全权限」（三问三答与备选方案取舍） |
 | 登录墙／验证码的人工介入 | `design.md` I12 → `docs/evidence.md` §12（子代理不能问用户的源码依据 + 窗口存活／CDP 重连的机制实测）→ 根 `README.md`「登录墙与验证码：人工介入协议」 |
 | 「治理哪些会话」这件事 | `plugin/dsh-adg-token-budget/design.md`（`presets` 配置 × `session.header.agentPreset` 的乘积） |
+| preset 的部署形状（生成 bundle / 落点 / 写进 `dsh.profile.bundles`） | 根 `README.md`「给 AI 的安装指令」→ `tools/gen-preset-bundle.mjs` 的头部注释（生成形状与用法）→ `design.md` 的 `PresetRevision`（含 I3c） |
+| preset id（`adg`）本身 | `design.md`「跨模块改动路由」第 4 条 → `plugin/dsh-adg-token-budget/design.md`（消费侧契约） |
 | 校验口径本身 | `tools/AGENTS.md` |
 
 ## 生效方式
 
-改完必须重启 dsh（Host 进程），并在 Adg 模式的**新对话**里验收 —— 已挂载的会话不会中途换组合，重启前不要引导用户去用 Adg 模式。
+顺序固定：`node tools/check-preset.mjs`（exit 0）→ 重新生成并重装 bundle（`install.ps1` / `install.sh` 每次安装都会重跑 `tools/gen-preset-bundle.mjs`）→ **重启 dsh**（Host 进程）→ 在 Adg 模式的**新对话**里验收。已挂载的会话不会中途换组合，重启前不要引导用户去用 Adg 模式。
+
+**bundle 层不是只在启动时读**（2026-09-28 实测）：profile 的 `cordis.patch.yml` 或 profile 清单变动会让整份 patch 栈重读、并让声明重新注册；但**新会话才会用上新组合**，所以验收口径不变。**未观测**：不重启时新开的会话会不会直接加入重注册后的声明（不许写成会）。
+
+**已知限制（实测）**：dsh 正在运行时 `install.*` 里的 `pnpm add link:` 会失败 —— 它想重建 `node_modules`，而文件被运行中的 dsh 占着（`os error 32` / `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`）；脚本会把这一条如实报告并继续，**包已在位就不算失败**。要真正装/换依赖，先关掉 dsh 再重跑脚本。

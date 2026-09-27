@@ -4,7 +4,7 @@
 插件做什么、每个键什么含义、安全设计、证据边界，见本目录的 `README.md`；
 子代理步数检查点这一层的整体口径（含实测分布与实测证据）见仓库根 `README.md` 里对应的那一节。
 
-**本文件是仓库文档，不在部署集合里** —— 装到 `$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`
+**本文件是仓库文档，不在部署集合里** —— 装到 `$DSH_HOME/plugins/dsh-adg-token-budget/`
 的是 `package.json` / `src/` / `README.md` / `examples/` / `LICENSE` 五项，`test/` 与 `INSTALL.md` 都不进去。
 
 > **包名是历史遗留。** 这个包现在**只做一件事**：受管子代理在第 N 步收到的收敛检查点。
@@ -21,9 +21,11 @@
 
 ## 1. 部署（复制文件）
 
-目标：`$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`（`$DSH_HOME` 默认 `~/.dsh`）。
-这是**所有 profile 共享的模块解析根**，从 profile 目录按 Node 的常规 `node_modules` 父级上溯会走到它；
-本机的 `dsh-windows-notifier` 也在同一位置。
+目标：`$DSH_HOME/plugins/dsh-adg-token-budget/`（`$DSH_HOME` 默认 `~/.dsh`），再由目标 profile
+`pnpm add link:<那个目录>` 链进 `profiles/<profile>/node_modules/`。
+**不要**再放 `$DSH_HOME/profiles/node_modules/`：那个"所有 profile 共享的解析根"在本版 dsh 的
+模块解析里**被排除**（2026-09-28 实测放那儿解析不到、挂载行起不来），现在的解析是两段锚定 ——
+先从 dsh 安装目录解析，再落到当前 profile。
 
 - 复制 `package.json`、`src/`、`README.md`、`examples/`、`LICENSE`；**`test/` 与 `INSTALL.md` 不要拷**。
 - **先删目标目录再拷**（重复执行必须干净覆盖，不留上一版残留）。
@@ -161,6 +163,7 @@ token 两档的旧构建，插件再也不会写出这类行；保留它们是�
    注意**插件自己的默认值是 `true`**，例子文件里那一行现在也是显式 `enabled: false`）。
 2. `disabled: true`（写在 `- id: adg-token-budget` 那一行同级）或整行删掉 —— 连包都不 import。
 3. 还原 `cordis.patch.yml.bak-adg-token-budget`。
-4. 想清干净：删 `$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`（没有行指向它就不会被 import）。
+4. 想清干净：删 `$DSH_HOME/plugins/dsh-adg-token-budget/`（以及 profile 的 `node_modules` 下那条链接；
+   没有行指向它就不会被 import）。
    顺带可以把挂载行里遗留的 `budgetTokens` / `softRatio` / `cacheReadWeight` / `softNudge` /
    `hardDryRun` 删掉 —— 它们已经被静默忽略，删不删都不影响行为，只影响可读性。

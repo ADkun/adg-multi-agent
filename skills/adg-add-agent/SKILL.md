@@ -35,8 +35,12 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 
 ## 落盘步骤
 
-1. **定位 preset 目录**，不要猜路径。权威来源是 `agentPresets.list()` / `resolve('adg').path`；
-   默认根是 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/`。
+1. **定位 preset 的源文件**，不要猜路径，也不要改错那一份：Adg 现在是一个 **bundle** ——
+   `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml` 是 `tools/gen-preset-bundle.mjs` 从
+   `preset/preset.yml` + `preset/agent.cordis.yml` **生成**的构建产物，**每次安装都会被覆盖**，
+   所以**要改的是仓库里的 `preset/agent.cordis.yml`**。仓库不在本机就先 `git clone`
+   （或让用户给出仓库路径）。旧的 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 自 dsh 0.1.7-rc.2
+   起已无人读取，别再把改动写到那里。
 2. 在 `delegation` 组的专家名册段里**复制一行现有专家**，改 `id`、`toolName`、`persona`、
    `toolFilter.allow` 四个字段。
 3. **同步更新文件顶部 `persona` 的 prefix**：把新专家加进「可委派的专家」名册，并按需补一条
@@ -48,8 +52,9 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
    的分字段写 + 规则 10 的去冗余四条）同样别删。新增专家时
    只按它的性质补一句"该派给谁"，别把名册改写成预算、也别删掉或放宽这几条。
 4. **删除智能体**：删掉那一行 + 顶部名册里的那一行，两处都要改。
-5. **跑自检**：在仓库里 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过）；
-   改的是**已安装**的那一份就传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
+5. **跑自检**：在仓库里 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过）。
+   **现在没有"已安装的那一份"可以传路径了** —— 仓库里的 `preset/agent.cordis.yml` 就是唯一真相源
+   （旧机制那份 `.agent-presets/adg/agent.cordis.yml` 已随机制一起消失）。
    它会检查行尾/末尾换行/BOM、专家行字段齐全、toolName 唯一且形如 `agent_<name>`、
    `allow` 里只有已注册的工具名、没有通用委派行、调度名册与专家行双向一致，以及承载三组体积旋钮的
    那三行（`compaction-basic` / `tool-result-pruner` / `tool-web`）**结构完好、且没有被写回不合法的
@@ -61,13 +66,19 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 
 ## 校验与生效（重要，别承诺错）
 
-- **校验**：`node tools/check-preset.mjs` 做静态自检（快、可离线）；要验证运行期组合，调用
-  `standingKeyFor('adg')` 走到真实挂载，能把「包解析不到 / 配置非法 / 行没激活 /
-  服务发布到全局 realm」四类错误报出来并指明是哪一行。要拿到 `agentPresets`，按技能
-  `editing-cordis-compositions` 挂一个临时插件注册工具即可。
-- **生效**：**已挂载的 preset 不会因为 composition 文件被改动而重新组合。** 已实测：挂载后把
+- **校验**：`node tools/check-preset.mjs` 做静态自检（快、可离线）；要验证运行期组合，读
+  `agentPresets.resolve('adg').broken` —— **它为空就是可用**，报的字符串会指明是哪一行起不来
+  （包解析不到 / 配置非法 / 行没激活 / 服务发布到全局 realm）。`standingKeyFor` 在本版 dsh 里
+  **已不存在**，别照旧文档调它。要拿到 `agentPresets`，按技能 `editing-cordis-compositions`
+  挂一个临时插件注册工具即可。
+- **生效**：改完源文件之后还有一步——**重跑生成与安装**（`node tools/gen-preset-bundle.mjs`
+  再 `plugin_manager install_bundle`，或直接重跑 `install.ps1` / `install.sh`，它两步都做），
+  否则装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset` 的还是旧 bundle。
+  然后：**已挂载的 preset 不会因为 composition 文件被改动而重新组合。** 已实测：挂载后把
   28 行改成含 3 个专家行的版本，`compositionInventory()` 仍返回旧的 28 行。因此新增或删除智能体后
   **必须重启 dsh（Host 进程）**，新组合才会在 Adg 的新对话里生效。
+  （2026-09-28 补测：profile 的 `cordis.patch.yml` 或 profile 清单变动会让整份 patch 栈被重读、
+  声明会重新注册 —— 但"已挂载的会话不换组合"这条不变，所以验收口径仍是重启 + 新会话。）
 - 在重启之前，**不要引导用户去用 Adg 模式**：他拿到的会是旧组合（没有新专家）。
   正确说法是：「改动已保存，重启 dsh 之后在 Adg 模式新开对话就能用这个智能体。」
 

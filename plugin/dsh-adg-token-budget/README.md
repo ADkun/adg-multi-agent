@@ -12,10 +12,14 @@ models, and does not touch top-level sessions.
 The package name and the composed row id are now **historical**: `dsh-adg-token-budget` /
 `adg-token-budget` no longer describe what the plugin does, because **no token budget is
 enforced any more** （本次改动 removed the token stages — see
-[What was removed, and why](#what-was-removed-and-why)). The name was kept on purpose: the
-deployed path (`$DSH_HOME/profiles/node_modules/dsh-adg-token-budget/`), the row id and
-therefore the hot-reload identity of the row do not change, and renaming it would be a
-deployment change with no behavioural benefit.
+[What was removed, and why](#what-was-removed-and-why)). The name was kept on purpose: the row
+id `adg-token-budget` — and therefore the hot-reload identity of the row in
+`profiles/<profile>/cordis.patch.yml` — does not change, and renaming it would be a deployment
+change with no behavioural benefit. The **deployment path did change** (2026-09-28): the package
+now lives at `$DSH_HOME/plugins/dsh-adg-token-budget/` and is `link:`ed into each
+preset-capable profile, because the shared root `$DSH_HOME/profiles/node_modules/` is
+**explicitly excluded** by this dsh version's module resolution (measured on this machine: a
+package left there does not resolve, and the row never mounts).
 
 ## The one stage
 
@@ -262,7 +266,9 @@ Concretely:
   were the only reason it ever needed `sessionProjections`, and the step count comes from the
   listener's own state.
 - **No static `import` of any `@deepseek-ai/*` package.** The plugin is deployed
-  as a plain directory under `$DSH_HOME/profiles/node_modules/`, so anything it
+  as a plain directory under `$DSH_HOME/plugins/dsh-adg-token-budget/` (linked into
+  each profile's `node_modules`; **not** the shared `$DSH_HOME/profiles/node_modules/`
+  root, which this dsh version's resolution excludes), so anything it
   needs from the harness is resolved at call time with `createRequire`, and every
   resolution failure is survivable (see below).
 - **No top-level side effects**, no `process.exit`, no network, and no
@@ -294,7 +300,10 @@ So the plugin resolves it at call time, in this order:
    directory found on disk (read with `readdirSync`, real directories only), so a
    context that does not expose `baseUrl` at all still resolves the way a real
    profile does;
-3. anchored at `$DSH_HOME/profiles/` (the shared module root's parent);
+3. anchored at `$DSH_HOME/profiles/` (the shared module root's parent). **Caveat
+   (2026-09-28)**: that shared root is excluded by *dsh's own* module resolution;
+   whether that also affects this `createRequire` anchor is **NOT observed** — the
+   activation line's `createUserMessage=<strategy>` is what settles it on a real machine;
 4. anchored at the plugin's own `import.meta.url`;
 5. anchored at successive ancestors of the plugin file, looking for the first
    `node_modules/@deepseek-ai/dsh-llm`.
@@ -308,15 +317,25 @@ same way. The strategy that wins is reported verbatim in the activation line
 (`createUserMessage=<strategy>`), which is how the assumption stays observable
 instead of buried.
 
-**Measured on the deployment machine** (plugin file simulated at
+**Measured on the deployment machine on 2026-09-25 — at the THEN-current deployment path**
+(plugin file simulated at
 `C:\Users\cenqian\.dsh\profiles\node_modules\dsh-adg-token-budget\src\plugin.js`):
 **all five anchors resolve**, each to the same module instance inside the `dsh`
-install tree, because `$DSH_HOME/profiles/node_modules/@deepseek-ai/*` are
-symlinks into that tree and Node's ordinary parent-walk reaches them from the
+install tree, because `$DSH_HOME/profiles/node_modules/@deepseek-ai/*` were
+symlinks into that tree and Node's ordinary parent-walk reached them from the
 plugin directory. Anchor (1) wins — the live log line
 `createUserMessage=profile-fallback:web` is that fact, recorded by the running
 host — which is also the anchor that keeps working if a future profile layout
 puts a plugin-private `@deepseek-ai` shadow in the fallback directory.
+
+**Since 2026-09-28 the deployment path is `$DSH_HOME/plugins/dsh-adg-token-budget/`** (linked
+into each profile's `node_modules`; the shared `$DSH_HOME/profiles/node_modules/` root is
+excluded by this dsh version's module resolution, measured on this machine). Anchors 1–3 do not
+depend on where the plugin sits, so they carry over; **whether anchors 4–5 still resolve from the
+new directory is NOT observed** — do not read the paragraph above as covering the new path. The
+strategy that actually wins is reported verbatim in the activation line
+(`createUserMessage=<strategy>`); check that line on the machine after deploying instead of
+assuming `profile-fallback:<profile>`.
 
 The real implementation, verbatim from
 `@deepseek-ai/dsh-llm/lib/types/message.js` (identical code in `lib/index.js`):
@@ -359,10 +378,13 @@ nudge-construction failure escape the handler.
 ## Install and enable
 
 ```powershell
-# 1. copy the package into the profile's module root
+# 1. copy the package to the STABLE plugin root — NOT the shared $DSH_HOME\profiles\node_modules
 Copy-Item -Recurse -Force `
   'D:\dsh\adg-multi-agent\plugin\dsh-adg-token-budget' `
-  "$env:DSH_HOME\profiles\node_modules\dsh-adg-token-budget"
+  "$env:DSH_HOME\plugins\dsh-adg-token-budget"
+#    then link it into the target profile (install.ps1 / install.sh do both steps for every
+#    preset-capable profile):
+#    cd "$env:DSH_HOME\profiles\web"; pnpm add "link:$env:DSH_HOME\plugins\dsh-adg-token-budget"
 
 # 2. add the row from examples/cordis.patch.yml to the profile patch file
 #    $env:DSH_HOME\profiles\web\cordis.patch.yml
@@ -372,6 +394,17 @@ Copy-Item -Recurse -Force `
 # 4. calibrate against your own traffic: `enabled: true` + `dryRun: true`
 # 5. arm the reminders for real:         `enabled: true` + `dryRun: false`
 ```
+
+**The deployment root moved on 2026-09-28, and the old one is the trap.** A package left under
+`$DSH_HOME/profiles/node_modules/` (the "shared module root" older docs recommended) is
+**excluded** by this dsh version's module resolution — measured on this machine: it does not
+resolve and the row never mounts. Deploy to `$DSH_HOME/plugins/dsh-adg-token-budget/` and let
+`pnpm add link:` put the per-profile link in place. **Known limitation (measured)**: if `dsh` is
+running, that `pnpm add` can fail outright (`os error 32` /
+`ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR` — it wants to rebuild `node_modules` and the files
+are held open); `install.ps1` / `install.sh` report that line truthfully and continue, and a
+package that is already in place is not a failure. Close `dsh` first when you actually need the
+dependency step to run.
 
 **Step 5 is the end state.** With the cancel removed there is no `hardDryRun`, and nothing
 left in calibration afterwards: the only remaining knobs are the wording (`stepText`) and the
@@ -426,8 +459,10 @@ suite is unchanged either way; only the runner's process model differs.
 
 The deployment set is `package.json`, `src/`, `README.md`, `examples/` and
 `LICENSE`; `test/` and `INSTALL.md` are repository-only and do not belong in
-`$DSH_HOME`. `install.ps1` / `install.sh` do the copy and the row insertion
-idempotently.
+`$DSH_HOME`. `install.ps1` / `install.sh` copy that set to
+`$DSH_HOME/plugins/dsh-adg-token-budget/` (the stable root — **not** the shared
+`profiles/node_modules`), link it into every preset-capable profile, and do the row insertion
+idempotently (backing the patch file up as `cordis.patch.yml.bak-adg-token-budget`).
 
 Model the `package.json` shape on `dsh-windows-notifier`: it is a valid ESM
 package (`type: module`, `main: src/plugin.js`, an `exports` map, `files`,
@@ -482,11 +517,14 @@ a `LICENSE` file that actually exists, which `npm pack --dry-run --json` lists.
 
 ## What has been observed live, and what has not
 
-The plugin is **deployed and mounted** on this machine at
-`C:\Users\cenqian\.dsh\profiles\node_modules\dsh-adg-token-budget`, mounted from
+The plugin is **deployed and mounted** on this machine, mounted from
 `C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml`, and a running `dsh`
 loaded it. The log file `C:\Users\cenqian\.dsh\adg-token-budget.log` is the
-measurement.
+measurement. **Path note (2026-09-28)**: the package now sits at
+`C:\Users\cenqian\.dsh\plugins\dsh-adg-token-budget` (linked into the profile); every log
+excerpt and measurement below was produced while it sat at the **older** path
+`C:\Users\cenqian\.dsh\profiles\node_modules\dsh-adg-token-budget`. Read them as measurements
+of the same code under an older directory layout — not as evidence about the current path.
 
 ### Removed token stages: the first live observation (history)
 

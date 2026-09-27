@@ -1,6 +1,6 @@
 # AGENTS.md — adg-multi-agent
 
-Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 九个专家智能体**，其中第 9 个 `agent_general` 是交接专用的**叶子**），外加一个给委派出去的子代理注入**步数收敛检查点**的 host-plane 插件、一个浏览器工具链（有头 Chrome 启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
+Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 九个专家智能体**，其中第 9 个 `agent_general` 是交接专用的**叶子**），外加一个给委派出去的子代理注入**步数收敛检查点**的 host-plane 插件、一个浏览器工具链（有头 Chrome 启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本与一个把 preset 源文件生成成 bundle 的构建脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
 
 人向手册与全部实测依据：`README.md`（**改任何东西之前先读它对应的小节**）。
 
@@ -11,7 +11,11 @@ Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 九
 ```sh
 # preset 静态自检（零依赖，逐行文本扫描；exit 0 通过 / 1 有 ERROR / 2 读不到目标文件）
 node tools/check-preset.mjs
-node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"   # 校验已安装的那一份
+# 注意：**没有"已安装的那一份文本"可以传路径了** —— 旧机制（$DSH_HOME/.agent-presets/<id>/）在
+# dsh 0.1.7-rc.2 已被移除，仓库里的 preset/agent.cordis.yml 就是唯一真相源。
+
+# 生成 preset bundle（构建产物，落在 .gitignore 忽略的 bundle/adg-preset/；install.* 每次都会重跑它）
+node tools/gen-preset-bundle.mjs
 
 # 插件单元测试（只依赖 node:test / node:assert，无 node_modules 也能跑）
 cd plugin/dsh-adg-token-budget && node --test test
@@ -21,9 +25,12 @@ cd plugin/dsh-adg-token-budget && node --test --test-isolation=none test   # DSH
 cd browser && node --test test
 cd browser && node --test --test-isolation=none test                       # 沙箱里同样必须加这个 flag
 
-# 安装到本机 dsh 用户根（preset + 技能 + 插件 + 挂载行 + browser 工具链）
+# 安装到本机 dsh 用户根（技能 + preset bundle + 插件 + 挂载行 + browser 工具链）
 sh install.sh                                                              # macOS / Linux
 powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Windows
+# preset 现在是 bundle：脚本会生成 → 拷到 $DSH_HOME/bundles/dsh-adg-preset → link 进每个能装 preset 的
+# profile → 把 dsh-adg-preset 写进该 profile 的 dsh.profile.bundles。dsh 正在运行时 pnpm 会因文件被占用
+# 而失败（脚本会如实报告并继续）—— 要真正装/换依赖先关掉 dsh。
 ```
 
 **本仓库没有"一条命令跑完全部"的入口**：上面几组命令彼此独立，各自覆盖一层。验收方式是这几组 + 一次真实挂载，见「Quality Gates」。
@@ -46,7 +53,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 
 | 改了什么 | 怎么生效 | 怎么复核 |
 |---|---|---|
-| `preset/` 任何文件（含增删专家） | **重启 dsh**，然后在**新对话**里选「Adg 多智能体模式」 | 重启后按 `README.md`「给 AI 的安装指令」第 7 步做真实挂载校验 |
+| `preset/` 任何文件（含增删专家） | 先重跑 `tools/gen-preset-bundle.mjs` 并重装 bundle（`install.*` 会自动做），再**重启 dsh**，然后在**新对话**里选「Adg 多智能体模式」 | 重启后按 `README.md`「给 AI 的安装指令」第 8 步做真实挂载校验。**不要**再去 `.agent-presets/` 找那第二份文件——它已经不存在了 |
+| composition 里写的 `@deepseek-ai/*` 包名 | 包名会随 dsh 升级**改名**，改完必须真实挂载 | `resolve('adg')` 的 `.broken` 为空；用旧名会报 `… never started`（2026-09-28 实录：`dsh-workflow-worker-thread` → `dsh-workflow-ptc`） |
 | 插件的 `config:`（`profiles/<profile>/cordis.patch.yml`） | **热重载，不用重启** | `logFile` 里新出现一行 `activation: …` |
 | 插件的 `src/` 下的代码 | **必须重启**——热重载只重放 `config:`，不会重新 `import` 已加载的模块（Node 的 ESM registry 按文件 URL 缓存） | 激活行出现 `stepNudge=` / `stepTiers=` / `stepText=` 且**没有** `budgetTokens=` / `hardDryRun=` |
 | `browser/` 任何文件 | **重新跑一次 `install.*` 即生效，不用重启**——它是用户根下的普通文件，不是 preset 也不是插件 | `node "${DSH_HOME:-~/.dsh}/browser/cli.mjs" profile` |
@@ -55,9 +63,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 
 | 模块 | 一句话职责 | 规则见 |
 |---|---|---|
-| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 9 个专家行（第 9 行 `agent-general` 是交接专用叶子） | `preset/AGENTS.md` |
+| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 9 个专家行（第 9 行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
 | `plugin/dsh-adg-token-budget/` | host-plane 插件：受管子代理的步数收敛检查点（包名是历史名称，**不比较任何 token 阈值**） | `plugin/dsh-adg-token-budget/AGENTS.md` |
-| `tools/` | `check-preset.mjs`：preset 的零依赖静态校验器 | `tools/AGENTS.md` |
+| `tools/` | `check-preset.mjs`（preset 的零依赖静态校验器，**不是 YAML 解析器**）+ `gen-preset-bundle.mjs`（从 `preset/` 源文件生成 bundle 的构建脚本，**产物不许手改**） | `tools/AGENTS.md` |
 | `browser/` | 有头 Chrome 启动器 + 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
 
 不在模块地图里、也不需要模块 `AGENTS.md` 的（三样信号都没有，建了就是噪音）：`skills/adg-add-agent/SKILL.md`（用户技能文档，位于 `${DSH_HOME:-~/.dsh}/skills/`，无独立命令）、`install.ps1` / `install.sh`（部署脚本，无模块红线）、仓库根 `README.md`。`docs/` 是文档层而非模块：`docs/evidence.md`（实测证据台账 / 未观测清单）、`docs/docs-guide.md`（写作规范与文档分层契约）、`docs/registry.md`（索引与冷启动三问的答题路径）。
@@ -83,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 
 1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 2 警告**（`agent-file` 与 `agent-general` 的 `read_image` 是条件性注册；2026-09-28 加第 9 个专家之前是 0 / 1）。
 2. `cd plugin/dsh-adg-token-budget && node --test test` → 全绿（本仓库实测 **50 个测试全通过**）。**在 DSH 沙箱（`workspace-write`）里这条命令必然失败**，失败形态是测试文件本身报 `Error: spawn EPERM`（不是断言失败）：`node --test` 默认每个测试文件起一个 piped-stdio 子进程，沙箱拒绝 pipe。加 `--test-isolation=none` 即走同一条测试路径且不需要子进程，实测全绿；另外 `| Select-String / Select-Object` 这类 PowerShell 管道在沙箱里也会被拒（`Access is denied`），重定向到文件则正常。
-3. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 7 步做**真实挂载**（静态自检证明不了挂载）。
+3. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 8 步做**真实挂载**（静态自检证明不了挂载）。
 4. 改了插件的 `src/` → 重启后复核激活行形状（见上表）。
 5. 交付前逐条对照 `docs/docs-guide.md` 的写作规范与附件规范的「质量红线清单」。
 6. 引用任何实测数字前先读 `docs/evidence.md` 的**未观测清单**与**活证据复核快照**：人向手册里若干"未观测"条目的**依据**已被本机日志更新（新阶梯下的注入确已发生，见 `docs/evidence.md` 第 9 节），处置权在人类。**但有一条不是冲突、不许读成冲突**：「恢复的子代理被再次提醒」仍是未观测——日志证明的是**驻留期重置机制**在跑，"那个子代理是被恢复的"无从判定（`subagent/end` 对"结束"与"被恢复"发同一事件）。

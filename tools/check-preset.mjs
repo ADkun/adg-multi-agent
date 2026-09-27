@@ -27,12 +27,16 @@
 //
 // 用法：
 //   node tools/check-preset.mjs                                  # 校验仓库里的 preset/
-//   node tools/check-preset.mjs <path-to-agent.cordis.yml>       # 校验任意一份（如已安装的那份）
+//   node tools/check-preset.mjs <path-to-agent.cordis.yml>       # 校验任意一份文本
+//   （自 dsh 0.1.7-rc.2 起已经没有"已安装的第二份"：$DSH_HOME/.agent-presets/<id>/ 那套目录发现机制
+//     被整体移除，仓库里的 preset/agent.cordis.yml 是唯一文本真相源，安装侧的真相是 profile 里
+//     注册的声明行 —— 由 bundle/adg-preset/cordis.patch.yml 那个生成物提供。）
 //
 // 零依赖：本文件按行做结构化解析，不引入 YAML 库（文件形状由本仓库自己固定）。
 // 注意它终究只是个**文本扫描器**，不是 YAML 解析器：它能证明"这些行写对了"，
-// 不能证明整份文件能解析、也不能证明插件真的挂载成功 —— 后者要重启后按 README
-// 「给 AI 的安装指令」里的 `standingKeyFor('adg')` 做一次真实挂载。
+// 不能证明整份文件能解析、也不能证明插件真的挂载成功 —— 后者要按 README
+// 「给 AI 的安装指令」第 8 步做一次真实挂载：`agentPresets.resolve('adg')` 的 `.broken` 为空
+// （`standingKeyFor` 在本版 dsh 里已经不存在，别调它）。
 
 import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

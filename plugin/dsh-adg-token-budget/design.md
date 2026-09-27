@@ -2,7 +2,7 @@
 title: dsh-adg-token-budget 模块设计
 owner: Adg 插件维护者
 status: current
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 ---
 
 ## 职责与边界
@@ -16,7 +16,9 @@ last_reviewed: 2026-09-25
 - 不调度工作、不选模型、不碰顶层会话：深度为 0 的会话一律原样放行（`src/budget.js` 的
   `isDelegatedChild`）；
 - **不做任何 token 预算**。包名里的 `token-budget` 与挂载行 id `adg-token-budget` 之所以还叫这个名字，
-  是因为**改名会动部署路径与热重载身份**：累计 token 软/硬两档已移除，插件**不读任何投影**、没有阈值、没有权重（`src/config.js` 与
+  是因为**改名会动热重载身份**（行 id 一改就是宿主要重放的另一行）；**部署路径与它无关**
+  （2026-09-28 已从 `profiles/node_modules/` 迁到 `${DSH_HOME:-~/.dsh}/plugins/`，行 id 没动）。
+  累计 token 软/硬两档已移除，插件**不读任何投影**、没有阈值、没有权重（`src/config.js` 与
   `src/plugin.js` 的模块注释记录了移除口径）；
 - 不截断、不 reject、不 `agent.cancel`：插件自己产生的判定永远是"原样放行 + 可选追加一条消息"；
 - 不治"**哪些 preset 受管**"：那是 preset 侧写入 `session.header.agentPreset` 的事实，
@@ -37,7 +39,9 @@ last_reviewed: 2026-09-25
   `localCreateUserMessage`（见 I3）。
 - **被依赖**：
   - preset 侧的 `session.header.agentPreset` 是本插件的**输入**（跨模块，见下条路由）；
-  - `install.ps1` / `install.sh` 部署本模块，并在 `profiles/web/cordis.patch.yml` 补挂载行；
+  - `install.ps1` / `install.sh` 把本模块部署到稳定插件根 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`
+    并 `link:` 进每个能装 preset 的 profile（**不再**是共享的 `profiles/node_modules/` —— 那个根在本版
+    dsh 的模块解析里被**排除**，放那儿解析不到，**实测**），挂载行写进 `profiles/<profile>/cordis.patch.yml`；
   - `examples/cordis.patch.yml` 是挂载行的模板（含全部键的注释与默认值）。
 - **跨模块改动路由**：
   - 改"治理哪些会话" → 先读 `preset/design.md`（谁写 `agentPreset`、谁写 `delegationDepth`）；
@@ -69,7 +73,7 @@ last_reviewed: 2026-09-25
   - **I1** 禁止 `apply` 抛出。Cordis 里 `apply` 抛且未声明 schema = fiber 失败 = `dsh` 报
     fatal 启动错误（来源见"非功能红线"第 1 条）。
   - **I2** 禁止 `static inject` 任何服务：未挂载的服务会让 entry 永远 `pending`，同样是 fatal。
-  - **I3** 禁止静态 `import` 任何 `@deepseek-ai/*`：部署在 `profiles/node_modules/` 下解析不到就整行挂不起来。
+  - **I3** 禁止静态 `import` 任何 `@deepseek-ai/*`：部署在稳定插件根（`$DSH_HOME/plugins/dsh-adg-token-budget/`）下解析不到就整行挂不起来；一切 `@deepseek-ai/*` 都走调用时 `createRequire` + 本地 fallback（见"依赖关系"）。
   - **I4** 每一次 `apply` 必须**恰好写一行**激活行，`enabled: false` 时也写。
 
 ### ChildStepState（句柄型）
