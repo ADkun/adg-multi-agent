@@ -9,6 +9,22 @@ last_reviewed: 2026-09-25
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-28 — 新增第 9 个专家 `agent_general`（交接专用全功能**叶子**）：只在用户显式要求时派，靠运行时注入的 `send_message` 指引回报上级
+
+- **按用户要求新增**：名册从 8 行变 9 行 —— 加一个「全功能的子代理角色」，可以做任意事情，但**只在用户显式要求的前提下**才被调用，用途是**上下文隔离**（上层把一整件工作交接给下一个智能体、另开一个上下文）。
+- **待定项已裁决：不让它继续委派（叶子）。** 技术事实（源码级，本次查证）：子代理会 `composeFrom` 继承父代理的整套组合，把 `agent_*` 名册行写进它的 `toolFilter.allow` 就生效；深度上限由该行的 `maxDepth` 决定，`dsh-tool-subagent` 的默认值是 **3**（调度者 → 它 → 它 → 它为止）。**仍选择做成叶子**，理由三条：① 调度者的 `list_agents` 只列直接子级、`send_message` 只到直接父/子，**孙代理对它不可见、不可 steer**（一跳可达才有可追踪的链路）；② I13 的那些编排层规则只作用于调度者自己那一次委派，一旦它再委派就整段失效，而同一份材料会被再读一遍（实测 cache-read 占提示 token 的 **91%**）；③ 用户要的是"一个独立上下文把活做完"，不是"再长出一棵树"。
+- **补偿：回报协议由运行时自带**（不是我们自己写的约定）。`@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance` **只在子代理看得见 `send_message` 时**，给它的任务末尾追加「Your parent agent id is …，结束前用 `send_message` 把结果回报给它」；它每一轮的 final message 还会作为 settlement notice 的 closing message 回到调度者。所以"结束本次会话并回报上级 → 调度者继续 / 再派新子代理"这条链路**不需要递归**就成立，`send_message` 也因此必须留在它的 `allow` 里。
+- `preset/agent.cordis.yml`：① `delegation` 组新增 `- id: agent-general`（`toolName: agent_general`、`provider: spawn`、`backgroundMode: continuable`、`allow` 共 16 项：`read` / `read_image` / `write` / `edit` / `glob` / `grep` / `pwsh` / `job_list` / `job_output` / `job_kill` / `web_search` / `web_fetch` / `skill` / `todo_write` / `send_message` / `present`）；**刻意不含**任何 `agent_*`、通用 `subagent` / `subagent_fork`、`workflow` / `ralph`、`ask_user_question`、goal 三件套、`exit_plan_mode`。② 调度 persona 名册加一行；规则 3 补"交接 → `agent_general`（仅当用户显式要求）"；**新增规则 17**（交接闸门 + 派发时的三条额外要求 + 回报后按规则 7 接给同一个它）。③ 文件顶注加第 12 条（技术上能委派、为什么不做、回报协议从哪来），名册段由"两组"改"三组"。
+- `preset/design.md`：新增 **I16**（三半：`allow` 是叶子 / 触发条件是用户显式要求 / 派发时重申回报协议；含源码依据与"未观测"标注）；`ExpertRow` 的行清单 8 → 9；新增一条非功能红线（禁止给它加 `agent_*` 或删它的 `send_message`）；顺手把"For Agents"里写死的"上面 13 条非功能红线"改成不写条数（该数字早已与实际的 14 条脱钩，条数会被每一次改动改掉）。
+- `preset/testing-guide.md`：`I1..I15` → `I1..I16`；新增 **P1**（静态核对三个半条 + 为什么"给它加 `agent_*`"脚本拦不住）与 **P2**（真实挂载量法：不提"交接"时不应派、提了应派、它那一轮有没有 `send_message` 与四字段交接回执）；K2 / M1 / 3.2 的"8 行"改"9 行"，3.2 补一句"技能对 `agent-general` 特殊性的断言过期也算过期"。
+- `preset/AGENTS.md`、根 `AGENTS.md`：专家行数 8 → 9；新增 I16 红线（含"`send_message` 不许删"）；根 `AGENTS.md` 关键红线新增 4b；Quality Gates 第 1 条的实测值由 **0 错误 / 1 警告** 改 **0 错误 / 2 警告**（`agent-general` 也用了条件性注册的 `read_image`）。
+- `skills/adg-add-agent/SKILL.md`：名册 8 → 9；开头新增一段说明第 9 行是**特殊行**（不要照抄它的名单与 persona、不要给它加委派能力、不要删它的 `send_message`）；硬约束节新增同一条。
+- `README.md`：顶部改成"九个专家"并新增 `agent_general` 条目 + 一段设计说明（含"技术上能委派、为什么做成叶子、回报协议从哪来"）；「怎么用」表格新增一行并写明触发条件是**用户的话**而不是任务性质；「装完必须重启 dsh」那段补 2026-09-28 的重测数字；「persona 层保留的政策」「token 消耗」「实质改动（十一处 → 十二处）」等处的 8/10/34 计数同步为 9/11/35；「给 AI 的安装指令」第 7 步的挂载判据由 **10/8/0** 改 **11/9/0**（并保留旧值作对照）。
+- `docs/registry.md`：`README.md` 一行由"八个专家的分工"改"九个"；`preset/design.md` 一行补 I16。
+- **本次实测（preset 改动的挂载校验，按 README「给 AI 的安装指令」第 7 步）**：`standingKeyFor('adg')` → **mounted OK**（挂载校验用的是**已部署**到 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 的那一份）、`compositionInventory()` → **35 行** / 11 个 `tool-subagent` 模块行里 **9 行启用**（`agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ `tool-subagent-fork` **0 行**。静态自检：**0 错误 / 2 警告**（两条都是 `read_image` 条件性注册）。
+- **未观测（不许写成实测）**：① 真实委派下 `agent_general` 的可见工具目录"恰好等于 allow 名单"（机制与 `agent_coder` 的已实测同源）；② 调度者是否真的只在用户显式要求时才派它；③ 它的任务末尾是否真的被追加了那段回报指引（源码级事实，真机没有观测过）。三条都登记在 `preset/testing-guide.md` 的 **P2**。
+- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`browser/` 全部文件、`tools/check-preset.mjs`（它的 `KNOWN_TOOLS` 已含本次用到的全部工具名，无需同步）、`.gitattributes` / `.gitignore` / 两个安装脚本。生效方式照 preset 口径：**重启 dsh + 新对话**（`agent_general` 要先重启才会出现在新会话的工具面里）。
+
 ## 2026-09-27（晚·五）— 调度纪律：同一份信息默认只在一个站点取（I13 ① 的浏览器那半）
 
 - **按用户要求追加**：浏览器操作非常耗时，除非有必要，调度时不要要求同一个信息在两个以上站点获取。这条并入**规则 6**（同一实体 + 同一性质的任务只派一次）的末尾，不新开编号 —— 它本来就是同一条原则（同一份材料不要买 N 次）在浏览器上的形态，且 I13 的"五条编排层规则"计数与全部引用都不用改。

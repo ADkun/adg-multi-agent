@@ -7,7 +7,7 @@ whenToUse: 用户要求为 Adg 多智能体模式增加、调整或删除一个�
 # 在 Adg preset 里增删一个智能体
 
 Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `delegation` 组里的一行
-`@deepseek-ai/dsh-tool-subagent`。一行 = 一个可委派的专家（当前名册 8 行）：
+`@deepseek-ai/dsh-tool-subagent`。一行 = 一个可委派的专家（当前名册 9 行）：
 
 | 字段 | 含义 |
 |---|---|
@@ -16,6 +16,12 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 | `config.persona` | 这个智能体的职责、能力边界、越界时怎么做、输出要求，以及最后一行**收敛纪律**（照抄现有专家行） |
 | `config.toolFilter.allow` | 它被允许使用的工具白名单 —— 这是**真实的能力边界**，不是提示 |
 | `config.backgroundMode` | 保持 `continuable`（后台接续干活，结果以通知回到调度者） |
+
+第 9 行 `agent-general`（`agent_general`）是**特殊的一行**，不是普通的专项专家：它**只在用户显式要求
+"交接"时**才被派发（调度 persona 规则 17），拿的是本 preset 里最全的**叶子**工具集，用途是**上下文
+隔离**。给它加 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph` 都是**反例**
+（`preset/design.md` I16）；它的 `send_message` 也不能删（运行时的"回报上级"指引靠它才注入）。
+新增普通专家时**不要**照抄它的 allow 名单与 persona，照抄前 8 行里最近的那个。
 
 ## 先确认用户意图（一次问清）
 
@@ -112,6 +118,11 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   `UNSUPPORTED_REASONING_EFFORT`。也不要给专家行加 `maxDepth`：它是"经这一行创建的子代理深度上限"，
   写 `0` 会让**每一次** `agent_*` 委派以 `subagent depth 1 exceeds maxDepth 0` 失败。
   改完跑 `node tools/check-preset.mjs`。
+- **不要给 `agent-general` 加委派能力，也不要把它当模板。** 它是 I16 里刻意做成**叶子**的一行：
+  把任何 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph` 写进它的 `allow`
+  技术上就生效（子代理会 `composeFrom` 继承整套组合），但那会让孙代理对调度者不可见、不可 steer，
+  并让调度侧那五条编排层规则整段失效。它的 `send_message` 是**功能性**的（运行时的"结束前回报上级"
+  指引只在子代理看得见它时才注入），不许删。**新增普通专家时不要照抄它的名单与 persona。**
 
 ## 本技能从哪来
 

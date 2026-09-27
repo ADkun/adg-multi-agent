@@ -1,9 +1,9 @@
 # Adg 多智能体模式（DSH agent preset）
 
-一个 DSH 自建 agent preset：**一个调度智能体 + 八个专家智能体名册**。
+一个 DSH 自建 agent preset：**一个调度智能体 + 九个专家智能体名册**。
 任务由调度智能体判断范围后分派给对应专家；专家之间不能直接互相转交，越界时由调度智能体再派发下一步。
 
-八个专家各一行职责：
+九个专家各一行职责：
 
 - `agent_file`｜文件管家：文件与文档的检索定位、阅读理解与问答、批量整理归类、格式转换与文档生成
 - `agent_computer`｜系统运维专员：系统与硬件信息查询、系统设置修改、优化清理、故障排查、进程与服务控制
@@ -13,6 +13,23 @@
 - `agent_researcher`｜代码与仓库事实检索员：在本仓库/本机文件里定位实现、配置与出处，只读、必须带行号
 - `agent_coder`｜实现工程师：按已确定的方案改动工作区代码，并运行验证证明改动有效
 - `agent_reviewer`｜审查验证员：对已有改动做对抗性审查，只报告不修改
+- `agent_general`｜**全功能智能体（交接专用）**：把一整件工作交接给一个独立上下文里的通用智能体，由它独自做完（读写文件、跑命令、联网检索、整理产出都在范围内）；**只在用户显式要求「交给子代理 / 另开一个上下文 / 换个智能体接手」时才派**，它是**叶子**、不会再往下委派
+
+第 9 个专家与前 8 个有本质区别：它不是"某个专项的专家"，而是**用户点名要"交接"时**才派的全功能
+角色，用途是**上下文隔离**（上层把活交给下一个智能体、另开一个上下文）。它拿的是本 preset 里最全的
+**叶子**工具集（文件 / 命令 / 后台任务 / 联网 / 技能 / 待办 / 交付物 + `send_message`），但**刻意不含
+任何 `agent_*` 名册行与通用 `subagent` / `subagent_fork` / `workflow` / `ralph`** —— 即它不会再往下
+委派。三个理由：① 调度者的 `list_agents` 只列直接子级、`send_message` 只到直接父/子，**孙代理对它
+不可见、不可 steer**，一跳可达（红线 1）才有可追踪的链路；② 编排层规则（同实体合并 / 必要性闸门 /
+digest 中转）只作用于调度者自己那一次委派，一旦它再委派，这些纪律整段失效，而同一份材料会被再读
+一遍（实测 91% 的提示 token 是 cache-read）；③ 用户要的是"一个独立上下文把活做完"，不是"再长出一
+棵树"。**技术上它当然能委派** —— 子代理会 `composeFrom` 继承父代理的整套组合，把名册行写进它的
+`allow` 就生效，深度上限由该行的 `maxDepth` 决定（`dsh-tool-subagent` 默认 3）——这是一次**刻意的
+能力裁剪**，所以 persona 里写明了"越界时回报需要 `agent_X`"。补偿是"结束本次会话并回报上级"这条协议
+**由运行时自动提供**：`dsh-subagent` 只在子代理**看得见 `send_message`** 时，给它的任务末尾追加
+「Your parent agent id is …，结束前用 `send_message` 把结果回报给它」（源码依据
+`withContinuableReturnGuidance`），而它每一轮的 final message 还会作为 settlement notice 的 closing
+message 回到调度者 —— **不用递归也能交接回来**。
 
 配套技能 **`adg-add-agent`**：让你在**任何模式**（包括创造模式）下说一句「给 Adg 加一个智能体」就能新增专家。
 
@@ -86,8 +103,12 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 `standingKeyFor('adg')` 返回 mounted OK、`compositionInventory()` 报 34 行、
 **8 行启用的专家行**、`tool-subagent-fork` 0 行（`tool-subagent` 模块名出现 10 次，
 因为 `tool-subagent-codex` / `tool-subagent-claude-code` 两行是 `enabled: false` 的）——
-也就是**新文件确实能组合**。但"新会话会不会自动加入新 generation"没有实测（要有真实的 Adg 会话来观测
-新 persona 文本），所以结论仍然写成：**preset 改动后重启 dsh**，并通过上面的挂载校验确认它可组合；
+也就是**新文件确实能组合**。2026-09-28 加第 9 个专家（`agent-general`）之后按同一套口径又跑了一次，
+当时的实测值是：`standingKeyFor('adg')` mounted OK、`compositionInventory()` 报 **35 行**、
+**9 行启用的专家行**（多出来的就是 `agent-general`，`fiberState` 与其余 8 行相同）、
+`tool-subagent` 模块名出现 **11 次**（9 行 + 两行 disabled）。但"新会话会不会自动加入新 generation"
+没有实测（要有真实的 Adg 会话来观测新 persona 文本），所以结论仍然写成：**preset 改动后重启 dsh**，
+并通过上面的挂载校验确认它可组合；
 只有在重启代价很高时，才值得去测"不重启会不会也能生效"。
 
 **插件那一行不受这条约束，但要分清改的是哪一种：**
@@ -266,7 +287,7 @@ node "$env:DSH_HOME\browser\cli.mjs" close       # 唯一让登录态落盘的�
 ## 怎么用
 
 1. 新对话选择 **Adg 多智能体模式**，直接说需求。
-2. 调度智能体自己负责意图理解、任务拆解、调度与汇总，先判断范围再按 8 个专家的范围派发：
+2. 调度智能体自己负责意图理解、任务拆解、调度与汇总，先判断范围再按 9 个专家的范围派发：
 
 | 需求范围 | 派给 |
 |---|---|
@@ -278,6 +299,14 @@ node "$env:DSH_HOME\browser\cli.mjs" close       # 唯一让登录态落盘的�
 | 在本地代码库与文件里定位事实与出处 | `agent_researcher` |
 | 改工作区代码并自证 | `agent_coder` |
 | 审查已有改动 | `agent_reviewer` |
+| **把一整件工作交接出去、另开一个上下文做** | `agent_general`（**只在用户显式要求时**；不按能力范围"自动"选中 —— 见下） |
+
+`agent_general` 的触发条件是**你说的话**，不是任务的性质：明确说了「把这件事交给子代理 / 让另一个
+智能体接手 / 另开一个上下文去做 / 你自己别做，交接出去」才会派；调度者**不会**因为"任务看起来很大"
+"想省自己的上下文""想并行"就自行改派。交接出去之后：它在自己的上下文里从头负责到底，收尾时按运行时
+自动注入的指引用 `send_message` 把结论回报给调度者（它的 final message 也会作为结算通知的 closing
+message 一起回来）；需要继续时，调度者用 `list_agents` + `send_message` 接给**同一个**它（沿用已
+持久化的会话与上下文），要换角色或你想再开一个新上下文时才另派。
 
 3. 需要多个专家时（**实体不同或性质不同**才拆），它在同一条回复里并行启动多个委派，不串行等待；
    同一个代码库 / 文档库 / 站点的多个"方面"**不会各派一个子代理**，而是合并成一条委派、让一个
@@ -500,7 +529,7 @@ YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 
 - **"不要轮询"在更底层已经说过一次**：出厂的 `job_output` / `subagent` 工具说明就写着
   settle 时会收到通知、不要忙轮询。
 
-仍然保留的是**八个专家 persona 末尾各一句「收敛纪律」**——"收到步数检查点提醒时按提醒里的二选一
+仍然保留的是**九个专家 persona 末尾各一句「收敛纪律」**——"收到步数检查点提醒时按提醒里的二选一
 自己判断：产出够用就收敛汇报，确实还有必需工作就继续做并说明理由 —— 不要为了回应提醒而砍掉
 必需的工作"。插件只把提醒推进上下文，**不管子代理怎么反应**，所以这句仍归 persona；它写的是
 **自己该怎么应对**，与注入方同一套措辞，子代理才不会有"这是谁在说话"的歧义。
@@ -529,7 +558,7 @@ YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 
 | 委派 prompt **五项必填**：目标 / **验收标准** / **本次不做** / 已知事实 / 期望产出（规则 5） | **已落地** | 没有验收标准，专家只能自己猜边界，猜宽了就去探索旁路；没有"本次不做"清单的"专注"是**空白授权** | 可查：转录里能不能指出这条委派的**验收标准**与**排除项**。规则 5 由 53 字符扩到 171 字符；规则 6 收紧"实体"锚点后再加 115 字符 —— 两者合计 +233 字符 |
 | **必要性闸门 + 强制挂号**（规则 15）：三问任一"否"就不派；不做的旁路必须在最终交付里挂号 | **已落地** | 四条编排层规则解决的是"**不重复**读"，这一条解决"**少读不该读的**"。来源是一次真实任务：要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理 —— 那次调研只服务同一条选购需求（同实体同性质），且不在验收标准里 | **主指标是子代理个数**（少开一个就是少买一份材料）。代价是规则 15 的 300 字符（≈75 token/步），**少开一个子代理就值回票价**（单个子代理实测均值 ≈1.73M）。质量侧靠**挂号抽查**：最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」、转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被静默丢掉（比不做这条规则更糟） |
 | 委派 prompt **分字段写** + **输出／交接去冗余纪律**（规则 5 / 10） | **已落地** | 输出只占总花费 **1%**（0.9M / 94.1M），压它本身毫无意义；真正的杠杆是**写下的字会变成上下文** —— 每个字都在后续每一步作为 cache-read 重发（cache-read 85.1M = 90.4%）。所以被乘数最大的是两件**交接件**：委派 prompt（专家每一步都读）与专家返回结果（调度者余下每一步都读、还会成为最终答复的素材）；反过来最终答复的措辞后面没有更多步，省不到钱、只影响可读性 | 四条**禁止式**判据：① 不回贴工具输出原文（给位置就够）② 同一结论只说一次，后文用"见上 / 第 N 条"引用 ③ 不转述中间过程 ④ **"未验证 / 未纳入"必填块不许为求简短省略**。**没有字数上限** —— 一写成"N 字符内"就精确退化成已撤销的那层。观测量：`adg` 行的 `output` + 同口径重跑后的 **cache-read 增速** + 三个抽查（回贴重合 / 重复率 / **未验证块是否仍齐全**）。规则 5 加 106 字符、规则 10 加 130 字符（prefix 块 4584 → 4820） |
-| 8 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 8 行 | 调度者系统提示里约 330 字符 × 8 ≈ 2.6 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.7k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
+| 9 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 9 行 | 调度者系统提示里约 330 字符 × 9 ≈ 2.9 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.7k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
 | 压三组体积旋钮 / 设 `maxTokens` / 写"结论 N 字符内" | **不建议（已撤销的口径）** | 截断会把工具**已经取到**的事实切掉；输出只占账单 1%，压它只损伤质量并招来返工 | 见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门) |
 
 **persona 的体积账**：prefix 块现在 **4820 字符**。这一轮（输出／交接去冗余纪律：规则 5 分字段写 +
@@ -976,7 +1005,8 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 | **更早更密的阶梯 + 选择式措辞到底有没有用** | **未观测，而且是这个功能的核心问题**：分布（37 个子代理，中位数 39、p10 6）、成本（214 条约占 0.25%）、以及"第 12 步时只花了 10–14 万 token"都是实测的；"收到 14 条检查点的子代理是否比不收到时更早收敛"没有任何证据。量法写在插件 README 里：`audit-steps.mjs` 前后各跑一次，比分位数 |
 | `settled: released session state …` / 恢复的子代理被再次提醒 | `settled:` **已实测**（17:55:33，收敛后 29 秒）；**恢复的子代理被再次提醒仍未观测** |
 | **已移除的 token 两档**（`agent.cancel` 会被调用、软档会注入、阈值比较按真实账单在跑） | **历史实测，不代表当前行为**：`hard stage: cancel`（`usage=7651807`）、`would nudge` 最早 2,128,454、`would cancel` 最早 3,014,252，`usage=9824410` / `usage=48992135` 是真实累计值；437 行 `would cancel` + 36 行 `would nudge`，**0 次** dry-run 期发出的 `agent.cancel`；`soft stage: nudged` **从未观测**。这些代码路径**已删除**，今天不会再产生任何一行 |
-| `adg` preset 改动后能组合 | **实测**（把改好的文件部署到 `.agent-presets/adg/` 之后重跑的那一次）：`resolve('adg')` → `broken` 为空、`standingKeyFor('adg')` → mounted OK、`compositionInventory()` → 34 行 / 10 个 `tool-subagent` 模块行里 **8 行启用** / `tool-subagent-fork` 0 行（行数不变是预期的：这次改的是 persona 文本与政策，不是行的增删） |
+| `adg` preset 改动后能组合 | **实测**（把改好的文件部署到 `.agent-presets/adg/` 之后重跑的那一次）：`resolve('adg')` → `broken` 为空、`standingKeyFor('adg')` → mounted OK、`compositionInventory()` → 34 行 / 10 个 `tool-subagent` 模块行里 **8 行启用** / `tool-subagent-fork` 0 行（行数不变是预期的：这次改的是 persona 文本与政策，不是行的增删）。**2026-09-28 加第 9 个专家后按同一套口径重测**：mounted OK、35 行 / 11 个 `tool-subagent` 模块行里 **9 行启用**（新增的 `agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ 0 行 fork |
+| **`agent_general` 的子代理侧工具目录 = 它的 `allow` 名单（16 项）** | **未观测（源码级事实 + 静态自检，待一次真实委派确认）**：机制与其余专家完全相同（子代理 `composeFrom` 继承组合 → `tools.restrict({allow})` 取交集），而已实测过的 `agent_coder` 正是"可见目录恰好等于 allow 名单"；本次的 `read_image` 是条件性注册名，`tools/check-preset.mjs` 会为它出一条 WARN。**真机验收点**：重启后在 Adg 新对话里说"把这件事交给子代理"，看它是否照规则 17 派发、以及它的任务末尾是否被自动追加 "Your parent agent id is … send_message" 那段指引 |
 
 ### 安全设计（为什么它坏了也拖不垮 GUI）
 
@@ -1007,7 +1037,7 @@ dsh 把加载失败的行报成 fatal 启动错误**；更糟的是对一个**�
 ```
 preset/
   preset.yml            # 在模式选择器里显示的名称与简介
-  agent.cordis.yml      # 调度智能体 persona + 八个专家智能体行
+  agent.cordis.yml      # 调度智能体 persona + 九个专家智能体行
 skills/
   adg-add-agent/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
@@ -1039,9 +1069,9 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 
 ## 兼容性
 
-- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是十一处：
+- 从 DSH 出厂 preset `standard`（标准模式）复制而来，实质改动是十二处：
   `persona` 增加调度名册与分派规则（步数收敛不写在调度者 persona 里，交给下面的插件在运行期
-  注入）；`delegation` 组由通用委派行换成专家行；八个专家的 persona 末尾各留一句收敛纪律；
+  注入）；`delegation` 组由通用委派行换成专家行；九个专家的 persona 末尾各留一句收敛纪律；
   `compaction` / `tool-web` 三行**不覆盖任何体积旋钮**（回归出厂默认，
   理由见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门)）；
   `agent_browser` 多一条**权限前置闸门**（本机沙箱下浏览器起不来，见「浏览器专家需要完全权限」）；
@@ -1056,7 +1086,9 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
   任务结束即删）；再加**必要性闸门 + 强制挂号**（规则 15）与委派 prompt 的**五项必填**
   （含**验收标准**与**本次不做**）；再加**输出／交接去冗余纪律**（规则 5 的五项分字段写 +
   规则 10 的四条禁止，且**不设字数上限**）；同时把浏览器权限闸门与人工介入两条（规则 11 / 12）
-  **压缩措辞**（1281 → 812 字符，判定与分支语义未变）—— 这些规则与压缩的量化见
+  **压缩措辞**（1281 → 812 字符，判定与分支语义未变）；最后加第 9 个专家 **`agent_general`**
+  （交接专用、全功能、**叶子**）与调度 persona **规则 17**（只在用户显式要求时派发；派发时重申
+  "结束前用 `send_message` 回报上级"；回报后按规则 7 接给同一个它）—— 这些规则与压缩的量化见
   [多智能体的 token 消耗](#多智能体的-token-消耗已落地与可选手段)。
 - **`agent_browser` 需要 `danger-full-access` 是本机的硬约束，不是本 preset 的选择。**
   它无法从 preset 侧修（父智能体不能指定子智能体权限、子代理不能自己升权、沙箱行在 host-plane），
@@ -1127,12 +1159,12 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
    - `await resolve('adg')` 的 `broken` 必须为空；
    - `await standingKeyFor('adg')` 走一次真实挂载（能报出包解析不到、配置非法、行未激活、
      服务发布到全局 realm 四类错误）；
-   - `await compositionInventory()` 里 `adg` 必须出现 **8 行启用的专家行**：`agent-file`、`agent-computer`、
+   - `await compositionInventory()` 里 `adg` 必须出现 **9 行启用的专家行**：`agent-file`、`agent-computer`、
      `agent-app`、`agent-browser`、`agent-search`、`agent-researcher`、`agent-coder`、
-     `agent-reviewer`，且**没有** `tool-subagent-fork` 行。注意判据要写准：`compositionInventory()`
-     报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **10 次**（上面 8 行 +
+     `agent-reviewer`、`agent-general`，且**没有** `tool-subagent-fork` 行。注意判据要写准：`compositionInventory()`
+     报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **11 次**（上面 9 行 +
      `tool-subagent-codex` / `tool-subagent-claude-code` 这两行 `enabled: false` 的），
-     按"模块名出现 8 次"去断言会误报失败 —— 本机实测就是这个 10/8/0 的形状。
+     按"模块名出现 9 次"去断言会误报失败 —— 本机实测就是这个 11/9/0 的形状（加第 9 个专家之前是 10/8/0）。
    - 也可以直接 `node tools/check-preset.mjs` 做静态自检（零依赖，exit 0 表示通过）；
      校验已安装的那一份时传路径：`node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis.yml"`。
      注意它只是**文本扫描器**：exit 0 不等于"文件能解析、插件已挂载"，

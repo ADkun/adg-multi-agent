@@ -1,6 +1,6 @@
 # AGENTS.md — adg-multi-agent
 
-Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 八个专家智能体**），外加一个给委派出去的子代理注入**步数收敛检查点**的 host-plane 插件、一个浏览器工具链（有头 Chrome 启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
+Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 九个专家智能体**，其中第 9 个 `agent_general` 是交接专用的**叶子**），外加一个给委派出去的子代理注入**步数收敛检查点**的 host-plane 插件、一个浏览器工具链（有头 Chrome 启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
 
 人向手册与全部实测依据：`README.md`（**改任何东西之前先读它对应的小节**）。
 
@@ -33,7 +33,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 1. **禁止加回通用 `subagent` / `subagent_fork` 委派行。** 子代理继承父代理的整套 composition；一旦存在通用行，专家就能绕过自己的范围再开一个不受限的子代理（已在创造模式实测复现）。
 2. **`toolFilter.allow` 是真实的能力边界，不是提示。** 实测：专家可见的工具目录**恰好等于**它的 `allow` 名单（连 preset 自己注册的工具一起被裁）。因此禁止在 persona 里要求它做 `allow` 之外的事，也禁止承诺"专家之间默认能互相转交"。
 3. **禁止给承载体积旋钮的三行写回覆盖值**（`compaction-basic` / `tool-result-pruner` / `tool-web`）。本 preset 一律用插件出厂默认值：截断工具结果会把工具**已经取到**的事实切掉。
-4. **禁止在 persona 里写 token／读取预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。该层纪律已整体撤销。**与成本有关的只剩调度侧五条编排层规则 + 一条输出纪律**（编排层：同一实体 + 同一性质的任务合并成一次委派 —— **含浏览器那半：同一份信息默认只在一个站点取**（2026-09-27 按用户要求追加，一轮浏览下限实测 0.8–2.0 秒，除非用户要多源 / 对比、单站点拿不到或各站数据矛盾、或交付物本身就是跨站比较）；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务接给已经读过它的那个专家；跨专家传递大材料走 digest；派发前过**必要性闸门**并给未纳入的旁路挂号。输出纪律：不回贴工具输出原文、同一结论只说一次、不转述中间过程、**"未验证 / 未纳入"必填块不许为求简短省略**。`preset/design.md` I13 / I14 / I15）—— 它们约束"派给谁、派几次、材料怎么中转、要不要做、写下来的东西怎么组织"，不是"单个专家能读多少、能写多少"；禁止把这些改写成预算或**字数上限**（I15 明文禁止），也禁止把 digest 工件写进工作区（I14）、把未纳入的旁路静默丢掉（I13 第 ⑤ 条）。
+4. **禁止在 persona 里写 token／读取预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。该层纪律已整体撤销。**与成本有关的只剩调度侧五条编排层规则 + 一条输出纪律 + 一条交接闸门**（编排层：同一实体 + 同一性质的任务合并成一次委派 —— **含浏览器那半：同一份信息默认只在一个站点取**（2026-09-27 按用户要求追加，一轮浏览下限实测 0.8–2.0 秒，除非用户要多源 / 对比、单站点拿不到或各站数据矛盾、或交付物本身就是跨站比较）；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务接给已经读过它的那个专家；跨专家传递大材料走 digest；派发前过**必要性闸门**并给未纳入的旁路挂号。输出纪律：不回贴工具输出原文、同一结论只说一次、不转述中间过程、**"未验证 / 未纳入"必填块不许为求简短省略**。交接闸门：`agent_general` 只在用户显式要求时派、禁止因为"任务大 / 想省上下文 / 想并行"自行改派。`preset/design.md` I13 / I14 / I15 / I16）—— 它们约束"派给谁、派几次、材料怎么中转、要不要做、写下来的东西怎么组织"，不是"单个专家能读多少、能写多少"；禁止把这些改写成预算或**字数上限**（I15 明文禁止），也禁止把 digest 工件写进工作区（I14）、把未纳入的旁路静默丢掉（I13 第 ⑤ 条）。
+4b. **禁止给 `agent-general` 的 `allow` 加任何 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph`**（`preset/design.md` I16）：它是刻意做成**叶子**的交接专用全功能角色，能再委派就破坏一跳可达的链路（孙代理对调度者不可见、不可 steer）。也禁止删掉它的 `send_message` —— 运行时的回报指引只在子代理看得见它时才注入。**技术事实**：子代理会 `composeFrom` 继承整套组合、`allow` 写进去就生效（深度上限由该行 `maxDepth` 决定，默认 3），所以这是一次刻意的能力裁剪。
 5. **禁止给任何请求设 `maxTokens` / `agentOptions` / `reasoningEffort`。** 后者在手工声明的路由上会让每次委派直接报 `UNSUPPORTED_REASONING_EFFORT`。
 6. **禁止给专家行写 `maxDepth`。** 写 `0` 会让**每一次** `agent_*` 委派以 `subagent depth 1 exceeds maxDepth 0` 失败。
 7. **`allow` 里只能写已注册的工具名。** `dsh-tools` 的 `restrict()` 遇到未知名直接抛 `names unknown global tool ...`，那一次委派当场失败；合法名单见 `tools/design.md`。
@@ -54,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 
 | 模块 | 一句话职责 | 规则见 |
 |---|---|---|
-| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 8 个专家行 | `preset/AGENTS.md` |
+| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 9 个专家行（第 9 行 `agent-general` 是交接专用叶子） | `preset/AGENTS.md` |
 | `plugin/dsh-adg-token-budget/` | host-plane 插件：受管子代理的步数收敛检查点（包名是历史名称，**不比较任何 token 阈值**） | `plugin/dsh-adg-token-budget/AGENTS.md` |
 | `tools/` | `check-preset.mjs`：preset 的零依赖静态校验器 | `tools/AGENTS.md` |
 | `browser/` | 有头 Chrome 启动器 + 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
@@ -80,7 +81,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 
 ## Quality Gates
 
-1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 1 警告**（`agent-file` 的 `read_image` 是条件性注册）。
+1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 2 警告**（`agent-file` 与 `agent-general` 的 `read_image` 是条件性注册；2026-09-28 加第 9 个专家之前是 0 / 1）。
 2. `cd plugin/dsh-adg-token-budget && node --test test` → 全绿（本仓库实测 **50 个测试全通过**）。**在 DSH 沙箱（`workspace-write`）里这条命令必然失败**，失败形态是测试文件本身报 `Error: spawn EPERM`（不是断言失败）：`node --test` 默认每个测试文件起一个 piped-stdio 子进程，沙箱拒绝 pipe。加 `--test-isolation=none` 即走同一条测试路径且不需要子进程，实测全绿；另外 `| Select-String / Select-Object` 这类 PowerShell 管道在沙箱里也会被拒（`Access is denied`），重定向到文件则正常。
 3. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 7 步做**真实挂载**（静态自检证明不了挂载）。
 4. 改了插件的 `src/` → 重启后复核激活行形状（见上表）。

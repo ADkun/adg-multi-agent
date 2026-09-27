@@ -7,7 +7,7 @@ last_reviewed: 2026-09-25
 
 ## 职责与边界
 
-负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册、分派规则、五条编排层规则）、8 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
+负责：Adg preset 这一份 agent-plane 组合的**定义** —— 调度智能体的 persona（名册、分派规则、五条编排层规则、一条交接闸门）、9 个专家行的 persona / toolName / toolFilter.allow / backgroundMode，以及「preset 侧不覆盖任何体积旋钮」这一决策本身。
 
 不负责（逐条防越权）：
 
@@ -57,7 +57,7 @@ last_reviewed: 2026-09-25
 
 ### ExpertRow（不可变值对象）
 
-一份 `delegation` 组里的 `- id: agent-<name>` / `@deepseek-ai/dsh-tool-subagent` 行；创建后内容冻结，修改 = 加一行或删一行。**当前 8 行（`agent-file` / `agent-computer` / `agent-app` / `agent-browser` / `agent-search` / `agent-researcher` / `agent-coder` / `agent-reviewer`）**——按 `id` 定位，**不要在本文件里写行号**（行号会被任何一次编辑改掉；需要坐标就跑 `node tools/check-preset.mjs`，它会在报告里打印每个专家行的编号）。
+一份 `delegation` 组里的 `- id: agent-<name>` / `@deepseek-ai/dsh-tool-subagent` 行；创建后内容冻结，修改 = 加一行或删一行。**当前 9 行（`agent-file` / `agent-computer` / `agent-app` / `agent-browser` / `agent-search` / `agent-researcher` / `agent-coder` / `agent-reviewer` / `agent-general`）**——按 `id` 定位，**不要在本文件里写行号**（行号会被任何一次编辑改掉；需要坐标就跑 `node tools/check-preset.mjs`，它会在报告里打印每个专家行的编号）。前 8 行是按能力范围路由的专项专家，第 9 行 `agent-general` 不同：它**只在用户显式要求时**派发、用途是**上下文隔离**、而且是**叶子**（见 I16）。
 
 - 属性（只列语义关键的）：`id`（约定 `agent-<name>`）、`toolName`（`agent_<name>`，全局唯一）、`persona`、`toolFilter.allow`、`provider: spawn`、`backgroundMode: continuable`。
 - 不变量：
@@ -80,6 +80,7 @@ last_reviewed: 2026-09-25
   - I13: 调度 persona 必须保留五条**编排层**规则，且它们只能是编排层的：① 同一实体 + 同一性质的任务合并成一次委派（不为同一个代码库 / 文档库 / 站点并发多个"各看一个方面"的同类专家，而是把方面列进同一条委派让一个专家一次通读、按方面分节产出；**浏览器专属追加（2026-09-27，用户要求）：同一份信息默认只在一个站点取** —— 一轮浏览的**下限**实测 0.8–2.0 秒（工具侧，`docs/evidence.md` §13），多站点取同一份信息基本等于把同一份材料买 N 次；除非用户明确要多源 / 对比 / 交叉验证、那个站点拿不到或各站数据互相矛盾、或交付物本身就是跨站点比较的结果（比价、同款选型），否则不许要求同一份信息在两个以上站点各取一遍，也不许为"更全一点"替同一个问题派两个站点，真要多源就让**一个** `agent_browser` 在一条委派里串行跑完并合并）；② 同一实体的**后续**任务优先用 `list_agents` + `send_message` 接给**已经读过它**的那个专家，而不是新建委派；③ 大范围改动先派只读的 `agent_researcher` 出 `path:line` 清单，再让 `agent_coder` 按位改（定位与改动性质不同，本来就该分两步）；④ 跨专家传递大材料走 digest（见 I14）；⑤ **必要性闸门 + 强制挂号** —— 每条拟派发任务先问三问（"答案会改变交付物吗 / 是验收标准的一部分吗 / 需要专家的能力闭环吗"），任一"否"就不派：一两次工具调用能答完的由调度者自己答，其余的**只在最终交付里挂号**「未纳入本次：X（可能影响 Y，未调研）」而**不许静默丢掉**，确定要做的旁路并进同实体同性质的那条委派、禁止为它单独开子代理。委派 prompt 必须**五项必填**：目标 / **验收标准** / **本次不做** / 已知事实 / 期望产出（没有验收标准的委派不许发出）。判据固定为**实体 × 性质**两个维度：实体不同或性质不同才拆（"先只读调研、再写入改动"是性质不同，仍分两步）；**"实体"的锚点是"委派最终服务的那条需求 / 那个对象"**（要改的代码库、要选购的那个产品、要答的那个问题），**不是检索路上碰到的材料**。依据：成本结构的直接观测量是**子代理个数**（实测 cache-read 占提示 token 的 91%，N 个同类委派等于把同一份材料买 N 次），恢复机制是 `@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化的子代理会话重建（源码注释：`no subagent provider is dispatched`）；第 ⑤ 条的来源是一次真实任务的旁路委派 —— 用户要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理，而那次调研的答案只服务同一条选购需求（同实体同性质）、且并未写进验收标准。取反方向由 I10 守住。
   - I14: digest 工件**禁止写进会话工作区或仓库**，只能落在**平台临时根**（`os.tmpdir()` / `$TEMP` / `/tmp`）下本任务自己的子目录里；后续委派只传**绝对路径**并要求专家用 `read` 取；**任务结束时必须删掉本任务自己创建的工件，删不掉要如实报告**；调用会话的策略是 `read-only` 时**禁止造工件**（改走"digest 随委派 prompt 传递"的默认档）。依据：`@deepseek-ai/dsh-fs-sandbox` 的包文档「围栏行为」—— 读取在三种模式下都不受围栏限制，而 `workspace-write` 只允许目标位于会话工作区或平台临时区域之下、`read-only` 拒绝一切变更；写进工作区的散落中间文件会被误提交。digest 必须是**派生材料**：委派 prompt 里要写明"与源材料冲突时以源材料为准、冲突要报出来"，禁止把 digest 当成结论或交付物。
   - I15: **输出 / 交接件的去冗余纪律**（与 I13 正交：I13 管"派给谁、要不要做"，本条规定"写下来的东西怎么组织"）。四条**禁止式**判据：① 禁止回贴工具输出原文（给位置就够）；② 同一结论在同一会话里只说一次，后文用"见上 / 第 N 条"引用、禁止重述；③ 禁止把专家的中间过程转述进交付物；④ **"未验证 / 未纳入"是必填块，禁止为求简短省略**（第 ④ 条优先于前三条：与它冲突时宁可长也不删）。委派 prompt 必须**分字段写**（目标 / 验收标准 / 本次不做 / 已知事实 / 期望产出），并在**期望产出**里写明返回结构（结论 / 证据位置 / 未验证或未纳入）。**禁止把本条写成任何字数上限、字符上限或产出量限制** —— 那会精确退化成已撤销的那层（见非功能红线里关于子代理预算的那条）。依据：实测成本结构（`docs/evidence.md` §2）—— 输出只占总花费 **1%**（0.9M / 94.1M），但**写下的每个字都会在后续每一步作为 cache-read 重发**（cache-read 85.1M = 90.4%），所以被乘数最大的是两件**交接件**：委派 prompt（专家每一步都读）与专家返回结果（调度者余下每一步都读、并成为最终答复的素材）；反过来，最终答复的措辞后面没有更多步，省不到钱，只影响可读性。**这条依据是由聚合数字算出的推算，不是新实测**（状态分层：推算）。形态依据：`doc-engineer` 的两条红线 —— 约束必须可执行化、禁止无据形容词，所以本条只写禁止式判据而不写"要简洁"。
+  - I16: **`agent_general`（第 9 个专家行）是"交接专用"的叶子，且只在用户显式要求时派发。** 三半：① 它的 `allow` 是本 preset 里最全的**叶子**工具集（read / read_image / write / edit / glob / grep / pwsh / job_list / job_output / job_kill / web_search / web_fetch / skill / todo_write / send_message / present），但**禁止出现任何 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、以及 `workflow` / `ralph`** —— 它不能再往下委派（这是一次刻意的能力裁剪，不是能力缺失：子代理会 `composeFrom` 继承父代理整套组合，把名册行写进 `allow` 就生效，深度上限由该行的 `maxDepth` 决定、`dsh-tool-subagent` 默认 3）；② 调度 persona 里必须有一条规则把它的触发条件钉成**用户的显式要求**（"交给子代理 / 另开一个上下文 / 换个智能体接手"），禁止因为"任务看起来很大 / 想省自己的上下文 / 想并行"自行改派，并写明它**不过 I13 第 ⑤ 条的必要性三问**、过的是用户显式要求这道闸门（两者不冲突：I13 管"该不该做这件事 / 该不该为旁路开子代理"，本条管"用户点名要交接的这件事由谁做"）；③ 派发时必须在委派 prompt 里重申"完成、或用户让你结束时先用 `send_message` 回报上级再收尾"，且它回报/结束之后按 I13 ② 接给**同一个**它（`list_agents` + `send_message`）。**依据**：一跳可达才有可追踪的链路 —— 调度者的 `list_agents` 只列直接子级、`send_message` 只到直接父/子，**孙代理对它不可见、不可 steer**（源码级事实）；I13 的四条编排层规则只作用于调度者自己那一次委派，一旦它再委派就整段失效；成本结构实测（cache-read 占提示 token 的 91%）说明每多一层就是把同一份材料再买一次。**补偿机制由运行时自带**：`@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance` 只在子代理**看得见 `send_message`** 时给它的任务末尾追加「Your parent agent id is …，结束前用 `send_message` 把结果回报给它」——所以 `send_message` 必须留在它的 `allow` 里（少了它，"结束本次会话并回报上级"就只剩结算通知里的 closing message 一半）；`ask_user_question`（I12）、`create_goal` / `get_goal` / `update_goal`（只认 live runtime root 的直连人类回合）、`exit_plan_mode`（需 plan mode 且要 userQuestions 通道）则**禁止**写进任何专家行的 `allow`。**未观测**：真实委派下"它的可见目录恰好等于 allow 名单""调度者只在用户显式要求时才派发它"都尚无真机证据（机制与 `agent_coder` 的已实测同源：可见目录 = allow 名单）。
 
 ## 对外接口
 
@@ -103,12 +104,13 @@ last_reviewed: 2026-09-25
 - 禁止删掉或绕过 `agent_browser` 的权限闸门（I11），也禁止把它写成安全边界。来源：真机实测 A/B，`docs/evidence.md` §11（`workspace-write` 下 Chrome 退出码 21、Edge Mojo `拒绝访问 (0x5)`；`danger-full-access` 下同一批命令全部退出码 0 且 CDP 真驱动成功），以及源码级事实三问（父智能体不能指定子智能体权限 / preset 不能改会话模式 / 子代理不能自己升权）。
 - 禁止把 `ask_user_question` 加进任何专家行的 `allow`，也禁止在专家 persona 里要求它「请用户介入／问用户」（I12）：被委派的子代理调用只会拿到 `DELEGATED_CALLER`。来源：源码级事实，`@deepseek-ai/dsh-user-questions` 的 `ask()`（带 agent 时只认 `agents.roots()`）与 `@deepseek-ai/dsh-tool-ask-user` 的 `execute`（把 `exec.agent` 传下去）；转达机制见 `docs/evidence.md` §12。
 - 禁止把「请用户手动登录」写成失败路径、或让调度者在派发前预先禁止专家登录（I12 下半）：需要登录态才能拿到目标时，人工介入就是正常路径。来源：用户实测反馈 —— 上一版调度者会给 `agent_browser` 下「不登录」的要求（多是把「代理不许代填密码 / 不许绕过登录墙」误读成「不许请用户登录」，或为省下人工介入的次数而事前就禁掉登录 —— 原先那条「每任务至多一轮」的上限已按用户要求删除，见 I12）；复核见 `docs/evidence.md` §12。**反过来说**：用户明确说过不想登录／不想验证时，禁止再劝、禁止换路径偷试。
+- 禁止给 `agent-general` 的 `allow` 加任何 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph`（I16）：它是**刻意做成叶子**的全功能角色，一旦能再委派，孙代理就对调度者不可见、不可 steer，I13 的四条编排层规则也整段失效。同样禁止把 `send_message` 从它的 `allow` 里删掉 —— "结束本次会话并回报上级"这条协议正是靠它才被运行时注入（`withContinuableReturnGuidance` 的触发条件就是子代理看得见 `send_message`）。来源：源码级事实（`applyChildComposition` 的 `composeFrom` + `tools.restrict` 取交集；`list_agents` 只列直接子级、`send_message` 只到直接父/子；`withContinuableReturnGuidance` 的注入条件）+ 成本结构实测（cache-read 占 91%）。
 
 ## For Agents
 
 动手前先读：`preset/AGENTS.md` → `preset/design.md` → 视改动再读 `skills/adg-add-agent/SKILL.md`。
 
-绝不能做：上面 13 条非功能红线；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
+绝不能做：上面逐条列出的非功能红线（**不写条数** —— 条数会被每一次新增改动改掉）；把 `validated` 当 `mounted`（I1）；未重启就宣称生效（I2）。
 
 停止并升级人类：要推翻既有语义；红线之间冲突；需求超出本对象边界；要改体积旋钮却拿不出前后对比数字。
 

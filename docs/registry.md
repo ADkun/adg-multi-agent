@@ -16,7 +16,7 @@ last_reviewed: 2026-09-25
 | 文档路径 | 它回答什么问题 | 什么场景读它 |
 |---|---|---|
 | `AGENTS.md`（仓库根） | 这个仓库是什么、命令有哪些、关键红线、模块地图、按改动选读的路由、验收门禁 | 任何改动的**第一份**；不确定改东西前该读什么时 |
-| `README.md` | 人向手册：怎么装、八个专家的分工与缺口、成本口径的由来、插件怎么开与怎么确认、全部实测数字 | 要理解某个设计为什么这样定、要引用任何实测数字时 |
+| `README.md` | 人向手册：怎么装、九个专家的分工与缺口、成本口径的由来、插件怎么开与怎么确认、全部实测数字 | 要理解某个设计为什么这样定、要引用任何实测数字时 |
 | `skills/adg-add-agent/SKILL.md` | 增删一个专家智能体的硬约束与落盘要求（字段含义、名册同步、`allow` 的真实语义、改完跑什么） | 要新增/修改/删除专家时（`preset/design.md` 在其后） |
 | `tools/AGENTS.md` | `tools/` 的独立命令、三个退出码、模块特有红线、跨模块路由、能力边界 | 要跑静态自检、或改 `check-preset.mjs` 之前 |
 | `tools/design.md` | 校验器作为对象的设计：职责与不负责清单、依赖、三个数据模型与 I1..I9、CLI 契约、非功能红线 | 要改判错口径、要把它的结论写进别的文档之前 |
@@ -25,7 +25,7 @@ last_reviewed: 2026-09-25
 | `browser/design.md` | 工具链作为对象的设计：`BrowserTarget`（不可变值对象）/ `BrowserInstance`（生命周期型）/ `PageSession`（句柄型）/ `PageTab`（清理型）四个对象与 I1..I10（含 I9「不点名不关、不关到 0 个」与 I10「谁开的谁收」）；为什么"登录由人完成"是边界 | 要改命令行契约、profile 解析口径或标签页清理规则之前 |
 | `browser/testing-guide.md` | I1..I10 的用例（**36 个，不需要浏览器**）、三个状态机迁移矩阵全表、两条跨模块消费侧契约、未观测清单 | 改完 `browser/` 要跑什么、要判断某条不变量被测到什么程度时 |
 | `preset/AGENTS.md` | `preset/` 的独立命令、模块特有红线、跨模块路由、生效方式；开头写明"为什么本模块需要独立文档" | 要增删专家、或改调度 persona 的名册与分派规则之前 |
-| `preset/design.md` | preset 作为对象的设计：`PresetRevision`（生命周期型）/ `ExpertRow` / `SchedulerPersona` 三个对象与不变量、专家行与调度名册的双向约束、体积旋钮三行的口径 | 要改专家行字段、`allow` 名单或旋钮口径时 |
+| `preset/design.md` | preset 作为对象的设计：`PresetRevision`（生命周期型）/ `ExpertRow` / `SchedulerPersona` 三个对象与不变量（含 I16 交接专用叶子 `agent-general`）、专家行与调度名册的双向约束、体积旋钮三行的口径 | 要改专家行字段、`allow` 名单或旋钮口径时 |
 | `preset/testing-guide.md` | preset 侧不变量→用例全表、`PresetRevision` 迁移矩阵全表、两条跨模块消费侧契约（插件消费 preset **id** 而非 `preset.yml` 的 `name`；技能消费专家行的**字段形状**）、对 `check-preset.mjs` 的能力边界断言 | 改完 preset 要跑什么、要判断某条约束被测到什么程度时 |
 | `plugin/dsh-adg-token-budget/AGENTS.md` | 插件的独立命令、模块特有红线（**编号即 `design.md` 的不变量号**）、跨模块路由、生效方式 | 要改插件行为（筛选 / 计数 / 措辞 / 激活行）之前 |
 | `plugin/dsh-adg-token-budget/design.md` | 插件作为对象的设计：`PluginActivation`（生命周期型）/ `ChildStepState`（句柄型）/ `ResolvedConfig` / `ConvergenceReminder` 四个对象与不变量 | 要改插件行为或引用它的运行期口径时 |

@@ -1,6 +1,6 @@
 # AGENTS.md — preset（Adg preset 的定义）
 
-本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律**）+ 8 个专家行。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
+本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 9 个专家行（其中第 9 行 `agent-general` 是交接专用的**叶子**）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
 
 ## 独立命令
 
@@ -19,6 +19,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 - 禁止给 `compaction-basic` / `tool-result-pruner` / `tool-web` 三行写回体积覆盖值（`design.md` 红线 3）。
 - 禁止给专家行的 `allow` 加 `workflow` / `ralph`（I6）；禁止给专家行写 `maxDepth`（I8）。
 - 禁止加回通用 `subagent` / `subagent_fork` 行（`design.md` 红线 1）。
+- 禁止给 `agent-general` 的 `allow` 加任何 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph`（I16）：它是**刻意做成叶子**的交接专用全功能角色 —— 一旦能再委派，孙代理对调度者不可见、不可 steer，I13 编排层规则整段失效。同样禁止删掉它的 `send_message`（"结束本次会话并回报上级"靠它才被运行时注入）。调度 persona 里也必须留住那条**交接闸门**（规则 17：只在用户显式要求时派、派发时重申回报协议、回报后按 I13 ② 接给同一个它），并禁止把它的触发条件放宽成"任务大 / 想省上下文 / 想并行"。
 - 禁止把**子代理预算**（「委派预算 / 让步数区间 / 不要轮询步数 / 结论 N 字符内」）写进调度 persona 或专家 persona（I10）。
 - 禁止删掉调度 persona 的五条**编排层**规则（I13）：同一实体 + 同一性质的任务合并成一次委派（**含浏览器那半：同一份信息默认只在一个站点取** —— 2026-09-27 按用户要求追加，一轮浏览下限实测 0.8–2.0 秒，除非用户要多源 / 对比、单站点拿不到或各站数据矛盾、或交付物本身就是跨站比较）；大范围改动先让 `agent_researcher` 出 `path:line` 再让 `agent_coder` 按位改；同一实体的后续任务用 `list_agents` + `send_message` 接给已经读过它的那个专家；跨专家传递大材料走 digest；**派发前过必要性闸门**（三问任一"否"就不派）。**别拿 I10 当理由删它们** —— I10 禁止的是**子代理预算**，这几条约束的是"派给谁、派几次、材料怎么中转、要不要做"，不限制任何单个专家的读取量与产出量（边界见 `design.md` I10 / I13）。委派 prompt 的**五项必填**（含**验收标准**与**本次不做**）同样不许删 —— 没有验收标准就无法判断一条旁路该不该做。
 - 禁止把未纳入本次的旁路**静默丢掉**（I13 第 ⑤ 条）：不做的旁路必须在最终交付里挂号「未纳入本次：X（可能影响 Y，未调研）」。来源是一次真实任务的旁路委派（"便携小巧的录音笔" → 为"录音合规性"单独开了一个子代理）；静默丢掉比不做这条规则更糟（省了 token 却让用户不知道有东西没查）。
@@ -37,6 +38,7 @@ node tools/check-preset.mjs "${DSH_HOME:-~/.dsh}/.agent-presets/adg/agent.cordis
 | 你要改什么 | 先读 |
 |---|---|
 | 专家名册 / 调度分派规则 | `design.md` → `skills/adg-add-agent/SKILL.md` → 改完 `node tools/check-preset.mjs` |
+| 交接专用叶子 `agent_general`（触发条件 / allow 名单 / 回报协议） | `design.md` I16 → 根 `README.md` 顶部「第 9 个专家」一段 → `@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance`（只在子代理看得见 `send_message` 时注入） |
 | 调度 persona 的编排层规则（同实体合并 / 先定位再改 / 复用既有专家 / digest 中转 / 必要性闸门 + 挂号） | `design.md` I13 / I14 → 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I13 / I14 用例 |
 | 输出／交接纪律（分字段写 / 不回贴原文 / 不重复 / 未验证块必填） | `design.md` I15（边界：**不是**字数上限，I10 管预算）→ 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I15 用例（O1 / O2） |
 | 承载体积旋钮的那三行 | `docs/evidence.md` §2 / §3 / §8 / §10（重测口径照抄 §10） |
