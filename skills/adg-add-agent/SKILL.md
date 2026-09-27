@@ -103,8 +103,10 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   刻意不写压缩阈值、单条工具结果截断、`fetchMaxOutputChars` / `searchMaxResults` /
   `searchMaxQueries`，一律用插件出厂默认值 —— 加一个智能体**不需要**动它们，而且"靠截断省 token"
   那套口径已整体撤销（见 README「为什么撤销 preset 侧的体积闸门」）。确实要覆盖时，取值得落在插件
-  会接受的范围内，并在同一个提交里给出对比数据（`node D:\dsh\.dsh-token-audit\audit-run.mjs
-  "C:\Users\cenqian\.dsh\sessions"` 前后各跑一次，拿不出对比数字就不要改）；自检会把覆盖过的键
+  会接受的范围内，并在同一个提交里给出对比数据（对**会话目录**（`<DSH_HOME>/sessions`，本机缺省即
+  `~/.dsh/sessions`）跑一次会话审计脚本、改动前后各一次 —— 该脚本**本项目不带**，口径见根
+  `README.md`「怎么重新测量」：按 preset 分组看 `input` / `cache` / `output` / `requests`；
+  拿不出对比数字就不要改）；自检会把覆盖过的键
   标成「已覆盖」。同理不要顺手加 `maxTokens` / `agentOptions` / `reasoningEffort`：
   输出只占账单 1%，压它只损伤质量；`reasoningEffort` 在手工声明的路由上会让每次委派直接报
   `UNSUPPORTED_REASONING_EFFORT`。也不要给专家行加 `maxDepth`：它是"经这一行创建的子代理深度上限"，
