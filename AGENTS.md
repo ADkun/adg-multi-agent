@@ -25,12 +25,13 @@ cd plugin/dsh-adg-token-budget && node --test --test-isolation=none test   # DSH
 cd browser && node --test test
 cd browser && node --test --test-isolation=none test                       # 沙箱里同样必须加这个 flag
 
-# 安装到本机 dsh 用户根（技能 + preset bundle + 插件 + 挂载行 + browser 工具链）
+# 安装到本机 dsh 用户根（技能 + preset bundle + 插件 bundle + browser 工具链；挂载行由包自己带，不再手贴）
 sh install.sh                                                              # macOS / Linux
 powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Windows
-# preset 现在是 bundle：脚本会生成 → 拷到 $DSH_HOME/bundles/dsh-adg-preset → link 进每个能装 preset 的
-# profile → 把 dsh-adg-preset 写进该 profile 的 dsh.profile.bundles。dsh 正在运行时 pnpm 会因文件被占用
-# 而失败（脚本会如实报告并继续）—— 要真正装/换依赖先关掉 dsh。
+# preset 与插件现在都是 bundle：脚本生成 / 拷贝 → $DSH_HOME/bundles/dsh-adg-preset 与
+# $DSH_HOME/bundles/dsh-adg-token-budget → link 进每个能装 preset 的 profile → 把两个包名都写进该 profile
+# 的 dsh.profile.bundles（光有依赖不算选中）。dsh 正在运行时 pnpm 会因文件被占用而失败（脚本会如实报告并
+# 继续）—— 要真正装/换依赖先关掉 dsh。
 ```
 
 **本仓库没有"一条命令跑完全部"的入口**：上面几组命令彼此独立，各自覆盖一层。验收方式是这几组 + 一次真实挂载，见「Quality Gates」。
@@ -55,16 +56,19 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 |---|---|---|
 | `preset/` 任何文件（含增删专家） | 先重跑 `tools/gen-preset-bundle.mjs` 并重装 bundle（`install.*` 会自动做），再**重启 dsh**，然后在**新对话**里选「Adg 多智能体模式」 | 重启后按 `README.md`「给 AI 的安装指令」第 8 步做真实挂载校验。**不要**再去 `.agent-presets/` 找那第二份文件——它已经不存在了 |
 | composition 里写的 `@deepseek-ai/*` 包名 | 包名会随 dsh 升级**改名**，改完必须真实挂载 | `resolve('adg')` 的 `.broken` 为空；用旧名会报 `… never started`（2026-09-28 实录：`dsh-workflow-worker-thread` → `dsh-workflow-ptc`） |
-| 插件的 `config:`（`profiles/<profile>/cordis.patch.yml`） | **热重载，不用重启** | `logFile` 里新出现一行 `activation: …` |
+| 插件的挂载行**本体**（bundle 层：`$DSH_HOME/bundles/dsh-adg-token-budget/cordis.patch.yml`） | **以重启 dsh 为准**——没有任何东西 watch `bundles/`，单独改这个文件不会自己触发重读；**禁止宣称"不重启也会生效"** | 重启后 `plugin_manager list_bundles` 仍有 `dsh-adg-token-budget` 这条 + `logFile` 新出现一行 `activation: …`（**冷启动后的 bundle 层：未观测**，量法见 `docs/evidence.md` §8 / §16.5） |
+| 插件的 `config:` **覆盖行**（`profiles/<profile>/cordis.patch.yml`；Plugins 页保存写的就是这一层） | **热重载，不用重启**（`web` 是 `patchReload: live`）——但覆盖行按 id **整块替换** `config`、不是深合并，要留的键必须全部重写 | `logFile` 里新出现一行 `activation: …` |
 | 插件的 `src/` 下的代码 | **必须重启**——热重载只重放 `config:`，不会重新 `import` 已加载的模块（Node 的 ESM registry 按文件 URL 缓存） | 激活行出现 `stepNudge=` / `stepTiers=` / `stepText=` 且**没有** `budgetTokens=` / `hardDryRun=` |
 | `browser/` 任何文件 | **重新跑一次 `install.*` 即生效，不用重启**——它是用户根下的普通文件，不是 preset 也不是插件 | `node "${DSH_HOME:-~/.dsh}/browser/cli.mjs" profile` |
+
+**这条链路上唯一的静默失效模式**：profile 层残留一条同 id 的旧 `- insert:` 手贴行。它**不多挂一行**，但**整块接管**那一行的 `config:`（注入可以当场停掉，而日志看起来完全正常），并让该行**脱离管理**。`list_bundles` 的 `overrides` 发现不了它——判据是 `list_plugins` 里这一条**还有没有 `patchId`**（真机实测与逐条结论见 `docs/evidence.md` §16.4 第 6 条；**别与 §14.3 混引** —— 那条讲的是"同一个 profile 里同一个 preset 声明行只能有一个家"）。
 
 ## Project Map
 
 | 模块 | 一句话职责 | 规则见 |
 |---|---|---|
 | `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 9 个专家行（第 9 行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
-| `plugin/dsh-adg-token-budget/` | host-plane 插件：受管子代理的步数收敛检查点（包名是历史名称，**不比较任何 token 阈值**） | `plugin/dsh-adg-token-budget/AGENTS.md` |
+| `plugin/dsh-adg-token-budget/` | host-plane 插件：受管子代理的步数收敛检查点（包名是历史名称，**不比较任何 token 阈值**）；**现在是一个 bundle**——挂载行由包自己的 `cordis.patch.yml` 提供（`package.json` 的 `dsh.bundle.patch`），装进 `$DSH_HOME/bundles/`，**不再手贴进 profile 的 patch 层** | `plugin/dsh-adg-token-budget/AGENTS.md` |
 | `tools/` | `check-preset.mjs`（preset 的零依赖静态校验器，**不是 YAML 解析器**）+ `gen-preset-bundle.mjs`（从 `preset/` 源文件生成 bundle 的构建脚本，**产物不许手改**） | `tools/AGENTS.md` |
 | `browser/` | 有头 Chrome 启动器 + 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
 
@@ -79,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 | 新增 / 修改 / 删除一个专家智能体 | `preset/AGENTS.md` | `skills/adg-add-agent/SKILL.md` → `preset/design.md` → 改完 `node tools/check-preset.mjs` |
 | 改调度 persona 的名册或分派规则 | `preset/design.md` | `preset/testing-guide.md`（名册与专家行的双向一致性约束）；改**编排层规则**（I13 / I14，含必要性闸门与挂号）或**输出纪律**（I15）再读 `README.md`「多智能体的 token 消耗：已落地与可选手段」 |
 | 改插件行为（筛选 / 计数 / 措辞 / 激活行） | `plugin/dsh-adg-token-budget/AGENTS.md` → `design.md` | `plugin/dsh-adg-token-budget/testing-guide.md`（先看该行为是否已被测试钉住） |
-| 改插件的挂载位置、部署集合或上线顺序 | `plugin/dsh-adg-token-budget/INSTALL.md` | `plugin/dsh-adg-token-budget/design.md` |
+| 改插件的挂载行在哪一层、部署落点与部署集合（`package.json` 的 `files` 与 `dsh.bundle.patch`）或上线顺序 | `plugin/dsh-adg-token-budget/INSTALL.md` | `plugin/dsh-adg-token-budget/design.md` |
 | 改 `check-preset.mjs` 的判错口径，或改 composition 的 tool 行 | `tools/design.md` | `preset/design.md`（体积旋钮与 `allow` 的约束） |
 | 改浏览器工具链（`cli.mjs` 契约 / `launch` / `close` / 驱动层） | `browser/AGENTS.md` → `browser/design.md` | `browser/testing-guide.md`；动 `launch` / `close` 的默认行为再读 `preset/design.md` I11 / I12 |
 | 改 `agent_browser` 的 persona（浏览器那一段） | `preset/design.md` I11 / I12 → `browser/AGENTS.md`（它消费的命令行契约） | 根 `README.md`「浏览器工具链与登录态资产」→ `docs/evidence.md` §13 → 改完 `node tools/check-preset.mjs` |
@@ -90,7 +94,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 ## Quality Gates
 
 1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 2 警告**（`agent-file` 与 `agent-general` 的 `read_image` 是条件性注册；2026-09-28 加第 9 个专家之前是 0 / 1）。
-2. `cd plugin/dsh-adg-token-budget && node --test test` → 全绿（本仓库实测 **51 个测试全通过**）。**在 DSH 沙箱（`workspace-write`）里这条命令必然失败**，失败形态是测试文件本身报 `Error: spawn EPERM`（不是断言失败）：`node --test` 默认每个测试文件起一个 piped-stdio 子进程，沙箱拒绝 pipe。加 `--test-isolation=none` 即走同一条测试路径且不需要子进程，实测全绿；另外 `| Select-String / Select-Object` 这类 PowerShell 管道在沙箱里也会被拒（`Access is denied`），重定向到文件则正常。
+2. `cd plugin/dsh-adg-token-budget && node --test test` → 全绿（本仓库实测 **54 个测试全通过**）。**在 DSH 沙箱（`workspace-write`）里这条命令必然失败**，失败形态是测试文件本身报 `Error: spawn EPERM`（不是断言失败）：`node --test` 默认每个测试文件起一个 piped-stdio 子进程，沙箱拒绝 pipe。加 `--test-isolation=none` 即走同一条测试路径且不需要子进程，实测全绿；另外 `| Select-String / Select-Object` 这类 PowerShell 管道在沙箱里也会被拒（`Access is denied`），重定向到文件则正常。
 3. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 8 步做**真实挂载**（静态自检证明不了挂载）。
 4. 改了插件的 `src/` → 重启后复核激活行形状（见上表）。
 5. 交付前逐条对照 `docs/docs-guide.md` 的写作规范与附件规范的「质量红线清单」。

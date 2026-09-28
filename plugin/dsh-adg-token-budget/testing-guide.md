@@ -25,12 +25,12 @@ cd plugin/dsh-adg-token-budget && node --test test
 `package.json` 的 `scripts.test` 与这条等价。
 
 **沙箱（DSH `workspace-write`）里有两个**独立的**拦截，别混成一个。**
-下面四条命令都真跑过（2026-09-25）：
+下面四条命令都真跑过（2026-09-25；第二行的用例数在 2026-09-28 复跑过，见该行括注）：
 
 | 命令形态 | 结果 |
 |---|---|
 | `node --test test`（无管道、无重定向） | **失败**：测试文件报 `Error: spawn EPERM`（`node --test` 默认给每个测试文件起 piped-stdio 子进程，沙箱拒绝 pipe）。`tests 1 / fail 1`，与断言无关 |
-| `node --test --test-isolation=none test`（无管道、无重定向） | **跑通，51 个测试全过**（末尾 `pass 51 / fail 0`；2026-09-28 加 I17 那条用例后从 50 变 51） |
+| `node --test --test-isolation=none test`（无管道、无重定向） | **跑通，54 个测试全过**（末尾 `pass 54 / fail 0`；2026-09-28 加 I17 那条用例后从 50 变 51，**同日**再加三条钉住 bundle 挂载行形状的用例 ⇒ 54，见第 1 节末的补充表） |
 | `node --test test > out.txt 2>&1`（重定向到文件） | 被**上一条**拦下：重定向本身允许，失败原因仍是子进程 pipe |
 | `node --test --test-isolation=none test 2>&1 \| Select-Object -Last 15` | 被拒：`Program 'node.exe' failed to run: Access is denied` —— 这一层拦的是**PowerShell 管道** |
 
@@ -82,6 +82,10 @@ cd plugin/dsh-adg-token-budget && node --test test
 | `dryRun` 只算不做、不消费档位 | `dryRun checkpoints inject nothing, log every decision and consume nothing`；`dryRun counts the steps it watches and spends no tier` | 单测；变异 **M14**（`dryRun` 竟然注入） |
 | 状态回收（`subagent/end` 与 disposer） | `the per-session map is released on subagent/end`；`the disposal effect clears the map` | 单测 |
 | 计数与档位判定的纯函数性（越界输入不抛） | `dueStepTier refuses out-of-contract input instead of throwing`；`dueStepTier reports the lowest tier that is due and unfired` | 单测 |
+| **bundle 层的挂载行形状**：包必须声明 `dsh.bundle.patch`、那个文件必须真的存在并能读出行；**部署集合 = `package.json` 的 `files` 六项** | `the package ships its own bundle patch and declares it` | 单测（**逐行文本扫描，不是 YAML 解析器**；"真实 profile 组合挂得上"属真机档，判据见 `INSTALL.md` 第 4 节） |
+| bundle 层只有**一条**挂载行、必须挂本包、`config:` 里每个键都是 `DEFAULT_CONFIG` 读得懂的键、不写 `stepText`、出厂 `enabled: true` + `dryRun: false`、`logFile` 必须是 `!!js dshHomePath(...)` 求值而非写死某台机器的绝对路径 | `the bundle row is the mount row: one row, this package, armed by default` | 单测（同上） |
+| 已移除的 token 键**不得回到生效行**（注释里记录它们不算） | `the bundle row cannot resurrect the retired token stages` | 单测（与 I9 / design.md 非功能红线 2 是同一件事，守卫在"行"这一层） |
+| **profile 层不得再出现 `adg-token-budget` 的挂载行** —— **实测后果**（本机 2026-09-28）：同 id 残留**不多挂一行**（条目总数仍 190、激活行只写一行），但**整块接管** bundle 行的 `config:`（`dryRun` 被顶成 `true` ⇒ **注入当场停掉，而 `fiberPhase` 仍是 `active`、日志看起来完全正常**）**并让该行脱离管理**（`patchId` 消失、`readOnlyReason: "unaddressable"` ⇒ Plugins 页与 `set_plugin` 都点不动它）。逐字日志与三条结论见 `INSTALL.md` 第 4 节第 6 条（台账：`docs/evidence.md` §16.4 第 6 条） | **未实现**自动化：检测判据两条 —— `list_plugins` 里这一条**还有没有 `patchId`**（`list_bundles` 的 `overrides` 发现不了残留），以及文本侧 `Select-String -Path "$env:DSH_HOME/profiles/*/cordis.patch.yml" -Pattern 'adg-token-budget'` 应为 **0 处**（本机现状 0，见 `INSTALL.md` 第 2 节末） | 人工 review（缺口：一条扫 profile patch 文件的检查没写） |
 
 ### 本表"状态/类型"列的观测来源（2026-09-25 复核后的口径）
 
@@ -89,6 +93,11 @@ cd plugin/dsh-adg-token-budget && node --test test
 则以下列来源为准，冲突时看后者：
 
 - 权威台账：`docs/evidence.md` §9（活证据复核快照，`2026-09-25T13:46:37Z` / `21:46:37+08:00`，附 `sha256` 指纹；数字是某一刻的下界，引用时必须同时给时间戳与哈希）；
+- 迁移成 bundle 那一批（2026-09-28）的证据：`docs/evidence.md` **§16**（§16.1–§16.5；逐字日志行同时
+  记在 `INSTALL.md` 第 4 节，其中**第 5 条**是"用 `disabled: true` 关掉再放开"、**第 6 条**是
+  "profile 层残留同 id 手贴行"这两组本机日志）。引用时**保留它自己的状态档**：§16.1–§16.3 是
+  **源码级事实**、§16.4 是**真机实测（有日志为证）**、§16.5 里那几条（`adg` 那一面的注入、
+  冷启动后的 bundle 层、`desktop` profile）是**未观测** —— 见下面「未观测清单」；
 - **冲突只剩一条**：本目录 `README.md` 与仓库根 `README.md` 把"第一档之外的档 / 新阶梯下的注入"
   记为**未观测**，而 §9 的活日志复核显示它**已被观测**——**处置权在人类**（§9 的"文档冲突处置"一节）。
   引用时必须说清两边口径。**"恢复的子代理被再次提醒"不在冲突之列**：那一条两边都不算错，
@@ -98,7 +107,7 @@ cd plugin/dsh-adg-token-budget && node --test test
 
 | 不变量 | 为什么单测兜不住 | 兜底方式 |
 |---|---|---|
-| **I3** | 除 `@deepseek-ai/*` 解析路径外，无法在无宿主的单测里"证明装载期没发生静态 import" | 人工 review 导出面 + 在真机部署位置（`$DSH_HOME/plugins/dsh-adg-token-budget/`，由 profile 的 `node_modules` 链接指向它）确认整行能挂起；变异表无对应项 |
+| **I3** | 除 `@deepseek-ai/*` 解析路径外，无法在无宿主的单测里"证明装载期没发生静态 import" | 人工 review 导出面 + 在真机部署位置（`$DSH_HOME/bundles/dsh-adg-token-budget/`，由 profile 的 `node_modules` 链接指向它、并由该 profile 的 `dsh.profile.bundles` 选中）确认整行能挂起；变异表无对应项 |
 | **I13** | 相对路径关闭文件日志这条分支**没有任何断言**（测试里只有"目录不可写"） | 人工 review `createLogger`；变异表无对应项 |
 
 ## 2. 状态机迁移矩阵（全表）
@@ -119,6 +128,12 @@ cd plugin/dsh-adg-token-budget && node --test test
 `activeRegistrations`）只由 `apply` 及其 disposer 写；任何"直接置状态"的写法都会让
 `applying the same context twice registers exactly one hook` 或
 `a second distinct context warns that the plugin is mounted twice` 失去意义。
+
+> **这两格是"进程内连调两次 `apply`"打出来的，别读成"宿主会挂两行"。** 真实宿主里跨层同 id
+> （bundle 行 + profile 层残留一条同 id 的旧 `- insert:` 手贴行）**不会**走到这两格：Loader 按 id
+> 合并成**一条**、只 `apply` 一次、条目总数不变（仍 190）—— **真机实测**（本机 2026-09-28），
+> 三条结论与逐字日志见 `INSTALL.md` 第 4 节第 6 条。残留的代价不是多一行，而是那一行的 `config:`
+> 被整块接管（实测 `dryRun` 被顶成 `true`）+ `patchId` 消失、`readOnlyReason: "unaddressable"`。
 
 ### 2.2 `ChildStepState`（一次驻留期的计数句柄）
 
@@ -163,37 +178,58 @@ cd plugin/dsh-adg-token-budget && node --test test
    `agentPreset` 与 `delegationDepth` 由 session header 写入，不来自名册。验证方式：
    改/增删专家行后重跑 `node tools/check-preset.mjs`（命令见根 `AGENTS.md`），
    并在一次真实委派后确认子代理转写里本插件的提醒仍出现。
+   **读转写核对注入必须按多帧处理**：`session.v4.jsonl.zstd` 是**多帧（multi-frame）**文件，
+   一次 `zlib.zstdDecompressSync(整个文件)` 只解出**第一帧**（= 只有 session 头那一行），
+   会把"提醒没出现"读成假阴性；要按 magic `28 B5 2F FD` 逐个偏移分别解压才是全部记录
+   （出处与本机数字：`docs/evidence.md` §15.5 与 §16.4，**真机实测**；本文不复制其口径细节）。
 2. **换 preset id 或改 `preset/preset.yml`**：id 来自生成 patch 里声明行的 `config.id`（值由
    `tools/gen-preset-bundle.mjs` 的 `PRESET_ID` 决定），`preset.yml` 只提供显示元数据、改它**不**动 id。
-   换 id 时必须同时改挂载行的 `presets:`（`examples/cordis.patch.yml` 里的
-   注释键），否则插件的 `presetIsGoverned` 会 fail-open —— 表现为**静默不提醒**，不是报错。
+   换 id 时必须同时改**挂载行里的 `presets:`** —— 那一行现在住在 **bundle 层**
+   （`plugin/dsh-adg-token-budget/cordis.patch.yml`，键参考与注释在 `examples/cordis.patch.yml`），
+   **改它要按重启处理**（`INSTALL.md` 第 3 节）。否则插件的 `presetIsGoverned` 会 fail-open
+   —— 表现为**静默不提醒**，不是报错。
    验证方式：新 preset id 下跑一次真实委派，确认 `logFile` 里出现决策行；没有决策行即命中此漂移。
 3. **怎么确认这份理解没漂移**：把插件侧的 header 读取路径与 `preset/agent.cordis.yml`
    （**唯一真相源**；生成物 `bundle/adg-preset/cordis.patch.yml` 由 `tools/gen-preset-bundle.mjs` 产出，
    装进 profile 后被注册的那一行才是运行期事实）对齐 —— 读一个真实子代理转写里的 header
-   （`session.v3.jsonl.zstd` 解压后）确认字段名与取值形态（`agentPreset` 为字符串、
-   `delegationDepth` 为安全整数）。字段名一旦变化，`presetIsGoverned` 会 fail-open 而
+   （`session.v3.jsonl.zstd` 解压后；**解压必须按多帧处理**，见本节第 1 条）确认字段名与取值形态
+   （`agentPreset` 为字符串、`delegationDepth` 为安全整数）。字段名一旦变化，`presetIsGoverned` 会 fail-open 而
    `isDelegatedChild` 会判成顶层 —— 两者都**不会抛错**，只能靠这条对齐发现。
+   **取值形态有本机实测对照**：`adg` 专家行委派出去的子代理 label 是 `adg/<uuid>`；而通用
+   `subagent` / `subagent_fork` 委派出去的子代理 header 记的是 `agentPreset: "cordis"`、
+   `delegationDepth: 1`（**真机实测**，2026-09-28，出处见 `docs/evidence.md` §16.4 与
+   `INSTALL.md` 第 4 节）。所以 `presets: ['adg']` 按设计**不治理**通用委派（fail open）——
+   **拿通用委派去验"提醒有没有出现"会得到假阴性**，要么走一次 Adg 专家委派，要么临时加一条
+   profile 覆盖行把 `presets` 写成 `['cordis']`。
 
-**部署集合的消费侧契约**：`INSTALL.md` 第 1 节声明"部署集合 = `package.json` + `src/` + `README.md` +
-`examples/` + `LICENSE`；`test/` 与 `INSTALL.md` 不进部署"，`install.ps1` / `install.sh` 消费这条事实。
-真正的定义在 `package.json` 的 `files`（`src` / `examples` / `README.md` / `LICENSE`，
-`package.json` 自身由 npm/拷贝脚本另行包含）。改动 `files` 时两处脱钩的发现方式：
+**部署集合的消费侧契约**：`INSTALL.md` 第 1 节声明"部署集合 = `package.json` + `cordis.patch.yml` +
+`src/` + `README.md` + `examples/` + `LICENSE` **六项**；`test/` 与 `INSTALL.md` 不进部署"，
+`install.ps1` / `install.sh` 消费这条事实。真正的定义在 `package.json` 的 `files`
+（`src` / `examples` / `cordis.patch.yml` / `README.md` / `LICENSE`，`package.json` 自身由 npm/拷贝脚本
+另行包含），并由 `dsh.bundle.patch: ./cordis.patch.yml` 声明那个文件是 bundle 层。
+**这一条现在有测试钉住**：`the package ships its own bundle patch and declares it` 断言 `files` 恰为
+那六项、`dsh.bundle.patch` 的值、以及那个文件真的存在且读得出行（见第 1 节末的补充表）。
+少拷 `cordis.patch.yml` 的后果不是"多带/少带一个文件"，而是**挂载行整个消失**：这个包退化成一条
+普通依赖，行静默不挂载。改动 `files` 时三处（`files`、`INSTALL.md` 第 1 节、两个脚本的拷贝清单）
+脱钩的发现方式：
 
 ```powershell
 cd D:\dsh\adg-multi-agent\plugin\dsh-adg-token-budget
-Select-String -Path .\package.json -Pattern '"src"|"examples"|"README.md"|"LICENSE"'
-Select-String -Path .\INSTALL.md -Pattern 'examples/|LICENSE|test/ 与 INSTALL.md'
-Select-String -Path ..\..\install.ps1,..\..\install.sh -Pattern 'examples|LICENSE|test|INSTALL.md'
+Select-String -Path .\package.json -Pattern '"src"|"examples"|"cordis.patch.yml"|"README.md"|"LICENSE"|"patch"'
+Select-String -Path .\INSTALL.md -Pattern 'examples/|LICENSE|cordis.patch.yml|test/ 与 INSTALL.md'
+Select-String -Path ..\..\install.ps1,..\..\install.sh -Pattern 'examples|LICENSE|cordis.patch.yml|test|INSTALL.md'
 ```
 
 判据：若 `package.json` 的 `files` 里新增/删除了名目，而 `INSTALL.md` 第 1 节与两个安装脚本的
-拷贝清单没跟着变，就是脱钩 —— 后果是"手动部署多带/少带了东西"或"部署出来的包与 npm 包不一致"。
+拷贝清单没跟着变，就是脱钩 —— 后果是"手动部署多带/少带了东西"或"部署出来的包与 npm 包不一致"，
+**而少带 `cordis.patch.yml` 是少带挂载行本身**。
 （本检查是**文本级**的：它证明不了拷贝逻辑正确，只证明三处名目一致。）
 
-**落点不在本节的判据里**：部署目标是稳定插件根 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`
-（由 profile 的 `node_modules` 链接指向它），**不是**共享的 `profiles/node_modules/` —— 后者在本版
-dsh 的模块解析里被排除（**实测**：放那儿解析不到、行挂不起来）。见 `design.md`「依赖关系」。
+**落点不在本节的判据里**：部署目标是稳定 bundle 根 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-token-budget/`
+（由 profile 的 `node_modules` 链接指向它，**并由该 profile 的 `dsh.profile.bundles` 选中** ——
+只 link 不选中，它的 patch 层根本不会被读），**不是**共享的 `profiles/node_modules/` —— 后者在本版
+dsh 的模块解析里被排除（**实测**：放那儿解析不到、行挂不起来）；旧落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`
+自 2026-09-28 起已废弃并由脚本清理。见 `design.md`「依赖关系」与 `INSTALL.md` 第 1、2 节。
 
 ## 4. 无破坏性路径的源码级检查
 
@@ -266,8 +302,19 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 - **更早更密的阶梯是否让子代理更快收敛**（量法见 `INSTALL.md` 第 4 节末；比 p50/p75/p90，不比均值）；
 - `dry-run step stage: …` 这类校准行是否在本机出现过（本机从未停留在校准态）；
 - **改目录名能否强制重新 `import`**（热重载不重新 import 已加载模块这条机制本身有真机实测支持，
-  但"改名目录可以绕过"这一对策从未验证过。现在的落点是 `$DSH_HOME/plugins/dsh-adg-token-budget/`
-  加一条 profile 内的 `link:`，改名还要同步链接与 profile 清单 —— 这件事同样**未观测**）。
+  但"改名目录可以绕过"这一对策从未验证过。现在的落点是 `$DSH_HOME/bundles/dsh-adg-token-budget/`
+  加一条 profile 内的 `link:`、并由该 profile 的 `dsh.profile.bundles` 选中，改名要同步这三处
+  —— 这件事同样**未观测**）；
+- **迁移成 bundle 之后，`presets: ['adg']` 对**真实 Adg 专家子代理**的注入**：未观测。
+  2026-09-28 那两条注入走的是临时覆盖行 `presets: ['cordis']` 下的通用委派（见上面第 3 节那条
+  取值形态对照）。量法：新对话里走一次 Adg 专家委派，或临时加 profile 覆盖行
+  `presets: ['adg']` + `stepTiers: [1, 2]`，看 `step stage: nudged … label=adg/…`；
+- **重启（冷启动）之后的 bundle 层**：未观测 —— 那次迁移是在**迁移前就起来的进程**里生效的，
+  触发点是改写 profile 清单带来的整份 patch 栈重读，**不是** bundle 层被 watch。
+  量法：重启 dsh → `plugin_manager list_bundles` 仍有 `dsh-adg-token-budget` 这一条 + 日志新出现一行
+  `activation: …`（`INSTALL.md` 第 4 节末）；
+- **`desktop` profile 生效**：未观测（它的 `patchReload` 不是 `live` ⇒ 要下次启动才生效）。
+  量法：启动 desktop profile → 看同一份日志的 `activation` 行。
 
 冲突登记：上表中与本次复核结果相冲突的原记载，**处置权在人类**——引用任何"是否观测过"的结论前，
 先读 `docs/evidence.md` §9（本节的权威来源）。

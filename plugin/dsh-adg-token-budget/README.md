@@ -13,13 +13,17 @@ The package name and the composed row id are now **historical**: `dsh-adg-token-
 `adg-token-budget` no longer describe what the plugin does, because **no token budget is
 enforced any more** （本次改动 removed the token stages — see
 [What was removed, and why](#what-was-removed-and-why)). The name was kept on purpose: the row
-id `adg-token-budget` — and therefore the hot-reload identity of the row in
-`profiles/<profile>/cordis.patch.yml` — does not change, and renaming it would be a deployment
-change with no behavioural benefit. The **deployment path did change** (2026-09-28): the package
-now lives at `$DSH_HOME/plugins/dsh-adg-token-budget/` and is `link:`ed into each
-preset-capable profile, because the shared root `$DSH_HOME/profiles/node_modules/` is
+id `adg-token-budget` — and therefore the hot-reload identity of that row — does not
+change, and renaming it would be a deployment change with no behavioural benefit. The
+**deployment path did change** (2026-09-28): the package
+now lives at `$DSH_HOME/bundles/dsh-adg-token-budget/` — an installed **bundle**, on the same root
+as `dsh-adg-preset` — is `link:`ed into each preset-capable profile and selected there by
+`dsh.profile.bundles`, because the shared root `$DSH_HOME/profiles/node_modules/` is
 **explicitly excluded** by this dsh version's module resolution (measured on this machine: a
-package left there does not resolve, and the row never mounts).
+package left there does not resolve, and the row never mounts). The mount row moved too: it is no
+longer a `- insert:` entry pasted into `profiles/<profile>/cordis.patch.yml` —
+the package ships it as its own **bundle patch layer** (`cordis.patch.yml` at the package root,
+declared by `dsh.bundle.patch` in `package.json`).
 
 ## The one stage
 
@@ -266,8 +270,9 @@ Concretely:
   were the only reason it ever needed `sessionProjections`, and the step count comes from the
   listener's own state.
 - **No static `import` of any `@deepseek-ai/*` package.** The plugin is deployed
-  as a plain directory under `$DSH_HOME/plugins/dsh-adg-token-budget/` (linked into
-  each profile's `node_modules`; **not** the shared `$DSH_HOME/profiles/node_modules/`
+  as a plain directory under `$DSH_HOME/bundles/dsh-adg-token-budget/` (installed as a bundle:
+  linked into each profile's `node_modules` and selected in that profile's `dsh.profile.bundles`;
+  **not** the shared `$DSH_HOME/profiles/node_modules/`
   root, which this dsh version's resolution excludes), so anything it
   needs from the harness is resolved at call time with `createRequire`, and every
   resolution failure is survivable (see below).
@@ -332,11 +337,18 @@ plugin directory. Anchor (1) wins — the live log line
 host — which is also the anchor that keeps working if a future profile layout
 puts a plugin-private `@deepseek-ai` shadow in the fallback directory.
 
-**Since 2026-09-28 the deployment path is `$DSH_HOME/plugins/dsh-adg-token-budget/`** (linked
-into each profile's `node_modules`; the shared `$DSH_HOME/profiles/node_modules/` root is
-excluded by this dsh version's module resolution, measured on this machine). Anchors 1–3 do not
-depend on where the plugin sits, so they carry over; **whether anchors 4–5 still resolve from the
-new directory is NOT observed** — do not read the paragraph above as covering the new path. The
+**Since 2026-09-28 the deployment path is `$DSH_HOME/bundles/dsh-adg-token-budget/`** (the
+package is installed as a **bundle**: linked into each profile's `node_modules` and selected in
+`dsh.profile.bundles`; the shared `$DSH_HOME/profiles/node_modules/` root is excluded by this dsh
+version's module resolution, measured on this machine). Anchors 1–3 do not depend on where the
+plugin sits, so they carry over. **真机实测（有日志为证）**: the first activation line written after
+the hand-pasted profile row was deleted and the bundle installed still reads
+`createUserMessage=profile-fallback:web` — anchor (1) winning, in a process whose only layer that
+could supply the row was the bundle layer (`C:\Users\cenqian\.dsh\adg-token-budget.log`,
+`2026-09-28T01:47:48.467Z`; that line also proves the shipped row's
+`!!js dshHomePath('adg-token-budget.log')` evaluated back to the same file). **Whether anchors 4–5
+still resolve from the new directory, and what the activation line looks like after a cold start on
+the bundle layer, is NOT observed** — do not read the paragraph above as covering the new path. The
 strategy that actually wins is reported verbatim in the activation line
 (`createUserMessage=<strategy>`); check that line on the machine after deploying instead of
 assuming `profile-fallback:<profile>`.
@@ -435,33 +447,118 @@ Guard rails, and their exact reach:
 ## Install and enable
 
 ```powershell
-# 1. copy the package to the STABLE plugin root — NOT the shared $DSH_HOME\profiles\node_modules
+# 1. install the BUNDLE — recommended route: `plugin_manager` action `install_bundle`, with
+#    `target` the absolute path of a stable copy of the package directory. It installs the
+#    package AND selects it in that profile's `dsh.profile.bundles`; do not re-implement those
+#    two steps in a shell.
+
+# 2. the manual route, equivalent to step 1: copy the package to the STABLE bundle root —
+#    NOT the shared $DSH_HOME\profiles\node_modules — then link it into the target profile and
+#    select it there (install.ps1 / install.sh do all of this for every preset-capable profile):
 Copy-Item -Recurse -Force `
   'D:\dsh\adg-multi-agent\plugin\dsh-adg-token-budget' `
-  "$env:DSH_HOME\plugins\dsh-adg-token-budget"
-#    then link it into the target profile (install.ps1 / install.sh do both steps for every
-#    preset-capable profile):
-#    cd "$env:DSH_HOME\profiles\web"; pnpm add "link:$env:DSH_HOME\plugins\dsh-adg-token-budget"
+  "$env:DSH_HOME\bundles\dsh-adg-token-budget"
+#    cd "$env:DSH_HOME\profiles\web"; pnpm add "link:$env:DSH_HOME\bundles\dsh-adg-token-budget"
+#    then add "dsh-adg-token-budget" to that profile's `dsh.profile.bundles`.
+#    Nothing is pasted any more: the mount row ships with the package, as the
+#    `cordis.patch.yml` at its root (the bundle patch layer). `examples/cordis.patch.yml`
+#    is now the key reference plus the template for a per-profile override.
 
-# 2. add the row from examples/cordis.patch.yml to the profile patch file
-#    $env:DSH_HOME\profiles\web\cordis.patch.yml
-#    the example ships `enabled: false`, so pasting it as-is arms nothing
-
-# 3. installed, inert:                   `enabled: false`
+# 3. installed, inert:                   `enabled: false` — no longer the factory state, so it
+#    takes a per-profile `- id: adg-token-budget` override row with EVERY key restated
 # 4. calibrate against your own traffic: `enabled: true` + `dryRun: true`
-# 5. arm the reminders for real:         `enabled: true` + `dryRun: false`
+# 5. arm the reminders for real:         `enabled: true` + `dryRun: false` — what the shipped
+#    bundle row already is, so selecting the bundle is the act that arms the plugin
 ```
 
-**The deployment root moved on 2026-09-28, and the old one is the trap.** A package left under
+**The deployment root moved on 2026-09-28, and the old ones are the trap.** A package left under
 `$DSH_HOME/profiles/node_modules/` (the "shared module root" older docs recommended) is
 **excluded** by this dsh version's module resolution — measured on this machine: it does not
-resolve and the row never mounts. Deploy to `$DSH_HOME/plugins/dsh-adg-token-budget/` and let
-`pnpm add link:` put the per-profile link in place. **Known limitation (measured)**: if `dsh` is
+resolve and the row never mounts. The interim landing this file pointed at until the migration —
+this package name sitting under `$DSH_HOME/plugins/` — went with it too: the package is a **bundle**,
+so it deploys to `$DSH_HOME/bundles/dsh-adg-token-budget/` (the same root `dsh-adg-preset` uses) and
+is selected per profile by `dsh.profile.bundles`. On this machine that interim directory has been
+deleted, once no profile's link was left pointing at it. Deploy to the bundle root and let
+`pnpm add link:` put the per-profile link in place — or let `plugin_manager install_bundle` do the
+link and the selection for you. **Known limitation (measured)**: if `dsh` is
 running, that `pnpm add` can fail outright (`os error 32` /
 `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR` — it wants to rebuild `node_modules` and the files
 are held open); `install.ps1` / `install.sh` report that line truthfully and continue, and a
 package that is already in place is not a failure. Close `dsh` first when you actually need the
 dependency step to run.
+
+**Delete the `- insert:` entry the hand-paste route left in the profile patch file.** A profile's
+own `cordis.patch.yml` is applied **after** every bundle layer, and a patch that names an existing
+id **replaces that row's whole `config` object** — never a deep merge. So a leftover `- insert:`
+entry silently wins over the shipped row, and a `- id: adg-token-budget` override that restates one
+key drops every other key back to `src/config.js`'s `DEFAULT_CONFIG`: an override has to restate
+**all** the keys it wants to keep. `install.ps1` / `install.sh` now only **report** such a leftover
+entry; they do not delete it, because they do not guess at a file the user has hand-edited. A
+machine-level `$DSH_HOME/cordis.patch.yml` remains the one place this row must never appear — it is
+applied to every profile on the machine and it blocks saving from the Plugins page (unchanged).
+
+**真机实测（有日志为证，`C:\Users\cenqian\.dsh\adg-token-budget.log`，UTC；台账：仓库
+`docs/evidence.md` §16.4 第 6 条）**: that takeover was measured by appending a **same-id**
+`- insert:` entry to the profile's own `cordis.patch.yml` while the bundle layer already carried the
+row, writing only `dryRun: true` and leaving every other key at its shipped value, letting the patch
+hot-reload, then deleting it. With the leftover present:
+`2026-09-28T02:31:45.335Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'`;
+after it was deleted:
+`2026-09-28T02:32:13.279Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'`.
+Three conclusions, and none of them is "the row got mounted twice":
+
+1. a leftover same-id `- insert:` row **does not add a second row** — `plugin_manager list_plugins`
+   still counted **190** entries and the log gained exactly **one** `activation:` line;
+2. it **takes over that row's entire `config:`** — `dryRun` came out `true`, which means **injection
+   stopped on the spot while the activation line still read `active`**. That is the hard part to
+   spot: the row looks healthy, and only the behaviour is gone;
+3. it **takes the row out of management** — while the leftover existed, `list_plugins` showed this
+   entry as `enabled: true` / `fiberPhase: active` with **`readOnlyReason: "unaddressable"`** and
+   **no `patchId` field at all**, so neither the Plugins page nor `set_plugin` could reach it; the
+   only way back was the patch file. Deleting the leftover restored
+   `patchId: adg-token-budget` and dropped `readOnlyReason`.
+
+**The check to run**: `list_bundles` **cannot see this leftover** — its `overrides` stayed `[]` — so
+the fastest signal is whether this row still carries a `patchId` in `list_plugins`. Do **not** cite
+this measurement as the §14.3 guardrail in `docs/evidence.md`: that one is about the **preset
+declaration row** (`preset-adg`) — "one id gets one home per profile, bundle **or** profile patch" —
+and it names the shape as dangerous without measuring what it does. What was measured here is the
+other thing: a **cross-layer same-id merge of a plugin row**, which the Loader **accepts** and
+resolves by replacing the whole `config` block.
+
+**真机实测（有日志为证，`C:\Users\cenqian\.dsh\adg-token-budget.log`，UTC；台账见仓库
+`docs/evidence.md` §16）**: deleting the
+hand-pasted row and installing the bundle left the plugin mounted and applying —
+`2026-09-28T01:47:48.467Z activation: active createUserMessage=profile-fallback:web presets=[adg]
+stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]
+stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'`. That line came
+from a process started **before** the migration (`install_bundle` had just rewritten the profile
+manifest), and by then the bundle layer was the only layer in that process able to supply the row,
+so it measures three things at once: the shipped row really mounts and `apply`s; the shipped
+`!!js dshHomePath('adg-token-budget.log')` evaluates to the same file the hand-pasted row wrote, so
+the log stays continuous; and **bundle layers are not read only at startup** — editing a profile's
+`cordis.patch.yml`, or that profile's manifest, re-reads the **whole patch stack** and the bundle
+layer comes along with it, which is exactly the path `install_bundle` takes. Separately, adding a
+profile-layer `- id: adg-token-budget` override (`stepTiers: [1, 2]`) and deleting it each
+hot-reloaded without a restart — `2026-09-28T01:57:12.041Z` carries `stepTiers=[1, 2]`,
+`2026-09-28T01:58:46.325Z` the factory ladder again.
+
+What none of that licenses is promising **"this takes effect without a restart"**. **Nothing watches
+`bundles/`**, so editing the bundle-layer `cordis.patch.yml` on its own triggers no re-read at all:
+the accepted route for such an edit — and the acceptance criterion for this package — stays
+**restarting `dsh`**, judged in a new session after the restart. Whether the bundle layer mounts
+after a **cold start** is **未观测**; the way to measure it is to restart `dsh`, then check that
+`plugin_manager list_bundles` still lists `dsh-adg-token-budget` while the log gains a fresh
+`activation:` line.
+
+Selecting the bundle is also what makes the row visible to the Plugin Manager: while the row was
+only hand-pasted into a profile patch, `list_bundles` had no entry for it at all, which is the
+direct reason the install "looked like it had not taken". Measured on this machine (2026-09-28)
+after the install: `list_bundles` lists `dsh-adg-token-budget` `0.3.0` (`enabled: true`,
+`installed: true`, `removable: true`) with row `adg-token-budget` (moduleName
+`dsh-adg-token-budget`, entryId `include:adg-token-budget`) and `overrides: []`, and `list_plugins`
+shows `include:adg-token-budget` `enabled: true` / `fiberPhase: active` / `patchId:
+adg-token-budget` with the entry total unchanged at 190 before and after — no duplicated row.
 
 **Step 5 is the end state.** With the cancel removed there is no `hardDryRun`, and nothing
 left in calibration afterwards: the only remaining knobs are the wording (`stepText`) and the
@@ -472,11 +569,12 @@ would have been reminded on: the line shape is in
 method on this machine is kept as history in
 [Removed token stages: the dry-run calibration data](#removed-token-stages-the-dry-run-calibration-data-history).
 
-Steps 3–5 are `config:` edits, and this profile is `patchReload: live`, so they are
+Steps 3–5 are `config:` edits — at the **profile** layer now, since the shipped row lives in the
+bundle layer — and this profile is `patchReload: live`, so they are
 picked up **without restarting `dsh`** — the host re-applies the row and writes a
 fresh `activation:` line. That is how the measured evidence in
 [What has been observed live](#what-has-been-observed-live-and-what-has-not) was
-produced.
+produced, and the override-row lines above repeat it on the post-migration row.
 
 **A code change is different, and this was measured rather than assumed:** the
 live reload re-applies the row but does **not** re-`import` a module the process
@@ -487,7 +585,18 @@ same edit; the host re-applied the row (the new `dryRun` value appeared in a new
 `stepTiers=`, no `stepText=`. Node's ESM registry is keyed by resolved file
 URL, and that URL had not changed. So:
 
-- after changing **`config:` only** — no restart;
+- after changing **`config:` in a profile-layer override row** — no restart;
+- after changing **the shipped mount row in the bundle layer**
+  (`$DSH_HOME/bundles/dsh-adg-token-budget/cordis.patch.yml`) — **restart `dsh`**: **nothing
+  watches `bundles/`, so editing that file on its own triggers no re-read**. Touching the
+  profile's own `cordis.patch.yml` **or the profile manifest** re-reads the whole patch stack and
+  the bundle layer comes along with it — 真机实测（有日志为证）, the `2026-09-28T01:47:48.467Z`
+  line quoted above, written by a process started before the migration — so bundle layers are
+  **not** read only at startup. That is a description of what re-reads, **not** permission to
+  promise "no restart needed": the acceptance route stays the restart, and whether the bundle
+  layer mounts after a cold start is **未观测** (measure: restart `dsh`, then check
+  `plugin_manager list_bundles` still lists `dsh-adg-token-budget` and the log gains a fresh
+  `activation:` line);
 - after changing **any file under `src/`** — restart `dsh`, then confirm the new
   code is really loaded by checking that the `activation:` line carries the current fields
   (`stepNudge=`, `stepTiers=`, `stepText=`, `dryRun=`) and **none of the removed ones**
@@ -506,20 +615,28 @@ you are rolling this out:
    injected on step counts rather than on money, the failure mode of doing this in the
    wrong order is a reminder in the wrong wording or on the wrong ladder, not a truncated
    child — which is exactly what the removal bought.
-2. The `examples/cordis.patch.yml` claim "`enabled: false` ships on purpose" is
-   true of the file as shipped.
+2. The row the **bundle** ships is **armed** (`enabled: true` + `dryRun: false`). The
+   `enabled: false` in `examples/cordis.patch.yml` now says only that the *example file* is inert;
+   it is no longer a statement about what selecting the bundle does.
 
 To run the suite in a sandboxed shell that blocks piped stdio, use
 `node --test --test-isolation=none test`: Node's default test runner spawns one
 child per file with piped stdio, which such a sandbox rejects with `EPERM`. The
 suite is unchanged either way; only the runner's process model differs.
 
-The deployment set is `package.json`, `src/`, `README.md`, `examples/` and
-`LICENSE`; `test/` and `INSTALL.md` are repository-only and do not belong in
+The deployment set is `package.json`, `src/`, `README.md`, `examples/`,
+`LICENSE` and `cordis.patch.yml` — six items, matching `files` in `package.json`, because
+`cordis.patch.yml` **is** the mount row: without it the package is an ordinary dependency.
+`test/` and `INSTALL.md` are repository-only and do not belong in
 `$DSH_HOME`. `install.ps1` / `install.sh` copy that set to
-`$DSH_HOME/plugins/dsh-adg-token-budget/` (the stable root — **not** the shared
-`profiles/node_modules`), link it into every preset-capable profile, and do the row insertion
-idempotently (backing the patch file up as `cordis.patch.yml.bak-adg-token-budget`).
+`$DSH_HOME/bundles/dsh-adg-token-budget/` (the stable bundle root — **not** the shared
+`profiles/node_modules`, and no longer the `plugins/` landing this file pointed at until the
+bundle migration), link it into every preset-capable profile with
+`link:$DSH_HOME/bundles/dsh-adg-token-budget` and select it in that profile's
+`dsh.profile.bundles` (backing the profile's `package.json` up as
+`package.json.bak-adg-token-budget`). They no longer insert a patch row, and a `- insert:` entry
+left by the old hand-paste route they **only report** — they do not delete it, because they do not
+guess at a file the user has hand-edited.
 
 Model the `package.json` shape on `dsh-windows-notifier`: it is a valid ESM
 package (`type: module`, `main: src/plugin.js`, an `exports` map, `files`,
@@ -574,12 +691,17 @@ a `LICENSE` file that actually exists, which `npm pack --dry-run --json` lists.
 
 ## What has been observed live, and what has not
 
-The plugin is **deployed and mounted** on this machine, mounted from
-`C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml`, and a running `dsh`
-loaded it. The log file `C:\Users\cenqian\.dsh\adg-token-budget.log` is the
+The plugin is **deployed and mounted** on this machine, mounted from the bundle patch layer
+`C:\Users\cenqian\.dsh\bundles\dsh-adg-token-budget\cordis.patch.yml` — the hand-pasted entry in
+`C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml` was deleted in the 2026-09-28 migration, and
+the `activation:` line quoted in the Install section above is the measurement that the bundle-layer
+row still mounts and applies — and a running `dsh` loaded it. The log file
+`C:\Users\cenqian\.dsh\adg-token-budget.log` is the
 measurement. **Path note (2026-09-28)**: the package now sits at
-`C:\Users\cenqian\.dsh\plugins\dsh-adg-token-budget` (linked into the profile); every log
-excerpt and measurement below was produced while it sat at the **older** path
+`C:\Users\cenqian\.dsh\bundles\dsh-adg-token-budget` (installed as a bundle: linked into the
+profile and selected in `dsh.profile.bundles`), having passed through one interim landing under
+`C:\Users\cenqian\.dsh\plugins\`; every log
+excerpt and measurement below was produced while it sat at a path **older** than either —
 `C:\Users\cenqian\.dsh\profiles\node_modules\dsh-adg-token-budget`. Read them as measurements
 of the same code under an older directory layout — not as evidence about the current path.
 
@@ -886,7 +1008,13 @@ child and replacing the built-in body entirely; the activation line reporting
 `stepText=builtin|custom`; `dryRun` logging every due checkpoint while consuming no tier and
 still counting steps; the delegation-first ordering, and a downstream failure being rethrown
 rather than turned into a pass-through; a hostile logger and an unwritable `logFile`; and the
-per-session map being released on both `subagent/end` and disposal.
+per-session map being released on both `subagent/end` and disposal. Since the mount row became
+part of the package, the suite also pins the **deployment shape**: `package.json` declares
+`dsh.bundle.patch` and that file really exists, `files` is exactly the six-item deploy set, the
+bundle layer carries **one** mount row for this package and it ships armed (`enabled: true`), and
+none of the retired token keys may reappear in the effective row. Measured here 2026-09-28:
+`node --test --test-isolation=none test` → `tests 54 / pass 54 / fail 0` (51 before those three
+cases; `testing-guide.md` 第 0 节 owns the command and its counts).
 
 ### Mutation verification (what the suite would NOT catch)
 

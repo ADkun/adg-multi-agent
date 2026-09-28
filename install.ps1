@@ -9,6 +9,8 @@
 # 一个 bundle：包清单声明 dsh.bundle.patch，patch 里 insert 一行 @deepseek-ai/dsh-agent-preset
 # 声明（id/name/description/order/plugins）。本脚本：生成 bundle → 放到 $DSH_HOME\bundles\ →
 # 装进目标 profile 的 node_modules 并写进该 profile 的 dsh.profile.bundles。
+# 插件 dsh-adg-token-budget 自 2026-09-28 起是**同一个形状**：它的挂载行由包自己的
+# cordis.patch.yml 提供（旧装法是把行手贴进 profile 的 patch 层，那条路已废弃，脚本只负责报告残留）。
 param(
   [string[]]$Profiles,
   [switch]$SkipPackages
@@ -27,7 +29,10 @@ $skillDest = Join-Path $root 'skills\adg-add-agent'
 $bundleName = 'dsh-adg-preset'
 $bundleStable = Join-Path $root "bundles\$bundleName"
 $pluginName = 'dsh-adg-token-budget'
-$pluginStable = Join-Path $root "plugins\$pluginName"
+# 2026-09-28：插件也走 bundle —— 落点与 preset 同为 $DSH_HOME\bundles\，挂载行由包自己的
+# cordis.patch.yml（package.json 的 dsh.bundle.patch）提供，不再手贴进 profile 的 patch 层。
+$pluginStable = Join-Path $root "bundles\$pluginName"
+$pluginLegacyStable = Join-Path $root "plugins\$pluginName"
 
 # ── 目标 profile ────────────────────────────────────────────────────────────────
 # 默认：能装 preset 的所有 profile —— 判据是它的 bundle 列表里有 @deepseek-ai/dsh-web-app，
@@ -79,11 +84,14 @@ New-Item -ItemType Directory -Force -Path $bundleStable | Out-Null
 Copy-Item -LiteralPath (Join-Path $here 'bundle\adg-preset\cordis.patch.yml') -Destination $bundleStable -Force
 Copy-Item -LiteralPath (Join-Path $here 'bundle\adg-preset\package.json') -Destination $bundleStable -Force
 
-# ── 4. 插件：拷到稳定位置（同上去掉仓库依赖），挂载行写进 profile 自己的 patch 层 ──
+# ── 4. 插件：作为 bundle 拷到稳定位置（同上去掉仓库依赖）────────────────────────
+# 部署集合六项 = package.json / cordis.patch.yml / src / examples / README.md / LICENSE
+# （与插件 package.json 的 files 一致；test\ 与 INSTALL.md 不进部署）。
+# cordis.patch.yml 是这一层的第六项：它就是挂载行本身，缺了它这个包只是普通依赖。
 $pluginSrc = Join-Path $here "plugin\$pluginName"
 if (Test-Path -LiteralPath $pluginStable) { Remove-Item -LiteralPath $pluginStable -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pluginStable | Out-Null
-foreach ($item in 'package.json', 'src', 'README.md', 'examples', 'LICENSE') {
+foreach ($item in 'package.json', 'cordis.patch.yml', 'src', 'examples', 'README.md', 'LICENSE') {
   Copy-Item -LiteralPath (Join-Path $pluginSrc $item) -Destination $pluginStable -Recurse -Force
 }
 
@@ -152,65 +160,78 @@ foreach ($name in $Profiles) {
     $installNotes += "$name : 已把 $bundleName 加进 dsh.profile.bundles（原文件备份 $manifest.bak-adg-bundle）"
   }
 
-  # 4c. 挂载行写进该 profile 自己的 patch 层（热重载），不动机器级的 $root\cordis.patch.yml：
-  # 机器级那一层套在每个 profile 上（web / headless / sdk / 自建），而这个插件只对 adg preset 的
-  # 子代理生效，装到机器级等于让每个 profile 都去 import 它。要全机生效就把同一行搬过去。
-  # 同一个判据管插件行：包不在 node_modules 里就只报告、不写挂载行（否则 profile 会指向没装上的包）。
-  if (-not (Test-Path -LiteralPath (Join-Path $profileDir "node_modules\$pluginName\package.json"))) {
-    $patchNotes += "$name : $pluginName 还没装进这个 profile 的 node_modules —— 未注册挂载行（先解决上一条的 pnpm 失败）"
+  # 4c. 插件 bundle 同样要选进 dsh.profile.bundles —— 挂载行现在由包自己的 cordis.patch.yml
+  # 提供（package.json 的 dsh.bundle.patch），profile 的 patch 层不再需要那条手贴的 insert 行。
+  # 判据比"包在不在 node_modules 里"更严：装上的那份必须真的声明 dsh.bundle.patch。pnpm 失败时
+  # 链接可能还指着旧落点 plugins\<pluginName>\，那份 package.json 没有 dsh.bundle.patch，
+  # 把它写进列表只会让 dsh 启动时选到一个没有 patch 层的 bundle。
+  # 不动机器级的 $root\cordis.patch.yml：那一层套在每个 profile 上（web / headless / sdk / 自建），
+  # 而这个插件只对 adg preset 的子代理生效，选进机器级等于让每个 profile 都去 import 它。
+  $pluginPkg = Join-Path $profileDir "node_modules\$pluginName\package.json"
+  $pluginLayer = $null
+  if (Test-Path -LiteralPath $pluginPkg) {
+    $pluginManifest = Get-Content -LiteralPath $pluginPkg -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($pluginManifest.dsh -and $pluginManifest.dsh.bundle) { $pluginLayer = $pluginManifest.dsh.bundle.patch }
+  }
+  if (-not $pluginLayer) {
+    $packageFailed = $true
+    $patchNotes += "$name : 装上的 $pluginName 没有声明 dsh.bundle.patch —— 未写入 dsh.profile.bundles（链接多半还指着旧落点 $pluginLegacyStable；关掉 dsh 重跑本脚本）"
     continue
   }
+  # 旧机制留下的手贴挂载行必须删：profile 层是 bundle 层之后应用的，一条 `- insert:` 会再插入
+  # 一行同 id 的条目；而按 id 覆盖时 config 是整块替换、不是深合并，留着它就把 bundle 行的
+  # config 换掉了（阶梯 / enabled 全回到插件出厂默认）。这里只报告、不代删。
   $patchFile = Join-Path $profileDir 'cordis.patch.yml'
-  if (-not (Test-Path -LiteralPath $patchFile)) {
-    $patchNotes += "$name : 未找到 $patchFile，跳过挂载行注册（请手工把 plugin\$pluginName\examples\cordis.patch.yml 的行贴上去）"
-    continue
+  if (Test-Path -LiteralPath $patchFile) {
+    # -Encoding UTF8 不能省：Windows PowerShell 5.1 的 Get-Content 默认按系统 ANSI 代码页读，
+    # 用户自己在注释头里写的中文会被读成乱码再被原样写回去（5.1 下实测）。
+    $patchLines = @(Get-Content -LiteralPath $patchFile -Encoding UTF8)
+    # 在已经解码的行里找，不用 Select-String：5.1 上按 ANSI 解码时，一个残缺的前导字节
+    # 可能把紧跟其后的 ASCII 首字母一起吞掉，导致明明存在的行匹配不上。
+    # 两种形状都要抓到：旧机制写的是 `- insert:` 里缩进的 `    - id: adg-token-budget`，
+    # Plugins 页保存的是顶层的 `- id: adg-token-budget`。Trim 之后两者同形，一次比较就够。
+    $handRows = @($patchLines | Where-Object { $_.Trim() -eq '- id: adg-token-budget' })
+    if ($handRows.Count -gt 0) {
+      $patchNotes += "$name : $patchFile 里还有旧机制手贴的挂载行（$($handRows.Count) 处）—— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
+    }
   }
-  # -Encoding UTF8 不能省：Windows PowerShell 5.1 的 Get-Content 默认按系统 ANSI 代码页读，
-  # 用户自己在注释头里写的中文会被读成乱码再被原样写回去（5.1 下实测）。
-  $lines = @(Get-Content -LiteralPath $patchFile -Encoding UTF8)
-  # 在已经解码的行里找，不用 Select-String：5.1 上按 ANSI 解码时，一个残缺的前导字节
-  # 可能把紧跟其后的 ASCII 首字母一起吞掉，导致明明存在的行匹配不上。
-  if (@($lines | Where-Object { $_.Contains($pluginName) }).Count -gt 0) {
-    $patchNotes += "$name : 挂载行已在 cordis.patch.yml 里（未改动；enabled 的值以该文件为准）"
-    continue
+  $json = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+  $bundles = @($json.dsh.profile.bundles)
+  if ($bundles -contains $pluginName) {
+    $patchNotes += "$name : $pluginName 已在 dsh.profile.bundles 里（挂载行来自 $pluginLayer）"
+  } else {
+    Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force
+    $json.dsh.profile.bundles = @($bundles + $pluginName)
+    [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
+    $patchNotes += "$name : 已把 $pluginName 加进 dsh.profile.bundles（原文件备份 $manifest.bak-adg-token-budget）"
   }
-  $backup = "$patchFile.bak-adg-token-budget"
-  Copy-Item -LiteralPath $patchFile -Destination $backup -Force
-  # 全新 profile 的 patch 层是空数组字面量 `[]`：把它换成我们的块。已被手工改过的文件
-  # （末行不是 `[]`）就按追加处理，不再要求"末行必须是 []"。
-  $head = $lines
-  if ($lines.Count -gt 0 -and $lines[$lines.Count - 1].Trim() -eq '[]') {
-    $head = @()
-    if ($lines.Count -gt 1) { $head = $lines[0..($lines.Count - 2)] }
+}
+
+# ── 5. 旧落点 plugins\<pluginName>\ 的清理 ────────────────────────────────────────
+# 只有"没有任何 profile 的链接还指着它"时才删：pnpm 那一步失败时链接可能仍指向旧目录，
+# 删掉会让那个 profile 启动时解析不到包（判据用链接目标，不用"包在不在"）。
+$legacyNote = '旧落点不存在'
+if (Test-Path -LiteralPath $pluginLegacyStable) {
+  $legacyUsers = @()
+  foreach ($name in $Profiles) {
+    $link = Join-Path (Join-Path $profilesDir $name) "node_modules\$pluginName"
+    if (-not (Test-Path -LiteralPath $link)) { continue }
+    $target = (Get-Item -LiteralPath $link).Target
+    if ("$target" -notlike "*bundles\$pluginName") { $legacyUsers += $name }
   }
-  $row = @(
-    '# 步数收敛检查点：按 4/8/12/…/280 的阶梯给 Adg 专家子代理注入可选收敛提醒。',
-    '# 提醒是"自己选：收尾汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。',
-    '# 按累计 token 介入的两档（软档收尾提醒 + 硬档 agent.cancel）已整体移除：输出型任务本来就需要那么多 token，',
-    '#   按阈值砍只会截断产出。插件现在既不注入任何 token 触发的消息，也从不 agent.cancel（详见 README）。',
-    '# enabled: false 表示已挂载但不动作。改 config: 热重载立即生效；但换过 src\ 里的代码之后必须重启 dsh',
-    '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块）。',
-    '# 推荐上线顺序：enabled: true + dryRun: true 校准 → dryRun: false（提醒真的注入）。没有硬档要武装了。',
-    '# 想调措辞：写 stepText（config: 改动，热重载、不用重启）；激活行会写 stepText=builtin|custom。',
-    '- insert:',
-    "    - id: adg-token-budget",
-    "      name: '$pluginName'",
-    '      config:',
-    '        enabled: false',
-    "        presets: ['adg']",
-    '        stepNudge: true',
-    '        stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]',
-    "        logFile: '$(Join-Path $root 'adg-token-budget.log')'"
-  )
-  # 不带 BOM 的 UTF-8 + LF：与 dsh 自己生成的 patch 文件逐字节一致（-Encoding UTF8 在 5.1 下会写 BOM）。
-  [System.IO.File]::WriteAllText($patchFile, (($head + $row) -join "`n") + "`n", $utf8NoBom)
-  $patchNotes += "$name : 已加入挂载行（enabled: false），原文件备份为 $backup"
+  if ($legacyUsers.Count -eq 0) {
+    Remove-Item -LiteralPath $pluginLegacyStable -Recurse -Force
+    $legacyNote = "已删除旧落点 $pluginLegacyStable"
+  } else {
+    $legacyNote = "旧落点 $pluginLegacyStable 未删除：$($legacyUsers -join ', ') 的链接还指着它（关掉 dsh 重跑本脚本）"
+  }
 }
 
 Write-Host "已安装到 dsh 用户根：$root"
 Write-Host "  skill   -> $skillDest"
 Write-Host "  bundle  -> $bundleStable（生成物来自 preset\preset.yml + preset\agent.cordis.yml）"
-Write-Host "  plugin  -> $pluginStable"
+Write-Host "  plugin  -> $pluginStable（bundle：挂载行来自它自己的 cordis.patch.yml）"
+Write-Host "  legacy  -> $legacyNote"
 Write-Host "  browser -> $browserNote"
 foreach ($note in $installNotes) { Write-Host "  profile -> $note" }
 foreach ($note in $patchNotes) { Write-Host "  patch   -> $note" }
@@ -218,12 +239,14 @@ Write-Host ""
 Write-Host "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 Write-Host "（preset 走的是一条独立的 patch 层：`dsh --profile <name> --dump-config` 能确认它被读到，"
 Write-Host "  但只有真的新建一个会话才算挂载成功 —— 静态文件与 --dump-config 都证明不了挂载。）"
-Write-Host "（插件行是另一回事：profile 的 cordis.patch.yml 改 config: 热重载、不用重启；"
-Write-Host "  但换过插件 src\ 里的代码之后必须重启 —— 热重载不会重新 import 已加载的模块。）"
+Write-Host "（插件行现在来自 bundle 层：没有任何东西 watch bundles\，单独改 bundles\$pluginName\cordis.patch.yml"
+Write-Host "  不会自己触发重读 —— 以**重启 dsh** 为准。换过插件 src\ 里的代码同样必须重启（热重载不重新 import）。"
+Write-Host "  只想改本机这一份 config：在 Plugins 页保存，它写的是 profile 的 cordis.patch.yml，"
+Write-Host "  热重载立即生效；注意那条覆盖行整块替换 config、不是深合并，要留的键都得重写。）"
 Write-Host "（browser/ 工具链又是另一回事：用户根下的普通文件，重新跑本脚本即生效，不用重启 dsh。）"
 if ($packageFailed) {
   Write-Host ""
-  Write-Host "注意：至少有一步 pnpm 没成功，preset bundle 可能还没装进 profile（上面的 profile 行里写明了）。" -ForegroundColor Yellow
+  Write-Host "注意：至少有一步 pnpm 没成功，$bundleName / $pluginName 可能还没装进 profile（上面的 profile 与 patch 行里写明了）。" -ForegroundColor Yellow
   Write-Host "先关掉正在运行的 dsh（它占着 node_modules 里的文件，pnpm 无法重建目录），再重跑本脚本。" -ForegroundColor Yellow
   exit 2
 }

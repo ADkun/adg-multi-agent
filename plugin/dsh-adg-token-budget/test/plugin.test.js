@@ -1118,3 +1118,93 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   assert.doesNotMatch(STEP_CHOICE_BODY, /不要再调用探索类工具/)
   assert.doesNotMatch(STEP_CHOICE_BODY, /请立即停止探索并汇报/)
 })
+
+// ---------------------------------------------------------------------------
+// The bundle layer: this package's own `cordis.patch.yml` is the mount row
+// ---------------------------------------------------------------------------
+//
+// Since 2026-09-28 the row is no longer pasted by hand into
+// `$DSH_HOME/profiles/<profile>/cordis.patch.yml`: the package declares
+// `dsh.bundle.patch`, and a profile selects the bundle through
+// `dsh.profile.bundles`. That makes the row's *contents* part of the shipped
+// artifact, so they are pinned here the same way the code is.
+//
+// This is a line scanner, not a YAML parser (the same trade
+// `tools/check-preset.mjs` makes): it proves the row declares what we intend and
+// that nothing retired crept back in. That the composed profile actually mounts
+// is a live-environment fact — `INSTALL.md` carries those criteria.
+
+/** Read a file that sits beside the package manifest, as text lines. */
+function readPackageFile(relative) {
+  return readFileSync(new URL(relative, new URL('../', import.meta.url)), 'utf8').split(/\r?\n/)
+}
+
+/** Every non-comment line of the mount row's `config:` block. */
+function bundleRowConfigLines(lines) {
+  const out = []
+  let inConfig = false
+  for (const line of lines) {
+    if (/^\s*#/.test(line) || /^\s*$/.test(line)) continue
+    if (/^\s+config:\s*$/.test(line)) { inConfig = true; continue }
+    if (!inConfig) continue
+    // The block ends at the first line that is not a deeper-indented mapping
+    // entry: this file puts `config:` last, so one forward scan is enough.
+    if (!/^ {8}\S/.test(line)) { inConfig = false; continue }
+    out.push(line.trim())
+  }
+  return out
+}
+
+test('the package ships its own bundle patch and declares it', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(manifest.dsh?.bundle?.patch, './cordis.patch.yml')
+  // The declared path must actually exist — a manifest pointing at a missing
+  // patch file installs as a plain dependency, and the row silently never mounts.
+  assert.ok(bundleRowConfigLines(readPackageFile('./cordis.patch.yml')).length > 0)
+  // The deploy set and `files` are one list: `install.*` copies exactly these six
+  // items to the stable root, and a key that is not deployed cannot be read.
+  assert.deepEqual(manifest.files, ['src', 'examples', 'cordis.patch.yml', 'README.md', 'LICENSE'])
+})
+
+test('the bundle row is the mount row: one row, this package, armed by default', () => {
+  const lines = readPackageFile('./cordis.patch.yml')
+  const rows = lines.filter((line) => line.trim() === '- id: adg-token-budget')
+  assert.equal(rows.length, 1, 'the patch must carry exactly one mount row')
+  assert.ok(
+    lines.some((line) => line.trim() === "name: 'dsh-adg-token-budget'"),
+    'the row must name this package',
+  )
+  const config = bundleRowConfigLines(lines)
+  const keys = config.map((line) => line.split(':')[0].trim())
+  // Every key must be one `normalizeConfig` actually reads: an unknown key is
+  // silently ignored, so a typo here is a config that never takes effect.
+  for (const key of keys) {
+    assert.ok(Object.keys(DEFAULT_CONFIG).includes(key), `${key} is not a key the plugin reads`)
+  }
+  // `stepText` is deliberately absent: the row ships the built-in choice body.
+  assert.ok(!keys.includes('stepText'), 'the shipped row uses the built-in wording')
+  assert.ok(config.includes('enabled: true'), 'selecting the bundle is the act of arming it')
+  assert.ok(config.includes('dryRun: false'), 'the shipped row injects; calibration is a per-profile choice')
+  // A per-machine path does not belong in a bundle layer: the Loader evaluates
+  // this expression against the row context, so the log lands under whatever
+  // `$DSH_HOME` that instance resolved.
+  assert.ok(
+    config.some((line) => line.startsWith('logFile: !!js dshHomePath(')),
+    'logFile must be resolved, not hardcoded to one author machine',
+  )
+})
+
+test('the bundle row cannot resurrect the retired token stages', () => {
+  // Comments are excluded on purpose: this file *documents* the retired keys, and
+  // only the effective lines could ever re-arm them.
+  const effective = readPackageFile('./cordis.patch.yml')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n')
+  // The retired keys are still *tolerated* at load time (an older composition
+  // must not break), which is exactly why scanning the row is the only guard:
+  // nothing in the code complains if one of them comes back.
+  for (const retired of Object.keys(RETIRED_CONFIG)) {
+    assert.doesNotMatch(effective, new RegExp(`^\\s+${retired}:`, 'm'), `${retired} was removed with its stage`)
+  }
+  assert.doesNotMatch(effective, /agent\.cancel|hardDryRun/)
+})

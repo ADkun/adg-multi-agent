@@ -91,7 +91,7 @@ node tools/gen-preset-bundle.mjs   # 生成 bundle/adg-preset/{cordis.patch.yml,
 
 - 插件默认配置 `presets: Object.freeze(['adg'])` —— `plugin/dsh-adg-token-budget/src/config.js:43`；
 - 判定 `presets.includes(session.header.agentPreset)` —— `plugin/dsh-adg-token-budget/src/budget.js:66-69`；
-- 装上时的挂载行由 `install.ps1` 写入，值为 `presets: ['adg']`；
+- 挂载行的 `presets: ['adg']` 现在写在**插件包自己的 bundle 层** `plugin/dsh-adg-token-budget/cordis.patch.yml`（2026-09-28 起；旧形状是 `install.ps1` 把同一行手贴进 profile 的 `cordis.patch.yml`）；
 - preset id **取自生成 patch 里那一行声明行的 `config.id`**（不再是目录名）—— 值由 `tools/gen-preset-bundle.mjs` 的 `PRESET_ID` 决定，`preset/preset.yml` 只提供显示元数据 `name` / `description` / `order`（缺 `order` 时生成器用它的 `DEFAULT_ORDER`）。**源码级事实**：旧口径（id = 目录名，须匹配 `^[a-z0-9][a-z0-9-]*$`）随 `@deepseek-ai/dsh-agent-presets`（复数）一起消失（**实测**，dsh 0.1.7-rc.2）。
 
 因此三条断言：

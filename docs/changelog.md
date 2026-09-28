@@ -9,7 +9,30 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（上午 08:50+08:00，本文件最新的一条）— 同一个 dsh 升级的**第三个**成因：session format v4 废弃 `{kind:'plugin', plugin}`，插件注入检查点让**每一次委派**当场失败
+## 2026-09-28（上午 10:00+08:00，本文件最新的一条）— `dsh-adg-token-budget` 从手贴挂载行迁移成 bundle：挂载行改由包自己声明，落点并入 `$DSH_HOME/bundles/`
+
+- 挂载行来源：手贴进 `profiles/<profile>/cordis.patch.yml` 的 `- insert:` 条目 → 包自己的 `plugin/dsh-adg-token-budget/cordis.patch.yml`（**bundle 层**），由 `package.json` 的 `dsh.bundle.patch: ./cordis.patch.yml` 声明。
+- 部署落点：`$DSH_HOME/plugins/dsh-adg-token-budget/` → `$DSH_HOME/bundles/dsh-adg-token-budget/`（与 `dsh-adg-preset` 同一根）；profile 依赖 spec 同步由 `link:$DSH_HOME/plugins/dsh-adg-token-budget` 改成 `link:$DSH_HOME/bundles/dsh-adg-token-budget`；旧落点目录已删除（`install.ps1` 第 5 步：只有没有任何 profile 的链接指着它才删）。
+- 选中方式：新增"写进该 profile 的 `dsh.profile.bundles`"；profile 层不再出现挂载行。
+- 部署集合：五项（`package.json` / `src` / `README.md` / `examples` / `LICENSE`）→ **六项**，加的正是 `cordis.patch.yml`（= 挂载行本身）；与 `package.json` 的 `files` 一致；`test/` 与 `INSTALL.md` 仍不进部署。
+- 版本 `0.2.0` → `0.3.0`。
+- bundle 行的默认 config：例子文件 `enabled: false`（要人来武装）→ **出厂即武装**：`enabled: true`、`presets: ['adg']`、`stepNudge: true`、`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`、`dryRun: false`、不写 `stepText`（用内置正文）、`logFile: !!js dshHomePath('adg-token-budget.log')`。
+- `logFile` 写法：每 profile 硬编码绝对路径 → `!!js dshHomePath('adg-token-budget.log')`（Loader 求值，任何机器都落到 `$DSH_HOME/adg-token-budget.log`）。
+- `examples/cordis.patch.yml` 的角色："可直接贴进 profile patch 层的挂载行" → **键参考 + 手工覆盖模板**（贴之前必须重写全部键）。
+- 层序与"整块替换"写进台账：profile 自己的 `cordis.patch.yml` 在**所有 bundle 层之后**应用；按 id 命中的 patch **整块替换** `config`（不是深合并），覆盖行必须整块重写所有键。
+- 热重载口径分层：**没有任何东西 watch `bundles/`** ⇒ 单独改 bundle 层的 `cordis.patch.yml` 不会自己触发重读，这一层以**重启 dsh** 为生效口径（禁止宣称"不重启也会生效"）；改一次 profile 的 `cordis.patch.yml` 或 profile 清单会让**整份 patch 栈重读**、顺带重读 bundle 层；改 profile 层的 `config:` 覆盖行**热重载**（`web` 是 `patchReload: live`，Plugins 页保存写的就是这一层）；改 `src/` 代码**必须重启**（不变）；行 id 与包名都没改 ⇒ 热重载身份不变。
+- 测试：`cd plugin/dsh-adg-token-budget && node --test test` **51 → 54** 个用例（新增三条钉住 bundle 挂载行形状的用例：包声明 `dsh.bundle.patch` 且文件存在 / 部署集合等于 `files` 六项 / bundle 行只有一条挂载行且出厂武装、旧 token 键不得回到生效行）。本机实测 **检验档**：`tests 54 / pass 54 / fail 0`（DSH 沙箱里要加 `--test-isolation=none`，见根 `AGENTS.md` 质量门第 2 条）。
+- `install.ps1` / `install.sh`：旧的 `- insert:` 行必须删，脚本改成**只报告、不代删**（不猜用户手改过的文件）。
+- 本机 profile：`web` 与 `desktop` 各加 `dsh.profile.bundles` 一条、`link:` 改指 bundle 落点、手贴行删除（备份 `cordis.patch.yml.bak-adg-token-budget-bundle-migration`，`desktop` 另有 `package.json.bak-adg-token-budget`）；`headless` 不含 `@deepseek-ai/dsh-web-app`，按判据跳过。
+- `docs/evidence.md`：新增 **§16**（机制对照表 + 本次本机日志行 + 顺带量到的两个技术事实 + 迁移后的本机状态与未观测 + 检验档那条测试数）；「证据来源」表"活行"一行改口成 bundle 层落点；§7 惰性旧键标注为手贴行时代的**历史状态**；§8 未观测清单补四条；§14.5 的旧落点与 `profiles/node_modules` 那段标注为**历史证据、不代表当前落点**（原文保留）；§15.5 补一句"多帧同日第二次确认"的指针。
+- `docs/evidence.md` §16.4 新增第 5 条**真机实测**：profile 层一条只写 `disabled: true`（不带 `config:`）的覆盖行**能关掉 bundle 层那一行** —— `list_plugins` 报 `enabled: false` / `fiberPhase: null`、总数仍 190、**日志不写任何新行**；撤掉覆盖行后 `02:19:52` 立刻重新写出 `activation: active …` 且键回落到 bundle 行。由此登记两条推论：`disabled`（Loader 层）与 `enabled: false`（插件自己）是**两个开关、证据形状不同**；**禁止用"日志没有新行"判断插件还活着**，判据是 `list_plugins` 的 `enabled` / `fiberPhase`。`INSTALL.md` 第 5 节原先挂的"迁移后未实测"缺口就此补上。
+- `docs/evidence.md` §16.4 新增第 6 条**真机实测**：profile 层残留一条同 id 的 `- insert:` 手贴行的后果 —— **不多挂一行**（条目总数仍 190、只写一行激活行），但**整块接管那一行的 `config:`**（只写 `dryRun: true` 的残留行把 `dryRun` 顶成 `true`：**注入当场停掉而 `fiberPhase` 仍是 `active`、日志看起来完全正常**；`02:31:45` 写入、删掉后 `02:32:13` 回到 `dryRun=false`），并让该行**脱离管理**（`readOnlyReason: "unaddressable"`、`patchId` 消失 ⇒ Plugins 页与 `set_plugin` 都点不动）。两条判据：`list_bundles` 的 `overrides` 发现不了这种残留（仍是 `[]`），**最快信号是 `list_plugins` 里这一条还有没有 `patchId`**；此事与 §14.3 那条"同一 profile 里同 id 只能有一个家"（同一层内的形状）**不是一件事，禁止混引**。
+- `install.ps1` / `install.sh` 那条"**只报告、不代删**"的理由已实测：残留行会整块接管 `config:`（`dryRun` 被顶成 `true`）并让该行变成 `unaddressable`（`docs/evidence.md` §16.4 第 6 条）。
+- `docs/registry.md`：`install.ps1` / `install.sh` 索引行的"挂载行的处理"改"bundle 选中的处理"。
+- `tools/testing-guide.md` 第 3.1 节：部署集合改**六项**、插件落点改 `$DSH_HOME/bundles/dsh-adg-token-budget/`、选中改 `dsh.profile.bundles`；两条冒烟判据同步（"不写挂载行"改"不写 `dsh.profile.bundles`"，并补"不代删 profile 层遗留行"）。
+- `browser/AGENTS.md`「生效方式」：插件落点那句改口成 `$DSH_HOME/bundles/dsh-adg-token-budget`。
+
+## 2026-09-28（上午 08:50+08:00）— 同一个 dsh 升级的**第三个**成因：session format v4 废弃 `{kind:'plugin', plugin}`，插件注入检查点让**每一次委派**当场失败
 
 - **用户报的症状**：Adg 模式下子代理报「本轮运行失败」，原文
   `format v4 message requires a producer-owned source kind`，任务做不完。与 §14 那两个成因不同：

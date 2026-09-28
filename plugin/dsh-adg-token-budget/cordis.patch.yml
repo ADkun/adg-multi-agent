@@ -1,0 +1,69 @@
+# The bundle patch layer of dsh-adg-token-budget — THIS file is the mount row.
+#
+# `package.json` declares `dsh.bundle.patch: ./cordis.patch.yml`, so a profile that
+# selects this package in `dsh.profile.bundles` gets the `adg-token-budget` row
+# inserted by the loader. Nothing has to be pasted into
+# `$DSH_HOME/profiles/<profile>/cordis.patch.yml` any more, and the row is now
+# visible as an installed bundle (`plugin_manager list_bundles`, the Plugin Manager
+# cards, `set_bundle`), which a hand-pasted profile patch entry never was.
+#
+# `examples/cordis.patch.yml` stays, with a different job: it is the documented key
+# reference (every key, its default, and why it exists). Reach for it when you want
+# a PER-PROFILE override — see the override warning below.
+#
+# Layer order matters. A profile's own `cordis.patch.yml` is applied AFTER every
+# bundle layer, and a patch that names an existing id REPLACES that row's whole
+# `config` object (never a deep merge). So a per-profile `- id: adg-token-budget`
+# override must restate every key it wants to keep, or the keys left out silently
+# fall back to the plugin's own defaults in `src/config.js`.
+#
+# Editing THIS file does not re-read itself: nothing watches `bundles/`. Restart dsh
+# (or touch a profile file, which makes the whole patch stack reload — that is the
+# documented behaviour, but the repo's acceptance rule is still "restart and check").
+#
+# The row ships ARMED (`enabled: true`, `dryRun: false`) on purpose: selecting the
+# bundle is the deliberate act, and `install.*` only selects it. To install without
+# effect, set `enabled: false` — `apply` then registers no listener and writes no
+# decision line, only the load-time `activation: inactive (enabled: false) …` line.
+# Rollback is documented in `INSTALL.md` section 5.
+#
+# There are no token-budget keys here. `budgetTokens`, `softRatio`,
+# `cacheReadWeight`, `softNudge` and `hardDryRun` were removed with the token soft
+# and hard stages; a row that still carries them loads fine and ignores them.
+
+- insert:
+    - id: adg-token-budget
+      name: 'dsh-adg-token-budget'
+      config:
+        # Master switch. `false` registers nothing at all.
+        enabled: true
+        # Which delegated children this plugin governs: a delegated child whose
+        # session header records `agentPreset: adg` (and a safe-integer
+        # delegationDepth >= 0) is counted. A child with no agentPreset is NOT
+        # governed — the plugin fails open there on purpose.
+        presets: [ 'adg' ]
+        # The step checkpoints: count the steps a governed child ENTERS and append
+        # one OPTIONAL convergence reminder when the count reaches each tier (once
+        # per tier per residency epoch, at most one message per step).
+        stepNudge: true
+        # Early and dense through step 24, then widening geometrically. Calibrated
+        # on the measured distribution of 37 delegated children (min 1 / p10 6 /
+        # p25 14 / median 39 / p75 61 / p90 103 / max 329 steps): a ladder anchored
+        # on the mean would ask too late, because a quarter of the population is
+        # already finished by step 14.
+        stepTiers: [ 4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280 ]
+        # Reminder wording. `stepText` is absent, which means the built-in choice
+        # body ("converge and report" or "keep working", stated as optional).
+        # To change the wording on one machine, set `stepText` in a PROFILE-layer
+        # override (the Plugins page writes that) — it is a `config:` key and hot
+        # reloads, and the activation line then reports `stepText=custom`.
+        # stepText: null
+        # Calibration switch: compute and log every decision, inject nothing,
+        # consume nothing (steps keep counting). Nothing destructive is left to keep
+        # dry, so this is only for calibrating a new ladder.
+        dryRun: false
+        # The Loader evaluates this against the row's own context, so the log lands
+        # beside the user root on every machine instead of carrying one author's
+        # absolute path. `$DSH_HOME` (default `~/.dsh`) + `adg-token-budget.log`,
+        # the same file the hand-pasted row wrote.
+        logFile: !!js dshHomePath('adg-token-budget.log')

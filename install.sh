@@ -7,6 +7,8 @@
 # 一个 bundle：包清单声明 dsh.bundle.patch，patch 里 insert 一行 @deepseek-ai/dsh-agent-preset
 # 声明（id/name/description/order/plugins）。本脚本：生成 bundle → 放到 $DSH_HOME/bundles/ →
 # 装进目标 profile 的 node_modules 并写进该 profile 的 dsh.profile.bundles。
+# 插件 dsh-adg-token-budget 自 2026-09-28 起是**同一个形状**：它的挂载行由包自己的
+# cordis.patch.yml 提供（旧装法是把行手贴进 profile 的 patch 层，那条路已废弃，脚本只负责报告残留）。
 set -eu
 
 root="${DSH_HOME:-$HOME/.dsh}"
@@ -14,7 +16,8 @@ here="$(cd "$(dirname "$0")" && pwd)"
 bundle_name='dsh-adg-preset'
 plugin_name='dsh-adg-token-budget'
 bundle_stable="$root/bundles/$bundle_name"
-plugin_stable="$root/plugins/$plugin_name"
+plugin_stable="$root/bundles/$plugin_name"
+plugin_legacy_stable="$root/plugins/$plugin_name"
 
 # 插件要求 logFile 是绝对路径（相对路径会被它关掉文件日志），所以先把 DSH_HOME 归一成绝对路径。
 case "$root" in
@@ -27,7 +30,8 @@ case "$root" in
     fi
     root="$resolved"
     bundle_stable="$root/bundles/$bundle_name"
-    plugin_stable="$root/plugins/$plugin_name"
+    plugin_stable="$root/bundles/$plugin_name"
+    plugin_legacy_stable="$root/plugins/$plugin_name"
     ;;
 esac
 
@@ -87,11 +91,14 @@ mkdir -p "$bundle_stable"
 cp "$here/bundle/adg-preset/cordis.patch.yml" "$bundle_stable/cordis.patch.yml"
 cp "$here/bundle/adg-preset/package.json" "$bundle_stable/package.json"
 
-# ── 4. 插件：拷到稳定位置（同上去掉仓库依赖），挂载行写进 profile 自己的 patch 层 ──
+# ── 4. 插件：作为 bundle 拷到稳定位置（同上去掉仓库依赖）────────────────────────
+# 部署集合六项 = package.json / cordis.patch.yml / src / examples / README.md / LICENSE
+# （与插件 package.json 的 files 一致；test/ 与 INSTALL.md 不进部署）。
+# cordis.patch.yml 是这一层的第六项：它就是挂载行本身，缺了它这个包只是普通依赖。
 plugin_src="$here/plugin/$plugin_name"
 rm -rf "$plugin_stable"
 mkdir -p "$plugin_stable"
-cp -R "$plugin_src/package.json" "$plugin_src/src" "$plugin_src/README.md" "$plugin_src/examples" "$plugin_src/LICENSE" "$plugin_stable/"
+cp -R "$plugin_src/package.json" "$plugin_src/cordis.patch.yml" "$plugin_src/src" "$plugin_src/README.md" "$plugin_src/examples" "$plugin_src/LICENSE" "$plugin_stable/"
 
 for name in $profiles; do
   profile_dir="$root/profiles/$name"
@@ -149,70 +156,94 @@ for name in $profiles; do
         esac
       done
 
-  # 4c. 挂载行写进该 profile 自己的 patch 层（热重载），不动机器级的 $root/cordis.patch.yml：
-  # 机器级那一层套在每个 profile 上（web / headless / sdk / 自建），而这个插件只对 adg preset 的
-  # 子代理生效，装到机器级等于让每个 profile 都去 import 它。要全机生效就把同一行搬过去。
-  # 同一个判据管插件行：包不在 node_modules 里就只报告、不写挂载行。
-  if [ ! -f "$profile_dir/node_modules/$plugin_name/package.json" ]; then
-    echo "  patch   -> $name : $plugin_name 还没装进这个 profile 的 node_modules —— 未注册挂载行"
-    continue
-  fi
+  # 4c. 插件 bundle 同样要选进 dsh.profile.bundles —— 挂载行现在由包自己的 cordis.patch.yml
+  # 提供（package.json 的 dsh.bundle.patch），profile 的 patch 层不再需要那条手贴的 insert 行。
+  # 判据比"包在不在 node_modules 里"更严：装上的那份必须真的声明 dsh.bundle.patch。pnpm 失败时
+  # 链接可能还指着旧落点 plugins/<plugin>/，那份 package.json 没有 dsh.bundle.patch，把它写进
+  # 列表只会让 dsh 启动时选到一个没有 patch 层的 bundle。
+  # 不动机器级的 $root/cordis.patch.yml：那一层套在每个 profile 上（web / headless / sdk / 自建），
+  # 而这个插件只对 adg preset 的子代理生效，选进机器级等于让每个 profile 都去 import 它。
   patch_file="$profile_dir/cordis.patch.yml"
-  if [ ! -f "$patch_file" ]; then
-    echo "  patch   -> $name : 未找到 $patch_file，跳过挂载行注册（请手工把 plugin/$plugin_name/examples/cordis.patch.yml 的行贴上去）"
-    continue
+  if [ -f "$patch_file" ] && grep -Eq '^[[:space:]]*- id: adg-token-budget' "$patch_file"; then
+    echo "  patch   -> $name : $patch_file 里还有旧机制手贴的挂载行 —— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
   fi
-  if grep -q "$plugin_name" "$patch_file"; then
-    echo "  patch   -> $name : 挂载行已在 cordis.patch.yml 里（未改动；enabled 的值以该文件为准）"
-    continue
-  fi
-  cp "$patch_file" "$patch_file.bak-adg-token-budget"
-  # 全新 profile 的 patch 层是空数组字面量 `[]`：把它换成我们的块。已被手工改过的文件
-  # （末行不是 `[]`）就按追加处理，不再要求"末行必须是 []"。
-  {
-    if [ "$(tail -n 1 "$patch_file" | tr -d '[:space:]')" = '[]' ]; then
-      sed '$d' "$patch_file"
-    else
-      cat "$patch_file"
-    fi
-    printf '%s\n' \
-      '# 步数收敛检查点：按 4/8/12/…/280 的阶梯给 Adg 专家子代理注入可选收敛提醒。' \
-      '# 提醒是"自己选：收尾汇报 or 继续做完必需的工作"，不是停止指令——阶梯提前加密度就是靠这一点才安全。' \
-      '# 按累计 token 介入的两档（软档收尾提醒 + 硬档 agent.cancel）已整体移除：输出型任务本来就需要那么多 token，' \
-      '#   按阈值砍只会截断产出。插件现在既不注入任何 token 触发的消息，也从不 agent.cancel（详见 README）。' \
-      '# enabled: false 表示已挂载但不动作。改 config: 热重载立即生效；但换过 src/ 里的代码之后必须重启 dsh' \
-      '# （已实测：热重载只重放 config，不会重新 import 已经加载过的模块）。' \
-      '# 推荐上线顺序：enabled: true + dryRun: true 校准 → dryRun: false（提醒真的注入）。没有硬档要武装了。' \
-      '# 想调措辞：写 stepText（config: 改动，热重载、不用重启）；激活行会写 stepText=builtin|custom。' \
-      '- insert:' \
-      '    - id: adg-token-budget' \
-      "      name: '$plugin_name'" \
-      '      config:' \
-      '        enabled: false' \
-      "        presets: ['adg']" \
-      '        stepNudge: true' \
-      '        stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]' \
-      "        logFile: '$root/adg-token-budget.log'"
-  } > "$patch_file.tmp-adg-token-budget"
-  mv "$patch_file.tmp-adg-token-budget" "$patch_file"
-  echo "  patch   -> $name : 已加入挂载行（enabled: false），原文件备份为 $patch_file.bak-adg-token-budget"
+  verdict="$(node -e '
+    const fs = require("fs");
+    const [profileDir, pluginName] = process.argv.slice(1);
+    const pkgPath = profileDir + "/node_modules/" + pluginName + "/package.json";
+    let j = null;
+    try { j = JSON.parse(fs.readFileSync(pkgPath, "utf8")); } catch { j = null; }
+    if (!j) { console.log("absent"); process.exit(0); }
+    if (!j.dsh || !j.dsh.bundle) { console.log("no-layer"); process.exit(0); }
+    const layer = j.dsh.bundle.patch || "cordis.patch.yml";
+    const manifest = profileDir + "/package.json";
+    const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    m.dsh = m.dsh || {}; m.dsh.profile = m.dsh.profile || {}; m.dsh.profile.bundles = m.dsh.profile.bundles || [];
+    if (m.dsh.profile.bundles.includes(pluginName)) { console.log("present:" + layer); process.exit(0); }
+    fs.writeFileSync(manifest + ".bak-adg-token-budget", fs.readFileSync(manifest));
+    m.dsh.profile.bundles.push(pluginName);
+    fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
+    console.log("added:" + layer);' "$profile_dir" "$plugin_name")"
+  case "$verdict" in
+    absent)
+      package_failed=1
+      echo "  patch   -> $name : $plugin_name 还没装进这个 profile 的 node_modules —— 未写入 dsh.profile.bundles"
+      continue
+      ;;
+    no-layer)
+      package_failed=1
+      echo "  patch   -> $name : 装上的 $plugin_name 没有声明 dsh.bundle.patch —— 未写入 dsh.profile.bundles（链接多半还指着旧落点 $plugin_legacy_stable；关掉 dsh 重跑本脚本）"
+      continue
+      ;;
+    added:*)
+      echo "  patch   -> $name : 已把 $plugin_name 加进 dsh.profile.bundles（挂载行来自 ${verdict#added:}，原文件备份 $manifest.bak-adg-token-budget）"
+      ;;
+    *)
+      echo "  patch   -> $name : $plugin_name 已在 dsh.profile.bundles 里（挂载行来自 ${verdict#present:}）"
+      ;;
+  esac
 done
+
+# ── 5. 旧落点 plugins/<plugin>/ 的清理 ──────────────────────────────────────────
+# 只有"没有任何 profile 的链接还指着它"时才删：pnpm 那一步失败时链接可能仍指向旧目录，
+# 删掉会让那个 profile 启动时解析不到包。判据是 realpath 后的链接目标，不是"包在不在"。
+# （用 node 取 realpath：macOS 的 readlink 不一定支持 -f，而本脚本本来就依赖 node。）
+legacy_note='旧落点不存在'
+if [ -d "$plugin_legacy_stable" ]; then
+  want="$(node -e 'try{console.log(require("fs").realpathSync(process.argv[1]))}catch{console.log(process.argv[1])}' "$plugin_stable")"
+  legacy_users=''
+  for name in $profiles; do
+    link="$root/profiles/$name/node_modules/$plugin_name"
+    [ -e "$link" ] || continue
+    target="$(node -e 'try{console.log(require("fs").realpathSync(process.argv[1]))}catch{console.log("")}' "$link")"
+    if [ "$target" != "$want" ]; then legacy_users="$legacy_users $name"; fi
+  done
+  if [ -z "$legacy_users" ]; then
+    rm -rf "$plugin_legacy_stable"
+    legacy_note="已删除旧落点 $plugin_legacy_stable"
+  else
+    legacy_note="旧落点 $plugin_legacy_stable 未删除：$legacy_users 的链接还指着它（关掉 dsh 重跑本脚本）"
+  fi
+fi
 
 echo "已安装到 dsh 用户根：$root"
 echo "  skill   -> $root/skills/adg-add-agent"
 echo "  bundle  -> $bundle_stable（生成物来自 preset/preset.yml + preset/agent.cordis.yml）"
-echo "  plugin  -> $plugin_stable"
+echo "  plugin  -> $plugin_stable（bundle：挂载行来自它自己的 cordis.patch.yml）"
+echo "  legacy  -> $legacy_note"
 echo "  browser -> $browser_note"
 echo ""
 echo "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 echo "（preset 走的是一条独立的 patch 层：dsh --profile <name> --dump-config 能确认它被读到，"
 echo "  但只有真的新建一个会话才算挂载成功 —— 静态文件与 --dump-config 都证明不了挂载。）"
-echo "（插件行是另一回事：profile 的 cordis.patch.yml 改 config: 热重载、不用重启；"
-echo "  但换过插件 src/ 里的代码之后必须重启 —— 热重载不会重新 import 已加载的模块。）"
+echo "（插件行现在来自 bundle 层：没有任何东西 watch bundles/，单独改 bundles/$plugin_name/cordis.patch.yml"
+echo "  不会自己触发重读 —— 以**重启 dsh** 为准。换过插件 src/ 里的代码同样必须重启（热重载不重新 import）。"
+echo "  只想改本机这一份 config：在 Plugins 页保存，它写的是 profile 的 cordis.patch.yml，"
+echo "  热重载立即生效；注意那条覆盖行整块替换 config、不是深合并，要留的键都得重写。）"
 echo "（browser/ 工具链又是另一回事：用户根下的普通文件，重新跑本脚本即生效，不用重启 dsh。）"
 if [ "$package_failed" -eq 1 ]; then
   echo ""
-  echo "注意：至少有一步 pnpm 没成功，preset bundle 可能还没装进 profile（上面的 profile 行里写明了）。" >&2
+  echo "注意：至少有一步 pnpm 没成功，$bundle_name / $plugin_name 可能还没装进 profile（上面的 profile 与 patch 行里写明了）。" >&2
   echo "先关掉正在运行的 dsh（它占着 node_modules 里的文件，pnpm 无法重建目录），再重跑本脚本。" >&2
   exit 2
 fi

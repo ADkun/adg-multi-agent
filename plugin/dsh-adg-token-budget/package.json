@@ -1,6 +1,6 @@
 {
   "name": "dsh-adg-token-budget",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH plugin: step checkpoints for delegated child agents of the 'adg' agent preset — a dispatcher-attributed, optional convergence reminder at chosen step counts. The cumulative token budget it was named after (a soft wrap-up nudge and a hard agent.cancel) has been removed: output-shaped tasks need the tokens they need.",
   "keywords": [
     "dsh",
@@ -21,9 +21,15 @@
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "files": [
     "src",
     "examples",
+    "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],

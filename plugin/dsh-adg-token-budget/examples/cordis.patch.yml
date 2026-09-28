@@ -1,17 +1,54 @@
-# Ready-to-paste patch entry for dsh-adg-token-budget.
+# Key reference + manual-override template for dsh-adg-token-budget.
 #
-# Put this in ONE of:
-#   $DSH_HOME/profiles/<profile>/cordis.patch.yml   -> that profile only
-#   $DSH_HOME/cordis.patch.yml                      -> every profile on this machine
+# IT IS NOT A READY-TO-PASTE MOUNT ENTRY ANY MORE. The mount row itself ships with the
+# package: `plugin/dsh-adg-token-budget/cordis.patch.yml` — the BUNDLE patch layer
+# (`dsh.bundle.patch` in `package.json`) — which the Loader inserts for every profile that
+# selects `dsh-adg-token-budget` in its `dsh.profile.bundles`. Nothing has to be pasted into
+# `$DSH_HOME/profiles/<profile>/cordis.patch.yml`, and the row is now visible as an
+# installed bundle (`plugin_manager list_bundles`), which a hand-pasted entry never was.
 #
-# A profile with `patchReload: live` (the shipped `web` profile) picks a `config:`
-# change up without a restart — but ONLY a `config:` change: the live reload does
-# not re-`import` a module the process already loaded, so replacing the package's
-# `src/` needs a restart (measured; see the README's Install section). Deploy the
-# code first, restart, confirm the new `activation:` line, and only then turn
-# `dryRun` off.
-# `enabled: false` ships on purpose: install the plugin
-# and flip this to `true` deliberately, in one step you can undo.
+# What this file is for now:
+#   1. the documented key set — every key, its default, and why it exists;
+#   2. a template for a deliberate PER-PROFILE OVERRIDE.
+# A machine-level `$DSH_HOME/cordis.patch.yml` remains the one place this row must never
+# appear: it is applied on top of every profile on the machine and it blocks saving from
+# the Plugins page.
+#
+# OVERRIDE MEANS A WHOLE-BLOCK REPLACE, NOT A DEEP MERGE. A profile's own patch file is
+# applied AFTER every bundle layer, and a patch that hits an existing id replaces that row's
+# ENTIRE `config` object: any key you do not restate silently falls back to `DEFAULT_CONFIG`
+# in `src/config.js`. So restate every key you want to keep, not just the one you want to
+# change. The entry below keeps the historical `- insert:` shape so this file still parses as
+# a patch and still diffs against the shipped row; to use it as an override, drop the
+# `insert:` wrapper and key the row by id instead (`- id: adg-token-budget`).
+# A `- insert:` entry LEFT over by the old hand-paste route is not a harmless duplicate either: it
+# takes over the shipped row's `config:` the same way, and while it exists the row is no longer
+# addressable by the Plugin Manager (`readOnlyReason: "unaddressable"`, and no `patchId`). The
+# measured readings and the check for it are in the README's Install section; not repeated here.
+#
+# Hot reload follows the LAYER, not the key:
+#   * A profile-layer `config:` OVERRIDE hot-reloads on a profile with `patchReload: live`
+#     (the shipped `web` profile) — measured on this machine.
+#   * Editing the BUNDLE-layer row (the deployed
+#     `bundles/dsh-adg-token-budget/cordis.patch.yml`): **restarting `dsh` is the accepted
+#     route, because nothing watches `bundles/`** — editing that file on its own triggers no
+#     re-read. Editing the profile's own `cordis.patch.yml`, or the profile manifest, re-reads
+#     the WHOLE patch stack and the bundle layer comes along with it: measured, the
+#     `activation:` line at `2026-09-28T01:47:48.467Z` was written by a process that had started
+#     before the migration, so bundle layers are NOT read only at startup. That is a fact about
+#     what re-reads, not a licence to promise "this takes effect without a restart"; and whether
+#     the bundle layer mounts after a COLD start is still unobserved.
+#   * No reload of any kind re-`import`s a module the process already loaded, so replacing the
+#     package's `src/` always needs a restart (measured; see the README's Install section).
+# Deploy the code first, restart, confirm the new `activation:` line, and only then change the
+# configuration.
+#
+# THE SHIPPED ROW IS ARMED — `enabled: true` with `dryRun: false`: selecting the bundle is the
+# deliberate act, and the install scripts only select it. The `enabled: false` below is
+# therefore NOT "installs inert by design" any more; it says only that THIS EXAMPLE IS INERT,
+# so copying the file into a scratch profile cannot start injecting reminders into children
+# that profile happens to delegate. Keep it for a per-profile override you want to install
+# without effect; restate the whole block with your own values to arm one.
 #
 # The cumulative token budget is gone. This plugin injects NOTHING at a token
 # threshold and never cancels a child: it only counts the steps a governed child
@@ -22,13 +59,15 @@
 # `cacheReadWeight`, `softNudge` or `hardDryRun` loads fine — those keys are
 # simply ignored.
 #
-# Every key under `config:` is optional; the commented values are the defaults.
+# Every key under `config:` is optional; the commented values are the defaults. In an
+# override row, "optional" is exactly the trap: leaving a key out resets it to that default.
 
 - insert:
     - id: adg-token-budget
       name: 'dsh-adg-token-budget'
       config:
         enabled: false                   # master switch; false registers nothing at all
+        # (the row the bundle ships is `enabled: true`)
         #
         # Which delegated children this plugin governs. A child counts as
         # delegated when its session header records delegationDepth > 0 (or its
@@ -85,5 +124,8 @@
         # here (step checkpoint, dry-run decision, settle, and a "nudge could not
         # be delivered" note). A step with no checkpoint due writes nothing.
         # Absolute path, or null for no file logging. Each line is prefixed with
-        # an ISO-8601 timestamp.
+        # an ISO-8601 timestamp. The shipped row spells it
+        # `logFile: !!js dshHomePath('adg-token-budget.log')`, which the Loader
+        # evaluates to `$DSH_HOME/adg-token-budget.log` on every machine; a plain
+        # string is still what to write here if you want a different file.
         # logFile: 'D:\dsh-adg-token-budget.log'

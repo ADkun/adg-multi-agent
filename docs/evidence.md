@@ -28,7 +28,7 @@ last_reviewed: 2026-09-28
 | 来源 | 路径 | 它是什么 |
 |---|---|---|
 | 插件决策日志 | `C:\Users\cenqian\.dsh\adg-token-budget.log` | 每行带 ISO-8601 时间戳。**行前缀**是计数依据（`activation:` / `step stage:` / `settled:` / 已移除的 `hard stage:`），**不是事件语义**——例如 `activation:` 数出来的是"宿主加载次数"。逐前缀的含义见 `plugin/dsh-adg-token-budget/README.md`「什么进 logFile」 |
-| 活行 | `C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml` | 当前插件挂载行（`enabled: true` + `dryRun: false`，另带 5 个惰性旧键，见下） |
+| 活行 | `C:\Users\cenqian\.dsh\bundles\dsh-adg-token-budget\cordis.patch.yml`（bundle 层，`$DSH_HOME/bundles/dsh-adg-token-budget/cordis.patch.yml`） | 当前插件挂载行（`enabled: true` + `dryRun: false`，出厂即武装，**没有** §7 那 5 个惰性旧键）。2026-09-28 起它在 **bundle 层**、由 profile 的 `dsh.profile.bundles` 选中；**profile 层（`profiles/web/cordis.patch.yml`）已无该条目**，只有人手贴的整块覆盖行时才会在那里出现（迁移事实见 §16） |
 | 子代理转写 | `C:\Users\cenqian\.dsh\sessions\…\session.v3.jsonl.zstd` | 注入消息的原文与子代理的回应，与日志行毫秒级对齐 |
 | 审计脚本 | `D:\dsh\.dsh-token-audit\audit-run.mjs`（成本）/ `audit-steps.mjs`（步数分布） | 从会话目录重算；报告写到同目录的 `audit-report.txt` / `audit-report.steps.txt`。`audit-steps.mjs` 打印 `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`、排序表、直方图，以及"每个候选 tier 会命中谁" |
 | 变异验证 | `D:\dsh\.adg-step-mutations\run-mutations.ps1` | 每个变异一个独立目录，跑完把原始 `node --test` 输出留在旁边。**不属于任何交付包** |
@@ -105,6 +105,8 @@ last_reviewed: 2026-09-28
 
 ## 7. 本机的惰性旧键（真机实测，切换窗口的安全网）
 
+> **本节描述的是迁移前手贴在 profile 层的那条活行（历史状态）**：2026-09-28 起挂载行在 bundle 层、只有 6 个键，profile 层已无该条目（见开头「证据来源」表的「活行」行与 §16.1 / §16.5），所以下面这五个键**现在不在任何活行里**。原文按"历史证据不回改"的纪律保留 —— 它记录的是当时为什么必须那样贴。
+
 活行里仍带着 `budgetTokens: 1000000000000000`、`softRatio: 1`、`cacheReadWeight: 1`、
 `softNudge: true`、`hardDryRun: true`。这**不是配置意图**：重启前进程里跑的可能还是旧代码，
 少了 `hardDryRun` 旧代码会按默认值把已删除的硬档**真武装**；把 `budgetTokens` 抬到 10^15 且 `softRatio: 1` 让旧软档也永不触发。
@@ -129,6 +131,10 @@ last_reviewed: 2026-09-28
 | **五条编排层规则是否真的被遵守**（同实体合并 / 优先恢复既有专家 / 先定位再改 / digest 中转 / 必要性闸门） | **未观测**：五条规则于 2026-09-26 落地，尚无真实 Adg 会话带着它们跑过（`preset/testing-guide.md` 的 N3 / N5 / N7 同此结论）。四个观测量：① **子代理个数**（主指标 —— "同一份材料买 N 次"的乘数就是它）② 子代理步数 **p50 / p90**（**比分位数不比均值**：已实测中位数 39 步、p10 仅 6、四分之一 ≤14 步，分布很偏）③ 审计脚本按 preset 分组的 `requests`（同口径重跑同一批会话，不许拿单次绝对值比）④ **挂号抽查**（人工，见下一行） |
 | **旁路是否被"记录而非被做"**（必要性闸门 + 强制挂号） | **未观测**。**来源（这是这条规则的依据，不是结论）**：一次真实任务的旁路委派 —— 用户要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理，而那次调研只服务同一条选购需求（同实体同性质）、且不在验收标准里。判据：抽 3–5 个含旁路诱因的任务，最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」且转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被**静默丢掉**（省了 token 却让用户不知道有东西没查，比不做这条规则更糟）；出现委派 = 闸门未生效 |
 | **浏览器任务是否真的"同一份信息只在一个站点取"**（I13 ① 的浏览器那半） | **未观测**：该半条于 2026-09-27 按用户要求追加，尚无真实 Adg 会话走过（`preset/testing-guide.md` 的 N8 / N9 同此结论）。**来源是用户报告**（"浏览器操作是非常耗时的"）＋本机实测的成本下限（一次性读页 **0.8–2.0 秒**、工具侧且不含每个模型步，见 §13）。量法：给一个**单站点即可答完**的信息需求（例如某酒店某晚房价），数 `agent_browser` 委派里点名的站点数（同一份信息应为 **1 个**；三个例外都不成立却出现 ≥2 个 = 违例），并对照同任务 `TABS` 的净增长 |
+| **迁移成 bundle 后，`presets: ['adg']` 对真实 `adg` 专家子代理的注入** | **未观测**（§16.5）：迁移后那次真实委派走的是临时覆盖行 `presets: ['cordis']` 的**通用委派**路径（§16.4 第 3 条），不是 `adg` 专家行。**机制前提（本机实测，§16.4 第二条技术事实，不许丢）**：通用 `subagent` / `subagent_fork` 委派出去的子代理，session 头记的是 `agentPreset: "cordis"`、`delegationDepth: 1`，**不是 `adg`**（`adg` 专家行委派出来的记 `adg/<uuid>`）⇒ `presets: ['adg']` 按设计**不治理**通用委派（fail open）。量法：新对话里走一次 Adg 专家委派（或临时在 profile 层加覆盖行 `presets: ['adg']` + `stepTiers: [1, 2]`），看 `step stage: nudged … label=adg/…` |
+| **冷启动后的 bundle 层** | **未观测**（§16.5）：迁移是在**迁移前就起来的进程**里生效的 —— 触发点是 `install_bundle` 改写 profile 清单导致**整份 patch 栈重读**（§16.3 第二条、§16.4 第 1 条的机制归属），**不是** bundle 层自己被 watch。量法：重启 dsh → `plugin_manager list_bundles` 仍有 `dsh-adg-token-budget` 这一条 + 日志新出现一行 `activation: …` |
+| **`desktop` profile 迁移后生效** | **未观测**（§16.5）：该 profile 已装成同一形状（§16.5「已就位」），但它的 `patchReload` **不是** `live` ⇒ 要下次启动才生效。量法：启动 `desktop` profile → 看同一日志的 `activation` 行。（§14.6 未观测 ① 那条 `desktop` 挂载未观测仍然独立成立） |
+| **已撤销的 token 两档旧口径**（§4 / §7 / §15 里的历史行） | **仍是历史证据，不许写成当前行为**：包括那五个惰性旧键（§7）、`hard stage:` / `dry-run …would cancel` 前缀（§9）、`{kind:'plugin', plugin}` 包装（§15），以及"旧落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`"与旧部署集合的五项形状（§14.5 / §14.6 的历史标注、§15.4 那条探针跑的部署位置、§16.1）。量法：无 —— 代码路径已删；本行只是防止引用时把历史数字读成现值 |
 
 ## 9. 活证据复核快照（2026-09-25T13:46:37Z / 21:46:37+08:00）
 
@@ -546,6 +552,8 @@ node cli.mjs close
 
 ### 14.5 部署路径与解析口径的更正（真机实测）
 
+> **本节与 §14.6 里凡出现 `$DSH_HOME/plugins/dsh-adg-token-budget/` 的地方都是 2026-09-28 上午的落点，属历史证据，不代表当前落点**（当前在 bundle 层：`$DSH_HOME/bundles/dsh-adg-token-budget/`，见 §16.1）。原文按"变更记录不回改"的纪律**保留不抹**；`profiles/node_modules/` 被排除、`link:` 重启安全这两条机制事实**至今仍然成立**，变的只是那一个稳定落点目录。
+
 - **`$DSH_HOME/profiles/node_modules/` 这个"共享解析根"在本版被排除**：插件拷在那里时挂载行
   解析不到这个包；改放 profile **自己的** `node_modules`（或 `link:` 稳定目录）才起得来。
   解析是**两段锚定**：先从 dsh 安装目录，再落到当前 profile
@@ -691,6 +699,9 @@ function source(message) {
 
 ### 15.5 附：本机怎么解压 session 转写（补 §8 那条"本机没有 zstd 解压能力"的更正）
 
+**2026-09-28 同日第二次独立确认（数字与出处见 §16.4 第一条技术事实）**：多帧这件事不是孤例，
+"读转写核对注入"的口径**必须**按多帧处理。
+
 旧记载**不成立**：Node 26 自带 `zlib.zstdDecompressSync`（`node -e "console.log(typeof
 zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v*.jsonl.zstd` 是**多帧拼接**的，
 `zstdDecompressSync` 一次只解**第一帧**（实测一份 35,771 字节的文件只解出 257 字节 / 2 行，
@@ -698,3 +709,178 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 本次用的脚本都放在 `D:\dsh\.adg-step-mutations\`（**不属于本仓库**，与那份变异 harness 同一个目录）：
 `dump-session.mjs`（按帧解压 + `--tail N` / 搜关键字）、`scan-sessions.mjs`（批量扫）、
 `verify-v4-source-admission.mjs`（§15.4 的宿主准入复测探针）。
+
+## 16. 插件挂载行从"手贴进 profile patch"迁成 bundle（源码级事实 + 真机实测，2026-09-28）
+
+**来源声明（引用本节前必读）**：本节由本次迁移的**操作记录**转写（迁移时的台账是一份**临时文件**，
+不属于仓库、不长期存在），所以可复核的证据只有下面点名的这些：日志
+`C:\Users\cenqian\.dsh\adg-token-budget.log`（本机 `$DSH_HOME` = `C:\Users\cenqian\.dsh`，时间戳全部 UTC（`Z`））、
+仓库里的 `plugin/dsh-adg-token-budget/cordis.patch.yml` / `package.json` / `install.ps1` / `install.sh`，
+以及本机 profile 的 `package.json` 与 `cordis.patch.yml`。状态档按 `docs/docs-guide.md` 的四档保留，
+**"迁移台账说"不构成任何一档证据**。
+
+### 16.1 机制变了什么（源码级事实）
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 挂载行来源 | 手贴进 `profiles/<profile>/cordis.patch.yml` 的 `- insert:` 条目 | 包自己的 `plugin/dsh-adg-token-budget/cordis.patch.yml`（**bundle 层**），由 `package.json` 的 `dsh.bundle.patch: ./cordis.patch.yml` 声明 |
+| 部署落点 | `$DSH_HOME/plugins/dsh-adg-token-budget/` | `$DSH_HOME/bundles/dsh-adg-token-budget/`（与 `dsh-adg-preset` 同一根；见 §14.5 的历史标注） |
+| profile 依赖 spec | `link:$DSH_HOME/plugins/dsh-adg-token-budget` | `link:$DSH_HOME/bundles/dsh-adg-token-budget` |
+| 选中方式 | 无（只有依赖 + 手贴行） | 写进该 profile 的 **`dsh.profile.bundles`** |
+| 部署集合 | **五项**：`package.json` / `src` / `README.md` / `examples` / `LICENSE` | **六项**：加 `cordis.patch.yml`（= 挂载行本身，缺了它这个包只是普通依赖）；与 `package.json` 的 `files` 一致；`test/` 与 `INSTALL.md` 仍不进部署 |
+| bundle 行默认 config | 例子文件 `enabled: false`（要人来武装） | **出厂即武装**：`enabled: true`、`presets: ['adg']`、`stepNudge: true`、`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`、`dryRun: false`、不写 `stepText`（用内置正文）、`logFile: !!js dshHomePath('adg-token-budget.log')` |
+| `logFile` 写法 | 每 profile 硬编码绝对路径 | `!!js dshHomePath('adg-token-budget.log')` → Loader 求值，任何机器都落到 `$DSH_HOME/adg-token-budget.log`（本机实测求值结果就是 `C:\Users\cenqian\.dsh\adg-token-budget.log`，**与旧行逐字相同，历史日志连续** —— 见 §16.4 第 1 条那行日志） |
+| `examples/cordis.patch.yml` 的角色 | "可直接贴进 profile patch 层的挂载行" | **键参考 + 手工覆盖模板**（贴之前必须重写全部键，见 §16.2）；`plugin/dsh-adg-token-budget/cordis.patch.yml` 才是挂载行本体 |
+| 版本 | `0.2.0` | `0.3.0` |
+
+### 16.2 层序与"整块替换"（源码级事实，必须写进文档的坑）
+
+- profile 自己的 `cordis.patch.yml` 在**所有 bundle 层之后**应用。
+- 按 id 命中的 patch **整块替换** `config`（**不是深合并**）：profile 层留一条 `- id: adg-token-budget` 而只写一个键，
+  其余键全部回落到 `src/config.js` 的 `DEFAULT_CONFIG`。
+- 所以旧的 `- insert:` 行必须删；`install.ps1` / `install.sh` 现在**只报告、不代删**（不猜用户手改过的文件）。
+  **残留行到底会坏什么事已实测**（整块接管 `config:` ＋ 让该行变成 `unaddressable`），判据见 §16.4 第 6 条。
+- 机器级 `$DSH_HOME/cordis.patch.yml` **仍然禁止**出现这一行（套在每个 profile 上 + 会挡住 Plugins 页保存）——这条没变。
+
+### 16.3 热重载口径的分层（源码级事实；§5 讲的是 profile 层那一行，本节把三层分清）
+
+- **没有任何东西 watch `bundles/`** ⇒ **单独改 bundle 层的 `bundles/dsh-adg-token-budget/cordis.patch.yml` 不会自己触发重读**；
+  这一层的改动**以重启 dsh 为生效口径**（**禁止宣称"不重启也会生效"**）。
+- **改一次 profile 的 `cordis.patch.yml` 或 profile 清单会让整份 patch 栈重读**（既有实测口径与机制出处见
+  `preset/design.md`「`deployed` → `mounted` 的触发」与 `preset/AGENTS.md`「生效方式」），bundle 层**顺带**被重读
+  —— 本次迁移就是靠这一步在无重启的情况下挂起来的（§16.4 第 1 条）。**但已挂载的会话不会中途换组合**，
+  这条照 preset 侧口径不变。
+- 改 **profile 层**的 `config:` 覆盖行 → **热重载**（`web` profile 是 `patchReload: live`）；Plugins 页保存写的就是这一层。
+- 改 **`src/` 代码** → **必须重启**（热重载不重新 `import` 已加载模块）——这条与 §5 一致、没变。
+- 行 id `adg-token-budget` 与包名都没改，所以**热重载身份不变**。
+- **仓库验收口径不变**：新会话 / 重启后才是最终判据。`install.ps1` / `install.sh` 末尾的提示行就是这个口径。
+
+### 16.4 真机实测（有日志为证，2026-09-28；逐字引用本机日志行）
+
+证据文件 `C:\Users\cenqian\.dsh\adg-token-budget.log`（UTC）：
+
+```
+2026-09-28T01:47:48.467Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-28T01:57:12.041Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[1, 2] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-28T01:58:46.325Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, …, 280] stepText=builtin dryRun=false logFile='…'
+2026-09-28T01:59:20.788Z activation: active createUserMessage=profile-fallback:web presets=[cordis] stepNudge=true stepTiers=[1, 2] stepText=builtin dryRun=false logFile='…'
+2026-09-28T01:59:25.308Z step stage: nudged tier=1/2 step=1 label=cordis/b625f841-df55-4983-a4eb-66f96ac0b05f
+2026-09-28T01:59:31.672Z step stage: nudged tier=2/2 step=2 label=cordis/b625f841-df55-4983-a4eb-66f96ac0b05f
+2026-09-28T01:59:43.808Z settled: released session state label=b625f841-df55-4983-a4eb-66f96ac0b05f
+2026-09-28T02:00:09.597Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-28T02:19:52.105Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-28T02:31:45.335Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=true logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+2026-09-28T02:32:13.279Z activation: active createUserMessage=profile-fallback:web presets=[adg] stepNudge=true stepTiers=[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280] stepText=builtin dryRun=false logFile='C:\Users\cenqian\.dsh\adg-token-budget.log'
+```
+
+逐条归属（**不许把这几行读成"迁移后 `adg` 那一面已经实测过"**，见 §16.5）：
+
+1. `01:47:48` —— 手贴行已从 `profiles/web/cordis.patch.yml` 删除**之后**、`plugin_manager install_bundle` 装上 bundle **之后**写的。
+   当时进程里唯一能提供这一行的层就是 bundle 层 ⇒ **实测：bundle 层的行确实挂载并 `apply` 了，且 `!!js dshHomePath(...)` 求值成功**
+   （`logFile` 落回同一个文件）。**没有重启 dsh**（该进程 09:05:04 本地时间启动，早于迁移）。
+   **机制归属**：触发这次重读的是 `install_bundle` 改写 profile 清单 ⇒ **整份 patch 栈重读、顺带重读 bundle 层**（§16.3 第二条），
+   **不是**"有人在 watch `bundles/`" —— 别把这条读成 bundle 层会自动热更新。
+2. `01:57:12` / `01:58:46` —— 临时在 profile 层加/删一条 `- id: adg-token-budget` 覆盖行（`stepTiers: [1, 2]`）后写的
+   ⇒ **实测：profile 覆盖行热重载、不用重启**；且写覆盖行时必须整块重写所有键（§16.2）。
+3. `01:59:20` + 三条决策行 —— 临时把 `presets` 改成 `['cordis']`（原因见下面第 2 条技术事实）后的一次真实委派
+   ⇒ **实测：迁移后的行确实计数并注入了检查点**（`tier=1/2 step=1`、`tier=2/2 step=2`，收尾 `settled: released session state`）。
+   子代理转写 `C:\Users\cenqian\.dsh\sessions\--D-dsh--\b625f841-df55-4983-a4eb-66f96ac0b05f/session.v4.jsonl.zstd`
+   里两条 `user/message` 带 `"source":{"kind":"plugin:dsh-adg-token-budget"}`（v4 准入通过，**§15 那次事故没有复发**），
+   且 `2/2` 那条带最后一档的追加句；子代理在下一步回复里说明了选择。
+4. `02:00:09` —— 临时覆盖行删掉之后，恢复成 bundle 行的出厂形状。
+5. **`disabled: true` 能不能关掉 bundle 层那一行（真机实测，有日志为证）** —— 在 profile 层追加一条
+   **只写** `- id: adg-token-budget` + `disabled: true`（**不带 `config:`**）的条目。逐字段结果：
+   `plugin_manager list_plugins` 里 `include:adg-token-budget` 变成 **`enabled: false` / `fiberPhase: null`**，
+   条目总数仍然 **190**（没有重复挂载、也没有少一条）；**日志没有写出任何新行** —— 被 `disabled` 的行
+   Loader 根本不 `import`，插件连 `activation: inactive (enabled: false) …` 都来不及写。
+   删掉这条覆盖行之后日志**立刻重新写出一行**（`02:19:52`，见上面的代码块），`list_plugins` 回到
+   `enabled: true` / `fiberPhase: active` ⇒ **该行确实从 bundle 层恢复**（profile 层没有贴回任何 `config:`）。
+   这条实测补上了 `INSTALL.md` 第 5 节原先挂着的"迁移后未实测"缺口。
+
+   两条推论（不变量式）：
+
+   - **`disabled: true`（Loader 层）与 `enabled: false`（插件自己在 `apply` 里写激活行）是两个不同的开关**，
+     证据形状也不同：前者**什么都不写**（行不被 `import`），后者**必写一行 `activation: inactive …`**。
+     `disabled` 走的是 Loader 的整块替换语义（§16.2），**不需要 `config:`**。
+   - **禁止用"日志里没有新行"判断插件还活着**；判据是 `list_plugins` 的 `enabled` / `fiberPhase`，
+     或恢复那一刻写出的 `activation:` 行。
+
+6. **profile 层残留一条同 id 的 `- insert:` 手贴行到底会发生什么（真机实测，有日志为证）** —— 与第 5 条**并列、不要合并**：
+   两个"关掉"的证据形状完全不同（第 5 条**什么都不写**；本条**照常写一行、但那一行的 `config:` 被接管**）。
+   做法：在 `C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml` 末尾追加 `- insert:` / `- id: adg-token-budget` /
+   `name: 'dsh-adg-token-budget'`，`config:` 里**只把 `dryRun` 写成 `true`**（其余键照出厂值，含 `logFile: !!js dshHomePath(...)`），
+   等热重载，然后删掉。逐字观测：
+
+   - 残留行在位期间日志写出 `02:31:45` 那行 **`dryRun=true`**；删掉后立刻写回 `02:32:13` 那行 **`dryRun=false`**（见上面的代码块）。
+   - `plugin_manager list_plugins` 在残留行存在期间：`entryId: include:adg-token-budget`、`enabled: true`、`fiberPhase: active`、
+     **`readOnlyReason: "unaddressable"`**，且 **`patchId` 字段消失**；条目总数仍然 **190**；**只写出一行激活行**。
+   - 删掉残留行后：`patchId: "adg-token-budget"` 回来、`readOnlyReason` 消失、日志回到 `dryRun=false`。
+
+   三条结论（**不许写成"重复挂载"**）：
+
+   - **同 id 的跨层 `- insert:` 残留不会多挂一行**：总数 190、只有一行激活行。
+   - **它整块接管那一行的 `config:`** —— 实测 `dryRun` 被顶成 `true`：**注入当场停掉，而 `fiberPhase` 仍然是 `active`、
+     日志看起来完全正常**。这是 §16.2「整块替换」语义落在**残留行**这一形状上的具体后果，**不是新机制**。
+   - **它让这一行脱离管理**：变成 `unaddressable`、`patchId` 消失 ⇒ Plugins 页与 `set_plugin` **都点不动它**，只能改 patch 文件。
+     （顺带补一句 §14.3 的读法：那里把 `patchId=adg-token-budget` 当"这一行在活组合里"的**正证据**；本条给出反面 ——
+     **`patchId` 消失 = 这一行被跨层残留接管、已脱离管理**。）
+
+   两条判据事实：
+
+   - **`list_bundles` 的 `overrides` 发现不了这种残留**（本次仍是 `[]`）⇒ 最快信号是 **`list_plugins` 里这一条还有没有 `patchId`**。
+   - **与 §14.3 那条护栏不是一件事，禁止混引**：§14.3 讲的是**同一个 profile 里 `preset-adg` 只能有一个"家"**
+     （bundle 或 profile patch 二者之一，两份同 id 的 insert 行是危险形状），说的是**同一层内**该声明的形状；
+     本条是**插件行跨层同 id 被合并** —— **既不报错、也不双挂，而是整块接管 `config:` 并让该行脱离管理**。形状与后果都不同。
+     （**引用真实性**：§14.3 的原话只记到"危险形状"，本机**没有**"同一层内重复插入被 Loader 拒绝"的那次实测；
+     别处若写成"被拒"，那是**未观测**，不许挂到 §14.3 名下。）
+
+**顺带量到的两个技术事实（此前文档没有，源码级 + 本机实测）**：
+
+- **`session.v4.jsonl.zstd` 是多帧文件**：一次 `zlib.zstdDecompressSync(整个文件)` 只解出**第一帧 = 只有 session 头一行**
+  （本机实测：38,679 字节的文件解出 **1 行**；按 magic `28 B5 2F FD` 逐个偏移分别解压才拿得到全部 **44 行**）。
+  这是对 §15.5 那条口径的**再次确认**（同一次观测的第二个实例）：任何"读转写核对注入"的口径都必须按**多帧**处理。
+- **通用 `subagent` / `subagent_fork` 委派出去的子代理，session 头记的是 `agentPreset: "cordis"`、`delegationDepth: 1`，不是 `adg`**
+  （本机实测；`adg` 专家行委派出来的记 `adg/<uuid>`）。所以 `presets: ['adg']` 按设计**不治理**通用委派（fail open）——
+  上面第 3 条之所以临时把 `presets` 改成 `['cordis']`，就是为了在迁移后仍能走到一条真实注入路径。
+
+### 16.5 本机迁移后的实际状态与未观测（源码级事实 + 当次读数 / 检验 / 未观测）
+
+**已就位（源码级事实 + 本机 Plugin Manager 与 Loader 的当次读数）**：
+
+- `plugin_manager list_bundles`：新增一条 `dsh-adg-token-budget`，`version 0.3.0`、`enabled: true`、`installed: true`、
+  `removable: true`、rows `[{rowId: adg-token-budget, moduleName: dsh-adg-token-budget, entryId: include:adg-token-budget}]`、`overrides: []`。
+  **迁移前这条根本不存在**（挂载行只存在于手贴的 profile patch 里，Plugin Manager 的 bundle 清单看不到它——
+  这就是"看起来没生效"的直接原因）。
+- `plugin_manager list_plugins`：`include:adg-token-budget` `enabled: true`、`fiberPhase: active`、`patchId: adg-token-budget`；
+  条目总数迁移前后都是 **190**（没有重复行）。
+- **检验（单元测试）**：`cd plugin/dsh-adg-token-budget && node --test test` 由 **51 → 54** 个用例（新增**三条**钉住 bundle 形状：
+  ① 包声明 `dsh.bundle.patch` 且该文件存在；② 部署集合等于 `package.json` 的 `files` 六项；③ bundle 行只有一条挂载行且出厂即武装、
+  旧 token 键不得回到生效行）。**状态档：检验** —— 本机实测 `tests 54 / pass 54 / fail 0`（2026-09-28，同一日跑过两遍；
+  DSH 沙箱里须加 `--test-isolation=none`，见根 `AGENTS.md` Quality Gates 第 2 条）。它证明的是**行声明的形状**，
+  **证明不了真实 profile 组合挂得上**（那属真机档，判据在 `INSTALL.md` 第 4 节）。
+  历史条目里的 `50 → 51`（§15.4）属变更记录，**不回改**。
+- profile `web`：`dsh.profile.bundles` 末尾加了 `dsh-adg-token-budget`；`dependencies["dsh-adg-token-budget"] = link:C:/Users/cenqian/.dsh/bundles/dsh-adg-token-budget`；
+  手贴行已删（备份 `cordis.patch.yml.bak-adg-token-budget-bundle-migration`）。这一层的清单是
+  `plugin_manager install_bundle` 写的（本机 mtime `2026-09-28T01:47:46Z`，与 §16.4 第 1 条那行 `activation:`
+  相差 2 秒），所以 web **没有** `package.json.bak-adg-token-budget` 这一份备份。
+- profile `desktop`：同一形状（`install.ps1` 于 `2026-09-28T01:54Z` 前后写入，本机文件 mtime 为证；
+  `package.json.bak-adg-token-budget` 是它的清单备份）；手贴行已删（`cordis.patch.yml.bak-adg-token-budget-bundle-migration`）。
+  它的 `patchReload` **不是** `live` ⇒ 该 profile 要下次启动才生效（**未观测**）。
+- profile `headless`：不含 `@deepseek-ai/dsh-web-app`，不是 preset 宿主，脚本按判据跳过。
+- 旧落点 `C:\Users\cenqian\.dsh\plugins\dsh-adg-token-budget` **已删除**（`install.ps1` 第 5 步：只有没有任何 profile 的链接还指着它才删）。
+- **六份** patch 文件都过了真实 Loader（`loadOverlayPatches('dsh', file)` 全部 OK）：本机 `profiles/web/cordis.patch.yml`、
+  `profiles/desktop/cordis.patch.yml`、机器级 `$DSH_HOME/cordis.patch.yml`（仍是空层）、部署后的
+  `bundles/dsh-adg-token-budget/cordis.patch.yml`、仓库 `plugin/dsh-adg-token-budget/cordis.patch.yml`、
+  仓库 `plugin/dsh-adg-token-budget/examples/cordis.patch.yml`。结论：bundle 行 **6 个键**；两个 profile 层里
+  `adg-token-budget` 的行数 **0**。
+  状态档：**检验**（这是"能不能解析 + 键集合"的验证，不是挂载验证 —— 挂载判据见 §16.4 与 `INSTALL.md` 第 4 节）。
+- **"能不能关掉 bundle 层那一行"已实测**（判据与两条推论见 §16.4 第 5 条，本节不复制数字）：
+  `INSTALL.md` 第 5 节原先挂着的"迁移后未实测"缺口就此补上 —— 引用时按**真机实测（有日志为证）**档说。
+- **profile 层残留同 id `- insert:` 行的后果已实测**（判据见 §16.4 第 6 条，本节不复制数字）：不会多挂一行，
+  但会**整块接管那一行的 `config:`** 并让该行变成 `unaddressable`（`patchId` 消失）。这也是 `install.*`
+  **只报告、不代删**这条口径的理由。
+
+**未观测（照 §8 未观测清单登记，不许写成实测）**：① 迁移后 `presets: ['adg']` 对**真实 `adg` 专家子代理**的注入
+（第 3 条走的是 `presets: ['cordis']` 的通用委派，机制见 §16.4 第二条技术事实）；② **冷启动后的 bundle 层**
+（当前进程是迁移前起的，这次生效靠的是改写 profile 清单带来的**整份 patch 栈重读**，不是 bundle 层自己被 watch，见 §16.3）；
+③ **`desktop` profile 生效**（`patchReload` 非 live）。三条的量法都写在 §8 对应行里。

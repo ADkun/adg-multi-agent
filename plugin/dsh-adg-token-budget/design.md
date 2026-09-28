@@ -17,7 +17,8 @@ last_reviewed: 2026-09-28
   `isDelegatedChild`）；
 - **不做任何 token 预算**。包名里的 `token-budget` 与挂载行 id `adg-token-budget` 之所以还叫这个名字，
   是因为**改名会动热重载身份**（行 id 一改就是宿主要重放的另一行）；**部署路径与它无关**
-  （2026-09-28 已从 `profiles/node_modules/` 迁到 `${DSH_HOME:-~/.dsh}/plugins/`，行 id 没动）。
+  （2026-09-28 从 `profiles/node_modules/` 迁到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-token-budget/`
+  —— 与 preset bundle 同一个根，行 id 与包名都没动）。
   累计 token 软/硬两档已移除，插件**不读任何投影**、没有阈值、没有权重（`src/config.js` 与
   `src/plugin.js` 的模块注释记录了移除口径）；
 - 不截断、不 reject、不 `agent.cancel`：插件自己产生的判定永远是"原样放行 + 可选追加一条消息"；
@@ -39,14 +40,21 @@ last_reviewed: 2026-09-28
   `localCreateUserMessage`（见 I3）。
 - **被依赖**：
   - preset 侧的 `session.header.agentPreset` 是本插件的**输入**（跨模块，见下条路由）；
-  - `install.ps1` / `install.sh` 把本模块部署到稳定插件根 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/`
-    并 `link:` 进每个能装 preset 的 profile（**不再**是共享的 `profiles/node_modules/` —— 那个根在本版
-    dsh 的模块解析里被**排除**，放那儿解析不到，**实测**），挂载行写进 `profiles/<profile>/cordis.patch.yml`；
-  - `examples/cordis.patch.yml` 是挂载行的模板（含全部键的注释与默认值）。
+  - `install.ps1` / `install.sh` 把本模块作为 **bundle** 部署到稳定 bundle 根
+    `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-token-budget/`（与 `dsh-adg-preset` 同一个根），
+    `link:` 进每个能装 preset 的 profile（**不再**是共享的 `profiles/node_modules/` —— 那个根在本版
+    dsh 的模块解析里被**排除**，放那儿解析不到，**实测**），并把包名写进该 profile 的
+    `dsh.profile.bundles`；**挂载行由包自己的 `cordis.patch.yml` 提供**（`package.json` 的
+    `dsh.bundle.patch`），profile 的 patch 层不再需要手贴那一行（这一层的形状由测试钉住，见
+    "对外接口"最后一条）；
+  - `examples/cordis.patch.yml` 是**键参考 + 手工覆盖模板**（每个键的含义与默认值都在那里注释着），
+    **不是**可直接贴进 profile patch 层的挂载行 —— 按 id 命中会整块替换 `config`，贴之前必须重写全部键
+    （层序与坑见 `INSTALL.md` 第 2 节）。
 - **跨模块改动路由**：
   - 改"治理哪些会话" → 先读 `preset/design.md`（谁写 `agentPreset`、谁写 `delegationDepth`）；
-  - 改挂载位置 / 部署集合 / 热重载口径 → 先读 `plugin/dsh-adg-token-budget/INSTALL.md`；
-  - 改措辞 → **只动** `config.stepText`，不改代码（措辞住在 `config:` 里，热重载）。
+  - 改挂载行在哪一层 / 部署落点与部署集合 / 三层生效口径 → 先读 `plugin/dsh-adg-token-budget/INSTALL.md`；
+  - 改措辞 → **只动** `config.stepText`，不改代码（措辞住在 `config:` 里：写在 profile 覆盖行上
+    热重载，写在 bundle 行上以重启为准 —— `INSTALL.md` 第 3 节）。
 
 ## 核心数据模型
 
@@ -60,20 +68,21 @@ last_reviewed: 2026-09-28
 
   | 状态 | 它**不是**什么 |
   |---|---|
-  | `not-loaded` | 不是"插件不存在"：包在磁盘上、挂载行在 profile 里，只是进程还没 `apply` 它 |
+  | `not-loaded` | 不是"插件不存在"：包在磁盘上、挂载行也在生效的层里（现在来自 **bundle 层**，由该 profile 的 `dsh.profile.bundles` 选中），只是进程还没 `apply` 它 |
   | `applying` | 不是可观测状态：它只在一次 `apply` 的栈内存在，没有对外句柄 |
-  | `active` | 不是"监听器一定只有一个"：挂载两次时第二次仍进 `active` 并告警（见迁移矩阵） |
+  | `active` | 不是"监听器一定只有一个"：**进程内**被重复 `apply` 两次时，第二次仍进 `active` 并告警（见迁移矩阵）。**但 profile 层残留一条同 id 的旧 `- insert:` 不会走到这一格**：Loader 按 id 合并成**一条**、只 `apply` 一次，代价是那行的 `config:` 被整块接管（实测 `dryRun` 被顶成 `true` ⇒ **注入当场停掉，而 `fiberPhase` 仍是 `active`**）且 `patchId` 消失（真机实测见 `INSTALL.md` 第 4 节第 6 条） |
   | `inactive(enabled:false)` | **不是没加载** —— 激活行 `activation: inactive (enabled: false) …` 就是它加载成功的证据（I4） |
   | `no-op` | **不是 fatal** —— 它是 `ctx` 无事件 API 或 `apply` 内部失败的降级结果，profile 照常启动 |
 
-  热重载可再入 `applying`：`config:` 变化时宿主重放该行并再次调用 `apply`。
+  热重载可再入 `applying`：**profile 层**覆盖行的 `config:` 变化时宿主重放该行并再次调用 `apply`；
+  **bundle 层**那一行的改动以重启为准（`INSTALL.md` 第 3 节的三层口径）。
 - 迁移唯一入口：`apply(ctx, rawConfig)`（`src/plugin.js`）。**禁止绕过它直接改模块状态** ——
   进程级的注册账本（`appliedContexts` / `activeRegistrations`）只由 `apply` 与其 disposer 写。
 - 不变量：
   - **I1** 禁止 `apply` 抛出。Cordis 里 `apply` 抛且未声明 schema = fiber 失败 = `dsh` 报
     fatal 启动错误（来源见"非功能红线"第 1 条）。
   - **I2** 禁止 `static inject` 任何服务：未挂载的服务会让 entry 永远 `pending`，同样是 fatal。
-  - **I3** 禁止静态 `import` 任何 `@deepseek-ai/*`：部署在稳定插件根（`$DSH_HOME/plugins/dsh-adg-token-budget/`）下解析不到就整行挂不起来；一切 `@deepseek-ai/*` 都走调用时 `createRequire` + 本地 fallback（见"依赖关系"）。
+  - **I3** 禁止静态 `import` 任何 `@deepseek-ai/*`：部署在稳定 bundle 根（`$DSH_HOME/bundles/dsh-adg-token-budget/`）下解析不到就整行挂不起来；一切 `@deepseek-ai/*` 都走调用时 `createRequire` + 本地 fallback（见"依赖关系"）。
   - **I4** 每一次 `apply` 必须**恰好写一行**激活行，`enabled: false` 时也写。
 
 ### ChildStepState（句柄型）
@@ -143,12 +152,28 @@ last_reviewed: 2026-09-28
 
 指针，不复制内容：
 
-- 挂载行与**全部配置键的形状**：`examples/cordis.patch.yml`；默认值：`src/config.js` 的 `DEFAULT_CONFIG`。
+- **挂载行本体（bundle 层）**：`plugin/dsh-adg-token-budget/cordis.patch.yml`，由 `package.json` 的
+  `dsh.bundle.patch` 声明。**全部配置键的形状与注释**：`examples/cordis.patch.yml` —— 它是
+  **键参考 / 手工覆盖模板**，不是可直接贴进 profile patch 层的挂载行（按 id 命中会**整块接管**那一行的
+  `config`，并且实测会让该行 `patchId` 消失、变成 `readOnlyReason: "unaddressable"` ——
+  见 `INSTALL.md` 第 2 节与第 4 节第 6 条）。默认值：`src/config.js` 的 `DEFAULT_CONFIG`。
 - 模块导出面（`name` / `apply` / `stepNudgeText` / `createNudgeFactory` / `localCreateUserMessage` /
   `activationLine`，加 `resetRegistrationStateForTests` 这一测试缝），以及 4 个判定 helper
   （`delegationDepthOf` / `isDelegatedChild` / `presetIsGoverned` / `dueStepTier`）：
   `src/plugin.js` 与 `src/budget.js` 的导出声明。
-- 部署单元：`package.json` 的 `files`。
+- 部署单元：`package.json` 的 `files`（六项）与 `dsh.bundle.patch`。
+- **bundle 那一层不是"只有文档在管"，它有测试**（用例名逐字，跑法见 `testing-guide.md` 第 0 节）：
+  - 包必须声明 `dsh.bundle.patch`、那个文件必须真的存在且能读出行、**部署集合 = `files` 六项**
+    ⇒ `the package ships its own bundle patch and declares it`；
+  - bundle 层只有**一条**挂载行、必须挂本包、`config:` 里每个键都是 `DEFAULT_CONFIG` 读得懂的键、
+    不写 `stepText`、出厂 `enabled: true` + `dryRun: false`、`logFile` 必须是
+    `!!js dshHomePath(...)` 求值而不是写死某台机器的绝对路径
+    ⇒ `the bundle row is the mount row: one row, this package, armed by default`；
+  - **已移除的 token 键不得回到生效行**（注释里记录它们不算）
+    ⇒ `the bundle row cannot resurrect the retired token stages`（与 I9 / 非功能红线 2 同一件事的
+    **行这一层**守卫）。
+  这三条是**逐行文本扫描**（不是 YAML 解析器，同 `tools/check-preset.mjs` 的取舍）：它们证明"行声明的
+  就是我们想要的"，**证明不了真实 profile 组合挂得上** —— 后者属真机档，判据在 `INSTALL.md` 第 4 节。
 - **本模块不覆盖 preset 的对外接口**（那是 `preset/design.md` 的范围），也**不注册任何模型可见工具**。
 
 ## 非功能红线
@@ -164,7 +189,9 @@ last_reviewed: 2026-09-28
    `docs/evidence.md` §4（该文件是证据台账，**其中 §9 才是本次复核的权威快照**）。对应 I9 与
    "不负责"清单。**该来源曾把"新阶梯下的注入"记为未观测，
    已被 `docs/evidence.md` §9 的复核推翻（冲突待人类裁决）** —— 本条红线本身不依赖那个说法：走
-   token 触发路径的旧构建已不存在，这是源码级事实。
+   token 触发路径的旧构建已不存在，这是源码级事实。**bundle 那一行也在同一红线下**：已移除的键
+    不许回到生效行，由 `the bundle row cannot resurrect the retired token stages` 钉住
+    （见"对外接口"）。
 3. **禁止在同一水位重复注入**（一步最多一条消息；每个 tier 每驻留期一次）—— 来源：注入的消息会
    留在上下文里、之后每一步重发（成本理由），见 `plugin/dsh-adg-token-budget/README.md` 的
    「Safety design」小节与 `INSTALL.md` 第 4 节对"哪些行只在事件时写"的说明。对应 I6/I7。
@@ -191,7 +218,8 @@ last_reviewed: 2026-09-28
 - **绝不能做**：本文件"非功能红线"7 条；以及**禁止在 `dryRun` 打开时宣称"提醒已注入"**
   （`dryRun` 下 `firedTiers` 不被消费、只写 dry-run 判定行）。
 - **停止并升级人类**（只有起草权，批准权在人类）：要推翻"提醒只能是可选"这条语义；要恢复任何
-  token 档；要改挂载位置或包名 —— **包名与行 id 是热重载身份**，改名属于部署变更。
+  token 档；要改挂载行住在哪一层、部署落点或包名 —— **包名与行 id 是热重载身份**，改名与改层
+  都属于部署变更。
 
 ## 测试与验证
 

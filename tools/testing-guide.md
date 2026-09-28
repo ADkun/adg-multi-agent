@@ -74,15 +74,15 @@ last_reviewed: 2026-09-28
 
 ### 3.1 `install.ps1` / `install.sh` 消费 preset 与插件部署集合
 
-两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**五项**部署集合（`package.json` / `src` / `README.md` / `examples` / `LICENSE`），以及四个落点：bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`、插件稳定落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`、以及 `profiles/<profile>/cordis.patch.yml` 里的挂载行。
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及三个落点：preset bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
 | 另建一个工作副本，删掉 `preset/preset.yml`，分别跑 `node tools/check-preset.mjs` 与 `node tools/gen-preset-bundle.mjs` | CLI 冒烟 | 校验器**不会**报警（它只看 `agent.cordis.yml`），而生成器会 **exit 1** 并报 `preset/preset.yml 里没有可用的 name:` —— 这条脱钩的兜底从"没有防线"变成了**构建层拦截** |
 | 在 `install.ps1` / `install.sh` 中检索它们引用的仓库内路径，逐个 `Test-Path` | 人工 review | 每条被引用的仓库内路径都存在；任一条不存在即为**脱钩**（脚本里写的是 `preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`、`skills/adg-add-agent/SKILL.md`、`plugin/dsh-adg-token-budget` 五项） |
-| 在脚本里检索插件项清单 `'package.json', 'src', 'README.md', 'examples', 'LICENSE'`，与 `plugin/dsh-adg-token-budget/` 下的实际条目对比 | 人工 review | 五项都在；新增部署项（或新增不该进部署的目录）时两个脚本必须同时改，只改一个即脱钩 |
+| 在脚本里检索插件项清单 `'package.json', 'cordis.patch.yml', 'src', 'examples', 'README.md', 'LICENSE'`（与 `install.ps1` / `install.sh` 的拷贝循环逐字一致），与 `plugin/dsh-adg-token-budget/` 下的实际条目对比 | 人工 review | 六项都在；新增部署项（或新增不该进部署的目录）时两个脚本必须同时改，只改一个即脱钩。`cordis.patch.yml` 缺进部署 = 那个包只是普通依赖、挂载行不存在（2026-09-28 的六项集合见 `docs/evidence.md` §16.1） |
 | 在插件目录下新增一个 `CHANGELOG.md`，不加入任何脚本的部署清单 | 人工 review | 判定为"新增文件不进部署"是**有意的**还是**漏的**——两种脚本的注释与 `INSTALL.md` 必须给出同一个答案，否则脱钩 |
-| 把一个包从目标 profile 的 `node_modules` 里挪走，重跑 `install.*` | CLI 冒烟 | 脚本必须**只报告、不写** `dsh.profile.bundles`、也不写挂载行（"写进列表"与"包装上了"必须同时成立，否则该 profile 会报未安装的 bundle） |
+| 把一个包从目标 profile 的 `node_modules` 里挪走，重跑 `install.*` | CLI 冒烟 | 脚本必须**只报告、不写** `dsh.profile.bundles`（"写进列表"与"包装上了"必须同时成立，否则该 profile 会报未安装的 bundle）；对 profile 层遗留的旧 `- insert:` 挂载行同样**只报告、不代删**（脚本不猜用户手改过的文件，2026-09-28 起） |
 | **dsh 正在运行时**重跑 `install.*`（有变更需要重装依赖时） | CLI 冒烟 | `pnpm add link:` 失败（`os error 32` / `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`），脚本**如实报告并继续**；包已在位**不算失败**。判据：包不在位即被上一条挡住 |
 | 比对 `install.ps1` 与 `install.sh` 的部署集合 | 未实现 | 现在没有自动化比对；两个脚本的清单必须逐项一致（本仓库声明"行为等价"） |
 
