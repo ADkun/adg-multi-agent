@@ -529,6 +529,8 @@ node cli.mjs close
 声明）、`desktop` profile 本来就用这条路线、且 `list_bundles` 有生命周期。
 **一条护栏**：同一个 profile 里 `preset-adg` 只能有一个"家"（bundle **或** profile patch 二者之一）——
 两份同 id 的 insert 行是危险形状；web 上那条临时的 profile-patch 行已撤掉（现在 0 处）。
+**本条只登记到"危险形状"，当时没有量过后果**：不要外推到**插件那一行的跨层同 id 合并**（那条已实测，
+见 §16.4 第 6 条：合并成一条、整块接管 `config:`、并让该行脱离管理）。
 - 3 行关闭的是：`tool-bash`（平台 `!!js` 在 Windows 上求值为 false）+ `tool-subagent-codex` +
   `tool-subagent-claude-code`。`!!js` 行在组合挂载后落成具体布尔值。
 - **不挂探针也能拿到的活证据**（本次交付末实测，比挂临时插件安全）：Host 的 Config inspect provider

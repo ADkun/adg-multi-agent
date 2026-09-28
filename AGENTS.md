@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 9. **插件的提醒只能是"可选提醒"，不能读成停止指令**（文本里禁止"立即停止"这类命令句）。这条由测试钉住（变异 M13）。
 10. **`browser/` 工具链的边界**：禁止引入第三方依赖（`playwright` / `puppeteer` / `ws`）；禁止把 profile 放进会话工作区、或写死任何本机绝对路径；禁止代填账号密码、读取 profile 的 cookie 库、验证码识别与指纹伪装。来源与不变量见 `browser/design.md`（I1 / I6）与 `browser/AGENTS.md`「模块特有红线」。
 
-## 生效方式（两条链路，口径不同，别承诺错）
+## 生效方式（口径不同，别承诺错）
 
 | 改了什么 | 怎么生效 | 怎么复核 |
 |---|---|---|

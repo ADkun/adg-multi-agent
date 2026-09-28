@@ -31,6 +31,9 @@ last_reviewed: 2026-09-28
 - `docs/registry.md`：`install.ps1` / `install.sh` 索引行的"挂载行的处理"改"bundle 选中的处理"。
 - `tools/testing-guide.md` 第 3.1 节：部署集合改**六项**、插件落点改 `$DSH_HOME/bundles/dsh-adg-token-budget/`、选中改 `dsh.profile.bundles`；两条冒烟判据同步（"不写挂载行"改"不写 `dsh.profile.bundles`"，并补"不代删 profile 层遗留行"）。
 - `browser/AGENTS.md`「生效方式」：插件落点那句改口成 `$DSH_HOME/bundles/dsh-adg-token-budget`。
+- 文档同步（插件模块）：`plugin/dsh-adg-token-budget/` 的 `AGENTS.md` / `INSTALL.md` / `design.md` / `testing-guide.md` / `README.md` 全部改到 bundle 形状（六项部署集合与 `dsh.bundle.patch`、`bundles/` 落点 + `dsh.profile.bundles` 选中、三层生效口径、`disabled: true` 与残留手贴行的实测、三条新用例的不变量归属、测试数 51 → 54）；`examples/cordis.patch.yml` 的头注释改成"键参考 + 手工覆盖模板"并写明跨层残留的接管后果（**数据行未动**，仍被 Loader 解析成 `config {enabled: false}`）。
+- 文档同步（仓库根）：根 `README.md`（安装表六项与新落点、「挂载行住在哪一层」「为什么装在 `$DSH_HOME/bundles`」两节重写 + 内部锚点同步、"怎么开 / 怎么关"改成覆盖行与 `disabled: true` 口径并取消"整行删掉"的建议、`logFile` 判据改 `!!js dshHomePath` 求值、证据表 51 → 54 并新增两行 bundle 化实测、目录树列出 `cordis.patch.yml`、「给 AI 的安装指令」第 5 / 6 / 8 / 9 步改口——**步骤编号 1–10 不变**，第 7 步沙箱提权 / 第 8 步真实挂载的全部引用点已复核）；根 `AGENTS.md`（命令块注释、生效方式表新增 bundle 层那一档并把小节标题里的"两条链路"去掉（表里早就不止两条）、表下"唯一的静默失效模式"一句、Project Map、Context Loading、Quality Gates 54；现 **104 行**，上限 200）。
+- `docs/evidence.md` §14.3 那条护栏补一句：它只登记到"两份同 id 的 `insert:` 行是危险形状"、**后果当时没有量过**，并给出**不许互相外推**的指针（跨层同 id 合并的后果见 §16.4 第 6 条）。
 
 ## 2026-09-28（上午 08:50+08:00）— 同一个 dsh 升级的**第三个**成因：session format v4 废弃 `{kind:'plugin', plugin}`，插件注入检查点让**每一次委派**当场失败
 
