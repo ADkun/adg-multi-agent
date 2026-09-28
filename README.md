@@ -616,7 +616,11 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 
 [billion-context](https://github.com/ranxianglei/billion-context)（下称 bili）是另一个 bundle：一个本机代理 +
 DSH 插件，把会话上下文折叠进 pack，并往**全局工具层**注册 `compress` / `decompress` / `search_context` /
-`acp_status` / `acp_cache`。它和本 preset 的交界只有一处，但那一处是硬的：
+`acp_status` / `acp_cache`。它和本 preset 的交界有两处：**工具可见性**（硬的，见下）与**自动压缩的归属**
+（bili 自己的 `dsh.bundle.patch.yml` 就带 `- id: compaction-basic` / `config: {auto: false}`）。两处都由
+同一份探测、同一个旗标（`--with-billion-context`）一起决定，所以口径只有一条：**源文件中立、生成物按探测决定**。
+
+第一处交界，工具可见性：
 
 - `toolFilter.allow` 是**真白名单**（见「设计要点」），专家只看得见 allow 里列出的名字；
 - bili 注入给模型的压缩指令与 nudge **只看自己的 config，不看这个请求有没有那些工具**。
@@ -629,7 +633,7 @@ DSH 插件，把会话上下文折叠进 pack，并往**全局工具层**注册 
 所以口径是**源文件中立、生成物按探测决定**：
 
 ```bash
-node tools/gen-preset-bundle.mjs --with-billion-context   # 把四个名字追加进 9 个专家行的 allow（只改生成物）
+node tools/gen-preset-bundle.mjs --with-billion-context   # 四个名字进 9 个专家行的 allow + compaction-basic 的 auto: false（只改生成物）
 node tools/has-billion-context.mjs ~/.dsh/profiles web    # 探测：每 profile 一行 "<name>\t<0|1>"
 sh install.sh                                              # 自动探测并决定旗标
 ```
@@ -641,8 +645,32 @@ sh install.sh                                              # 自动探测并决�
 （PowerShell：`-BillionContext on -Profiles web`，随后自己重装一次 bili 未装的 profile）。
 手动跑 `gen-preset-bundle.mjs` 默认**不注入**，忘带旗标 = 少个能力，不会装坏。
 
+> **本机特例（2026-09-28 起）：`web` 这个 profile 的 `dsh-adg-preset` 是一个实体目录，不是指向
+> `$DSH_HOME/bundles/dsh-adg-preset` 的链接。** 原因是生成物全机共用一份、而当时只有 `web` 挂着 bili
+> （`desktop` 也真的在用 Adg 模式）：把共享目录改成 bili 味道会让 `desktop` 每次委派抛
+> `names unknown global tool "compress"`。代价要说清楚 —— **这个 profile 从此不走 `install.*` 的
+> 「共享稳定目录 + SymbolicLink」模型，重跑 `install.*` 会把它打平回 plain 味道**（并且按红线 11 的
+> 探测结果，那一跑本来就该给所有目标 profile 一致的味道）。恢复到 bili 味道：
+> `node tools/gen-preset-bundle.mjs --with-billion-context && `
+> `Copy-Item bundle/adg-preset/* $DSH_HOME/profiles/web/node_modules/dsh-adg-preset/`，
+> 然后 `node tools/check-bundle-flavor.mjs $DSH_HOME/profiles/web/node_modules/dsh-adg-preset/cordis.patch.yml bili`。
+> 想永久避开这个特例，就换一条路：给 `desktop` 也装上 bili（两个 profile 同味道 ⇒ 共享目录不再冲突）。
+
 注入的是四个名字，**不含 `acp_cache`**：那份工具只读缓存经济学账本，是调度者诊断"这轮折叠值不值"用的，
 并且它能用 `conversation_id` 代读子代理的账；给每个专家只会加长它们每次请求的稳定 prefix。
+
+**第二处交界：挂着 bili 的 profile 要关掉 preset 里的自动压缩。** bili 自带
+`dsh.bundle.patch.yml`（`- insert: bili-native` 之后就是 `- id: compaction-basic` / `config: {auto: false}`），
+意思是"有 bili 在折叠上下文时，dsh 自带的自动压缩要让位"。但那一行打在 **profile 层**，而本 preset 的
+`compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在
+`isolate: {compaction: true}` 的 **realm** 里、是**另一份实例** —— 跨 lane 的 id 命中与否从未被观测，
+所以不能指望它。生成物于是把**同键同值**的 `config: {auto: false}` 直接写进 preset 自己的 `compaction` 组：
+两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套压缩各自折叠同一段历史、互相抢阈值。
+
+语义要说准：`auto: false` 是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（该插件的 `auto` 行：
+"set `false` for manual-only operation"；`lib/index.js:827` 用 `if (this.config.auto)` 决定要不要注册那两个
+listener），**不是**把这一行 `disabled` 掉。plain 味道里绝不能出现这个键 —— 没挂 bili 的 profile 里，
+dsh 自带的自动压缩是**唯一**的压缩手段，关掉等于让上下文无限增长。
 
 **同一份判据的另一半：挂着 bili 的 profile 不启用 `dsh-adg-token-budget`。** 那个插件按步数档位给子代理下
 收敛提醒，bili 的压缩/nudge 是同类指令，两套同时给同一批子代理会互相抢阈值、模型会收到"既该收敛又该折叠"
@@ -651,8 +679,10 @@ sh install.sh                                              # 自动探测并决�
 为关一个键重写整份 config 太容易丢别的键。注意这条按 profile 的**实际挂载状态**决定，不受 `--billion-context`
 旗标影响（旗标只管工具注入）。想两套并存：把 `dsh-adg-token-budget` 加回那个 profile 的 `dsh.profile.bundles` 即可。
 
-自检：`Select-String`/`grep` 一下 `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml`，注入版里 9 个 `agent-*` 行的
-`toolFilter.allow` 末尾应有那四个名字；再到新会话里委派任一专家，让它报"工具目录里有没有 `acp_status`"。
+自检：`node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml bili`（或 plain）——
+它同时断言两件事：9 个 `agent-*` 行的 `toolFilter.allow` 末尾有没有那四个名字，以及 `compaction-basic` 行的
+`config.auto` 是不是恰好 `false`（plain 味道则断言这两个都不存在）。再到新会话里委派任一专家，让它报"工具目录里
+有没有 `acp_status`"，并确认它没有被 dsh 自带的自动压缩插过手（手动 `/compact` 仍应可用）。
 两个方向都要测的完整口径见 `docs/evidence.md` §17「billion-context 的上下文工具对 ADG 专家可见吗」。
 
 ## 第二层：子代理的步数收敛检查点（插件 `dsh-adg-token-budget`）
@@ -1182,8 +1212,10 @@ tools/
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
   gen-preset-bundle.mjs   # 构建脚本：preset/ 三份源文件 → bundle/adg-preset/（生成物，gitignore）。
-                          # --with-billion-context 追加 bili 的四个上下文工具进 9 个专家行的 allow
-  check-bundle-flavor.mjs # 产物自检：按 plain|bili 断言 9 个专家行的 allow 里有没有那四个名字
+                          # --with-billion-context = 四个上下文工具进 9 个专家行的 allow
+                          # + compaction-basic 注入 config.auto=false（都只改生成物，见红线 11）
+  check-bundle-flavor.mjs # 产物自检：按 plain|bili 断言两件事 —— 9 个专家行的 allow 里有没有那四个
+                          # 名字，compaction-basic 的 config.auto 是否为 false（plain 则断言都不存在）
                           # （check-preset.mjs 只看源文件，产物是它的盲区）
   has-billion-context.mjs # 判据：某 profile 到底挂没挂 billion-context。install.* 用它同时决定两件
                           # 相反的事 —— 注入那四个工具 / 不启用 dsh-adg-token-budget

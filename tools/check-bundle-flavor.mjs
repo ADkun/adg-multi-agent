@@ -8,8 +8,8 @@
 // 这样 gen 脚本以后改缩进（ITEM_INDENT）也不会假绿。
 //
 // 用法：
-//   node tools/check-bundle-flavor.mjs <cordis.patch.yml> plain   # 断言：九行里一个 bili 名字都没有
-//   node tools/check-bundle-flavor.mjs <cordis.patch.yml> bili    # 断言：每个专家行四个名字全有
+//   node tools/check-bundle-flavor.mjs <cordis.patch.yml> plain   # 断言：九行里一个 bili 名字都没有，且 compaction-basic 没有 config.auto
+//   node tools/check-bundle-flavor.mjs <cordis.patch.yml> bili    # 断言：每个专家行四个名字全有，且 compaction-basic 是 config.auto: false
 // 退出码：0 通过 / 1 不通过 / 2 用法或文件错误。零依赖（按行扫，不解析 YAML）。
 import { readFileSync, existsSync } from 'node:fs'
 import process from 'node:process'
@@ -79,6 +79,47 @@ for (const [n, row] of starts.entries()) {
   }
   const leaked = NOT_INJECTED.filter((t) => items.includes(t))
   if (leaked.length > 0) errors.push(`${row.id}（${toolName}）：${leaked.join(' / ')} 不在注入清单里（gen 脚本与本脚本的清单需对齐）`)
+}
+
+// ── compaction：挂 bili 时 preset realm 里的自动压缩必须被关掉 ──────────────────
+// 判据用的是 bili 自己的键 `config.auto`（billion-context 的 dsh.bundle.patch.yml 就是这么写的，
+// 它打的是 profile 层；本 preset 的 compaction 三行活在 isolate 出来的 realm 里，是**另一份实例**，
+// 所以生成物里要再写一遍）。值必须恰好是 `false`：
+//   - bili 模式：`auto: false` 在 ⇒ 关掉自动压缩与溢出恢复（手动 /compact 仍可用）；
+//                缺这个键 ⇒ 专家一边被 bili 的 nudge 催着压缩，一边 dsh 还在自己折叠同一段历史。
+//   - plain 模式：绝对不能有 ⇒ 没挂 bili 的 profile 里，dsh 自带的自动压缩是**唯一**的压缩手段，
+//                关掉等于让上下文无限增长（这正是"两个味道"必须分开断言的原因）。
+// 缩进同样自探测：源文件/生成物里这一行的列数不同，写死就是假绿。
+const compRe = /^(\s*)- id: compaction-basic\s*$/
+let compIndex = -1
+let compIndent = 0
+for (let i = 0; i < lines.length; i += 1) {
+  const m = compRe.exec(lines[i])
+  if (m) {
+    compIndex = i
+    compIndent = m[1].length
+    break
+  }
+}
+if (compIndex < 0) {
+  errors.push('找不到 `- id: compaction-basic` 行：compaction 组被改动或那一行被删了')
+} else {
+  let auto = null
+  for (let i = compIndex + 1; i < lines.length; i += 1) {
+    const l = lines[i]
+    if (l.trim() === '') continue
+    if (indentOf(l) <= compIndent) break
+    if (l.trimStart().startsWith('#')) continue
+    const m = /^\s*auto:\s*(\S+)\s*$/.exec(l)
+    if (m) auto = m[1].replace(/^["']|["']$/g, '')
+  }
+  report.push(`compaction-basic[auto=${auto ?? '未写'}]`)
+  if (mode === 'bili' && auto !== 'false') {
+    errors.push(`compaction-basic：bili 模式期望 config.auto: false（挂 bili 时关掉 dsh 自带自动压缩），实际 ${auto === null ? '没有这个键' : `auto: ${auto}`}`)
+  }
+  if (mode === 'plain' && auto !== null) {
+    errors.push(`compaction-basic：plain 模式不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: ${auto}`)
+  }
 }
 
 for (const line of report) process.stdout.write(`  ${line}\n`)

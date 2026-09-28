@@ -28,6 +28,18 @@
 //   默认**不追加**（忘了加旗标 = 少个能力，不会装坏）。install.ps1 / install.sh 会探测目标 profile
 //   有没有挂 billion-context，挂了才带这个旗标。
 //
+//   同一个旗标还负责**关掉 preset realm 里的自动压缩**（2026-09-28 追加）：给 `compaction` 组那行
+//   `compaction-basic` 注入 `config: {auto: false}` —— 与 billion-context 自己的
+//   `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）**同键同值**。
+//   为什么要在生成物里再写一遍：那份官方补丁打在 **profile 层**，而本 preset 的 compaction 三行活在
+//   `isolate: {compaction: true}` 的 realm 里、是**另一份实例**，跨 lane 的 id 命中与否从未被观测
+//   —— 直接写进 preset 自己的组里就不依赖这个解析；两边都生效也无行为差异（幂等）。
+//   `auto: false` 只关"自动压缩 + 溢出恢复"，手动 `/compact` 仍可用（`@deepseek-ai/dsh-compaction-basic`
+//   README `auto` 行："set `false` for manual-only operation"；lib/index.js:827 用
+//   `if (this.config.auto)` 决定要不要注册那两个自动 listener）。
+//   源文件（preset/agent.cordis.yml）同样保持中立：没挂 bili 的 profile 里，dsh 自带的自动压缩
+//   是**唯一**的压缩手段，关掉等于让上下文无限增长。
+//
 // 输入（相对仓库根）：
 //   preset/preset.yml           name / description /（可选）order —— 只按 `key: value` 取顶层标量
 //   preset/agent.cordis.yml     子插件条目列表，**原样**缩进进 config.plugins（单一事实来源）
@@ -141,6 +153,43 @@ function addToolsToExpertAllows(source, names) {
   return { text: `${lines.join('\n')}\n`, touched, skipped }
 }
 
+/**
+ * 关掉 **preset realm 这份** `compaction-basic` 的自动压缩：给 `compaction` 组里那行补上
+ *   `      config:` / `        auto: false`（缩进比 `- id:` 深一级）。
+ * 与 billion-context 自己的 profile 层补丁**同键同值** —— 见文件头的说明。
+ * 源文件刻意不写这个 config：它必须对没挂 billion-context 的人也成立（那种 profile 里 dsh 自带的
+ * 自动压缩是唯一的压缩手段）。因此若源文件里已经有 `config:`，这里**直接失败**而不是叠加：
+ * 两份 config 会让"到底谁生效"不可判定，而 AGENTS.md 红线 11 要求这个键只能出现在生成物里。
+ */
+function disableAutoCompaction(source) {
+  const lines = source.replace(/\n+$/, '').split('\n')
+  const at = lines.findIndex((line) => /^ {4}- id: compaction-basic\s*$/.test(line))
+  if (at < 0) {
+    fail('找不到 `    - id: compaction-basic` 行（compaction 组那一行）：--with-billion-context 要给它注入 config.auto=false，检查 preset/agent.cordis.yml 的 compaction 组是否被改动')
+  }
+  let nameAt = -1
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '') continue
+    if (indentOf(lines[i]) <= 4) break // 走到了这一行块之外
+    if (lines[i].trimStart().startsWith('#')) continue
+    if (/^ {6}name:/.test(lines[i])) {
+      nameAt = i
+      break
+    }
+  }
+  if (nameAt < 0) fail('`compaction-basic` 行里找不到 `      name:`（缩进应比 `- id:` 深一级）')
+  for (let i = nameAt + 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '') continue
+    if (indentOf(lines[i]) <= 4) break
+    if (lines[i].trimStart().startsWith('#')) continue
+    if (/^ {6}config:/.test(lines[i])) {
+      fail('preset/agent.cordis.yml 的 compaction-basic 行已经有 `config:` —— `auto: false` 只允许由本脚本在 --with-billion-context 时注入，不要手写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩）')
+    }
+  }
+  lines.splice(nameAt + 1, 0, '      config:', '        auto: false')
+  return `${lines.join('\n')}\n`
+}
+
 function readSource(relative) {
   const path = join(repo, relative)
   try {
@@ -187,9 +236,12 @@ if (!firstEntry || !firstEntry.startsWith('- ')) {
 if (agentList.includes('\t')) fail('preset/agent.cordis.yml 里出现了制表符：YAML 缩进不允许 tab，请换空格')
 if (agentList.includes('\r')) fail('preset/agent.cordis.yml 含 CR 行尾：本仓库要求 LF（见 .gitattributes），否则生成的缩进块会带 \\r')
 
-// 构建期条件化：--with-billion-context 时把 bili 的上下文工具追加进每个专家行的 allow 名单。
-// 源文件（preset/agent.cordis.yml）保持中立 —— 它必须对没装 billion-context 的人也成立，
-// 而那些名字在未挂载时**不存在**，写进 allow 会让每一次委派当场抛 unknown global tool。
+// 构建期条件化：--with-billion-context 时
+//   （1）把 bili 的上下文工具追加进每个专家行的 allow 名单；
+//   （2）给 compaction 组的 compaction-basic 注入 config.auto=false（关掉 preset realm 的自动压缩）。
+// 源文件（preset/agent.cordis.yml）两件事都不写、保持中立 —— 它必须对没装 billion-context 的人也成立：
+// 那些工具名在未挂载时**不存在**（写进 allow 会让每一次委派当场抛 unknown global tool），
+// 而 dsh 自带的自动压缩是那些 profile 里唯一的压缩手段（关掉等于让上下文无限增长）。
 let entrySource = agentList
 let biliTouched = 0
 if (WITH_BILLION_CONTEXT) {
@@ -201,7 +253,7 @@ if (WITH_BILLION_CONTEXT) {
     fail('一个专家行都没找到（形如 `    - id: agent-xxx` 且带 `          allow:`），--with-billion-context 无意义：检查是否喂错了文件')
   }
   biliTouched = result.touched.length
-  entrySource = result.text
+  entrySource = disableAutoCompaction(result.text)
 }
 
 const patch = [
@@ -216,6 +268,9 @@ const patch = [
         `# 本次生成带了 --with-billion-context：${biliTouched} 个专家行的 toolFilter.allow 追加了 ${BILLION_CONTEXT_TOOLS.join(' / ')}`,
         '# （billion-context 的 DSH 插件把这几个名字注册在全局层，allow 是白名单，不写专家就看不见；',
         '#  没挂 billion-context 的 profile 要用**不带**这个旗标的生成物，否则委派会抛 unknown global tool。）',
+        '# 同一个旗标还给 compaction 组那行 compaction-basic 注入了 config.auto=false —— 与',
+        '# billion-context 自己的 dsh.bundle.patch.yml 同键同值：挂 bili 时关掉 dsh 自带的自动压缩',
+        '# （免得两套压缩各自折叠同一段历史）；手动 /compact 仍然可用。',
       ]
     : []),
   '',
@@ -244,8 +299,8 @@ process.stdout.write(`gen-preset-bundle: ${outDir}\n`)
 process.stdout.write(`  cordis.patch.yml  ${Buffer.byteLength(patch, 'utf8')} 字节 / ${rows} 个顶层子插件条目（preset id=${PRESET_ID}, order=${order}）\n`)
 process.stdout.write(
   WITH_BILLION_CONTEXT
-    ? `  billion-context   已注入：${biliTouched} 个专家行 + ${BILLION_CONTEXT_TOOLS.length} 个工具名（${BILLION_CONTEXT_TOOLS.join(' / ')}）\n`
-    : '  billion-context   未注入（缺省）。挂了该 bundle 的 profile 要用 --with-billion-context 重新生成，否则专家看不见 compress / acp_status 等工具。\n',
+    ? `  billion-context   已注入：${biliTouched} 个专家行 + ${BILLION_CONTEXT_TOOLS.length} 个工具名（${BILLION_CONTEXT_TOOLS.join(' / ')}），并把 compaction-basic 的 auto 设为 false\n`
+    : '  billion-context   未注入（缺省）。挂了该 bundle 的 profile 要用 --with-billion-context 重新生成，否则专家看不见 compress / acp_status 等工具，dsh 自带的自动压缩也会和 bili 抢着折叠同一段历史。\n',
 )
 process.stdout.write('  package.json      来自 preset/bundle.package.json\n')
 process.stdout.write('下一步：把该目录装进 profile（plugin_manager install_bundle，或 dsh plugin --profile <p> add file:<tgz> + 选入 dsh.profile.bundles）。\n')

@@ -9,7 +9,20 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（下午 15:31+08:00，本文件最新的一条）— billion-context 协同：那四个上下文工具改为**构建期条件化注入**；挂着 bili 的 profile **不再启用** `dsh-adg-token-budget`
+## 2026-09-28（晚间，本文件最新的一条）— 挂 bili 的 profile 连**自动压缩**也交给 bili：`compaction-basic` 的 `auto: false` 改为构建期注入；bundle `1.2.0`
+
+- 第二处交界（同一旗标 `--with-billion-context`）：`tools/gen-preset-bundle.mjs` 在 preset 的 `compaction` 组里给 `compaction-basic` 行注入 `config: {auto: false}` —— 与 bili 自己的 `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）**同键同值**，两边都生效也无行为差异（幂等）。语义是"关掉自动折叠与溢出恢复、手动 `/compact` 仍可用"（该包 `README.md:76`、`lib/index.js:827`），**不是**整行 `disabled`。
+- 为什么写在 preset 自己的组里：那三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是另一份实例，而 bili 那份补丁打在 **profile 层**，"同 id 能不能跨 lane 命中"从未被观测 ⇒ 产物不依赖它。
+- `tools/check-bundle-flavor.mjs`：断言从"四个名字"扩到两件事 —— plain ⇒ 9 行全 `NONE` + `compaction-basic[auto=未写]`；bili ⇒ 9 行全 `ALL` + `compaction-basic[auto=false]`；交叉断言各 **exit 1**（各报 10 个 ERROR）。
+- `tools/check-preset.mjs`：源文件里手写 `compaction-basic` 的 `auto` 判 **ERROR** 并指回 `--with-billion-context`（`auto` 本就在该插件 `allowedKeys` 里，"未知键"那条拦不住它）。
+- `preset/agent.cordis.yml`：注释块记录"唯一一个构建期注入的键是 `compaction-basic` 的 `auto`"；**源文件本体仍不写 config**。
+- `preset/bundle.package.json`：`1.1.0` → `1.2.0`。
+- `AGENTS.md`：红线 11 与质量门 1b 各补 compaction 半边（含两种味道的实测计数与"手写即 ERROR"的反向守卫实测）；生效方式表那一行同步。
+- `README.md`：「与 billion-context 协同」改写成**两处交界**，并写明**本机特例** —— `web` 的 `dsh-adg-preset` 是实体目录（不是共享稳定目录的链接），重跑 `install.*` 会把它打平回 plain；给出恢复命令与"给 `desktop` 也装 bili"的绕开办法。
+- `docs/evidence.md`：§17.1 新增第 10 条（四层依据 + 检验 + 防重踩）、§17.2 从三条改四条、§8"realm 里 `auto` 取值"那行从「刻意留在范围外」改成「部分已处置 + 两条未观测」，§17 边界句改为"开关不是旋钮"。
+- 依据：bili 官方 patch 自己就关自动压缩；只注入那四个名字而不关它，结果是两套折叠各自抢阈值、压同一段历史。
+
+## 2026-09-28（下午 15:31+08:00）— billion-context 协同：那四个上下文工具改为**构建期条件化注入**；挂着 bili 的 profile **不再启用** `dsh-adg-token-budget`
 
 - `tools/gen-preset-bundle.mjs`：新增 `--with-billion-context`，给 9 个专家行的 `toolFilter.allow` 追加 `compress` / `decompress` / `search_context` / `acp_status`（**不含** `acp_cache` —— 它是账本诊断，归调度者）。不带旗标时产物逐字节不变。
 - 新增 `tools/has-billion-context.mjs`：判据"某个 profile 算不算挂着 billion-context" = `dsh.profile.bundles` 含该包 **且** `node_modules/billion-context/dsh.bundle.patch.yml` 存在；输出每 profile 一行 `<name><TAB>1|0`，退出码恒 0。**注入与停用两件方向相反的事共用这一份实现**。

@@ -284,7 +284,7 @@
 # `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
 # share this realm rather than sit outside it.
 #
-# 这两行**刻意不写 config**：压缩阈值与单条工具结果的截断长度一律用插件出厂默认值
+# 源文件里这两行**刻意不写 config**：压缩阈值与单条工具结果的截断长度一律用插件出厂默认值
 # （compaction-basic 的 0.8 / 0.16，pruner 的 8192 / 4096 / 1024）。
 # 早期版本把 thresholdRatio 压到 0.6（更早压缩）、把 pruner 压到 4096/2048/768
 # （单条结果超 4096 字符就砍中间）来省 token —— 实测代价是**信息被切掉**：工具已经
@@ -294,6 +294,17 @@
 # 以后若确实要覆盖，插件在加载时会校验：两个 ratio 必须落在 (0,1] 且
 # retainRatio < thresholdRatio；pruner 必须满足 head + 标记 + tail ≤ threshold ——
 # 写错不是静默生效，而是整行挂载时直接抛错。
+#
+# 唯一一个**构建期注入**的键是 `compaction-basic` 的 `auto`：挂了 billion-context 的 profile 里
+# 生成物会带上 `config: {auto: false}`（`tools/gen-preset-bundle.mjs --with-billion-context`），
+# 与 billion-context 自己的 `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）
+# **同键同值**。为什么要在这儿再写一遍：那份官方补丁打在 profile 层，而本 preset 的 compaction
+# 三行活在 `isolate: {compaction: true}` 的 realm 里、是另一份实例，跨 lane 的 id 命中与否从未被观测；
+# 写进 preset 自己的组里就不再依赖那个解析（两边都生效也无行为差异）。
+# 语义是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（该插件 README 的 `auto` 行：
+# "set `false` for manual-only operation"），不是把这一行 `disabled` 掉。
+# **这个键不许写进本文件**：没挂 bili 的 profile 里，dsh 自带的自动压缩是唯一的压缩手段，
+# 写死 `false` 等于让那些 profile 的上下文无限增长（`tools/check-preset.mjs` 会直接报错）。
 #
 # `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
 # plane, and the rows here resolve that one instance. It takes no configuration,

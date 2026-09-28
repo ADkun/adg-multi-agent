@@ -24,6 +24,9 @@
 //          范围里：两个 ratio 在 (0,1] 且 retainRatio < thresholdRatio；pruner 正整数且
 //          head + marker + tail ≤ threshold；tool-web 正整数且 fetchMaxOutputChars ≤ 200000
 //          （> 60000 只提示）。不合法的那一行会在挂载时直接抛错。
+//      除外：`compaction-basic` 的 `auto` 是**构建期注入**的键（红线 11）—— 源文件里出现就报错，
+//      指向 `node tools/gen-preset-bundle.mjs --with-billion-context`（它按 bili 自己的
+//      `dsh.bundle.patch.yml` 往生成物里写 `auto: false`，见 README「与 billion-context 协同」）。
 //
 // 用法：
 //   node tools/check-preset.mjs                                  # 校验仓库里的 preset/
@@ -532,6 +535,15 @@ if (compactionRow !== undefined) {
   }
   if (thresholdRatio !== undefined && retainRatio !== undefined && retainRatio >= thresholdRatio) {
     fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：retainRatio ${retainRatio} 必须小于 thresholdRatio ${thresholdRatio}（否则插件加载时抛 retainRatio must be less than the resolved thresholdRatio）`)
+  }
+  // `config.auto` 是**构建期注入**的键（AGENTS.md 红线 11）：挂了 billion-context 的 profile 由
+  // `tools/gen-preset-bundle.mjs --with-billion-context` 往生成物里写 `auto: false`（与 bili 自己的
+  // dsh.bundle.patch.yml 同键同值）。源文件必须保持中立 —— 没挂 bili 的 profile 里，dsh 自带的
+  // 自动压缩是**唯一**的压缩手段，手写 false 等于让那些 profile 的上下文无限增长。
+  // 它已在 spec.allowedKeys 里（是插件认识的键），所以"未知键"那条守卫拦不住它，这里单独拦。
+  const autoWritten = directPath(compactionRow, 'auto')
+  if (autoWritten !== undefined) {
+    fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：config.auto = ${compactionRow.paths.get('config > auto')} 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`)
   }
 }
 

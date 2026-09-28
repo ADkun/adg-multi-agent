@@ -139,7 +139,7 @@ last_reviewed: 2026-09-28
 | **已撤销的 token 两档旧口径**（§4 / §7 / §15 里的历史行） | **仍是历史证据，不许写成当前行为**：包括那五个惰性旧键（§7）、`hard stage:` / `dry-run …would cancel` 前缀（§9）、`{kind:'plugin', plugin}` 包装（§15），以及"旧落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`"与旧部署集合的五项形状（§14.5 / §14.6 的历史标注、§15.4 那条探针跑的部署位置、§16.1）。量法：无 —— 代码路径已删；本行只是防止引用时把历史数字读成现值 |
 | **重启后真实 `adg` 专家行是否看得见、调得通 bili 那四个上下文工具** | **未观测**（§17 未观测 ①）：注入只在产物里，可见性探针走的是**通用委派**路径（§17.1 第 1 条），不是 `adg` 专家行。量法：重启 dsh → 新会话选「Adg 多智能体模式」→ 让调度者派一次 `agent_search`，在委派 prompt 里要求"先调一次 `acp_status` 并把结果原样报回来"；成功 = 该步返回工具结果而不是 `names unknown global tool`。注意第二个前提：bili 的 proxy 必须活着（端口读 `C:\Users\cenqian\.local\state\billion-context\proxy-origin`，本机上一进程留下的端口会失效） |
 | **从 `dsh.profile.bundles` 移除 `dsh-adg-token-budget` 后冷启动无副作用** | **未观测**（§17 未观测 ②）。量法：重启挂了 bili 的那个 profile → dsh 正常起来 + 该 profile 日志里**不再**出现 `adg-token-budget` 的 `activation:` 行 + `list_bundles` 里这一条变成未选中 |
-| **preset realm 里 `compaction-basic` 的 `auto` 到底取什么值** | **未观测**，且**刻意留在本次范围外**（§17 未观测 ③）：bili 的 patch 层写了 `compaction-basic` / `config.auto: false`，但 profile 层那条能不能进 realm 没有量过；若进不去，专家就同时受**原生自动压缩**与 **bili 的压缩指令**两套约束（本仓库红线 3 明确不动尺寸旋钮，所以这里只是登记，不是待修的洞）。量法：Adg 会话转写里找原生压缩发生的痕迹（`compress` 工具调用之外的自动折叠），与 bili 的 `/acp-cache` 台账对齐 |
+| **preset realm 里 `compaction-basic` 的 `auto` 到底取什么值** | **部分已处置，仍有一条未观测**。2026-09-28 晚按用户裁决**不再留在范围外**：生成物在 preset 自己的 `compaction` 组里构建期注入 `config: {auto: false}`（§17.1 第 10 条，与 bili 官方 patch 同键同值 ⇒ 幂等），所以"专家会不会被两套压缩同时折叠"在设计上已封住。**仍未观测**：(a) bili profile 层那份 `- id: compaction-basic` 到底能不能跨 lane 命中 realm 实例；(b) 注入的键在**真实 Adg 会话**里确实关掉了原生自动折叠（产物断言只证明键写对了）。量法：Adg 会话转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐；`/compact` 手动触发应当仍可用 |
 
 ## 9. 活证据复核快照（2026-09-25T13:46:37Z / 21:46:37+08:00）
 
@@ -895,7 +895,7 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 ## 17. billion-context 的上下文工具对 ADG 专家可见吗（2026-09-28）
 
 **这一节回答的问题**：ADG 的专家行能不能用 billion-context（下称 bili）那套上下文工具；口径为什么是"构建期条件化注入"；以及"挂了 bili 就别启用 `dsh-adg-token-budget`"这条决定的依据。
-**边界**：本节**不**回答"步数检查点到底有没有用"（§8 第 1 行的核心问题，至今未观测），也不改 preset-realm 的压缩语义（`compaction-basic` 的尺寸旋钮仍按红线 3 不碰）。
+**边界**：本节**不**回答"步数检查点到底有没有用"（§8 第 1 行的核心问题，至今未观测），也**不碰任何尺寸旋钮**（红线 3：`compaction-basic` 的 0.8/0.16 与 `tool-result-pruner` 的 8192/4096/1024 一律出厂默认）。本节改动的是 realm 里 `compaction-basic` 的**开关**（`auto`，见 17.1 第 10 条）—— 开关不是旋钮。
 
 ### 17.1 结论与依据（逐条带状态档）
 
@@ -908,13 +908,19 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
    - plain 产物（`node tools/gen-preset-bundle.mjs bundle/adg-plain`）→ 9 个专家行全 `NONE`，allow 计数 `agent_file[10] agent_computer[7] agent_app[7] agent_browser[10] agent_search[2] agent_researcher[5] agent_coder[9] agent_reviewer[7] agent_general[16]`，`通过：9 个专家行，plain 模式断言成立`，**exit 0**。
    - bili 产物（`node tools/gen-preset-bundle.mjs --with-billion-context`）→ 全 `ALL`，计数 `14 / 11 / 11 / 14 / 6 / 9 / 13 / 11 / 20`（**每行正好 +4**），**exit 0**。
    - 交叉断言（钉"假绿"）：bili 产物按 `plain` 断 → 9 个 ERROR、exit 1；plain 产物按 `bili` 断 → 9 个 ERROR、exit 1。
-   - 零回归证据：**不带旗标重跑生成物，与本机当时已装的稳定产物 SHA256 逐字节相同**（`8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`）⇒ 改动没有触碰任何没挂 bili 的人的产物。
+   - 零回归证据：**不带旗标重跑生成物，去掉注释行后与改动前已装的稳定产物逐行相同**（非注释行 `278 = 278`、diff `0`）。整体 SHA256 从 `8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`（1.1.0 的 plain）变成 `8FD4D6A5B0C9D64AF33E5E3A9A6B2C65EE506FEC37FBCB91834904A8B1F78289`（1.2.0 的 plain）：**13 行差异全是注释**（生成物头部的 flavor 说明 + 源文件注释块新增的 `auto` 段）**加上 `package.json` 的版本号** ⇒ 行、键、取值一个都没动，改的是说明文字。
    - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
 6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
 7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。
 8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。
 9. **源码级事实（token-budget 让位为什么选"不选中 bundle"而不是塞 `enabled: false`）**：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。
+10. **第二处交界：挂 bili 的 profile 要关掉 preset realm 里的自动压缩（本次新增）**，依据分四层：
+    - **源码级事实（bili 官方就是这么做的）**：`C:\Users\cenqian\.dsh\profiles\web\node_modules\billion-context\dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
+    - **源码级事实（键存在，且语义就是"只留手动"）**：`@deepseek-ai/dsh-compaction-basic` 的 `lib/index.js:62` `if (config.auto !== void 0 && typeof config.auto !== "boolean") throw new Error("BasicCompactionConfig: auto must be a boolean")`；`:85` `auto: config.auto ?? true`；`:817` zod `auto: z.boolean()`；`:827` `if (this.config.auto) this._registerAutomaticCompaction()`；该包 `README.md:76` 表格 `| auto | true | Enable automatic condensation and overflow recovery; set false for manual-only operation. |` ⇒ `auto: false` = 关自动折叠与溢出恢复，**手动 `/compact` 仍可用**（`command-compact` 那行不动）。
+    - **设计依据（为什么写在 preset 自己的组里，而不是依赖 profile 层那份）**：本 preset 的 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是**另一份实例**；bili 的补丁打在 **profile 层**，"同 id 能不能命中 realm 那行"从未被观测（原 §17.2 ③）⇒ 生成物直接往 preset 的 `compaction` 组里写**同键同值**：两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套折叠各自抢阈值、压同一段历史。
+    - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 9 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 9 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **10** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 \`config:\` —— \`auto: false\` 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
+    - **踩过的坑（登记，防重踩）**：`auto` 本来就在该插件的 `spec.allowedKeys` 里 ⇒ "未知键"那条检查**拦不住手写**，必须单加一条"这个键只许出现在产物里"的规则，否则有人手写 `false` 就会让没挂 bili 的 profile 静默失去唯一的压缩手段（那才是真正的洞）。零回归仍以第 5 条的 SHA256 为准。
 
 ### 17.2 未观测（已照 §8 登记，引用本节时不许抹平）
 
-① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② 从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**；③ **preset realm 里 `compaction-basic` 的 `auto`** 到底取什么值（bili 在 profile 层写了 `auto: false`，能不能进 realm 未量；若进不去，专家就同时受原生自动压缩与 bili 指令两套约束）。三条的量法都写在 §8 对应行里。
+① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② 从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**；③ **profile 层的 `- id: compaction-basic` / `config: {auto: false}` 到底有没有落到 realm 里那份实例**（第 10 条已不再依赖它 —— 生成物把同键同值写进 preset 组，但"官方那份能不能跨 lane 命中"仍未量，所以"两处都生效"这件事本身也未被观测）；④ **注入进产物的 `auto: false` 在真实 Adg 会话里确实关掉了原生自动折叠**（产物断言只证明键写对了，不证明运行期行为；第 10 条的量法：转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐）。四条的量法都写在 §8 对应行里。
