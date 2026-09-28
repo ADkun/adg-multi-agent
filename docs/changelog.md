@@ -9,7 +9,15 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（晚间，本文件最新的一条）— 挂 bili 的 profile 连**自动压缩**也交给 bili：`compaction-basic` 的 `auto: false` 改为构建期注入；bundle `1.2.0`
+## 2026-09-28（追加，本文件最新的一条）— 调度 persona 规则 8：**委派一律走后台**（阻塞会把这一次降级成一次性、接不回来）
+
+- `preset/agent.cordis.yml` 规则 8（原来只有"同一条回复里同时启动多个委派、不要串行等待"）补一条口径：委派一律用后台方式发出（不设 `run_in_background: false`），并写明代价 —— 前台（阻塞）分支走 `subagents.start()`，而 `dsh-subagent` 的 `start()` 固定发 `mode: "one-shot"` 描述符，于是这一次委派**不进 `list_agents`**（`dsh-tool-subagent-control` 的 `list-agents` 只保留 continuable）、`send_message` 报 `NOT_RESUMABLE`，规则 6 / 7 省下的"重读"退回原价，用户也不能在界面上给这个子代理发消息或停它。同时写明"后台不等于结果丢了、也不用停在那里等"：即使这一轮下一步就要用该结果，也照样后台派出后结束本轮，由子代理的**结算通知**（唤醒型投递）把它重新唤起。**没有任何阻塞例外**（初稿曾写"唯一例外 = 同一轮下一步要用到该结果且无可并行工作"，同日**按用户指出纠正**：前台不会让它更快拿到结果）。代价 +429 字符（`prefix` 正文按不含换行实测 7219 —— 同日纠正"唯一例外"时又改过措辞，初版是 +366 / 7156；顶注第 10 条记的 4820 是那一次改动之后的旧值）。
+- `preset/agent.cordis.yml` 顶注新增第 13 条改动说明（源码依据 + "只能是提示级"：`enableRunInBackground: false` 是反方向，会强制永远阻塞 + 永远一次性；框架没有"只能后台"的开关；含"没有阻塞例外"的唤醒型投递依据 `notifySettlement` → `sendWaking(...)`）。
+- `preset/design.md`：`SchedulerPersona` 新增 **I17**（口径 + 两条禁止 + 源码依据 + "未观测"量法）。
+- `preset/testing-guide.md`：`I1..I16` → `I1..I17`；新增 **Q1**（规则 8 四件是否都在；`run_in_background` 只应命中规则 8 与顶注第 13 条）与 **Q2**（真实挂载量法：`run_in_background: false` 计数应为 0；阻塞的那一次应看不到、接不上）。
+- 依据（用户报告 + 源码勘探）：用户观察到"有时阻塞、有时一次性"，实为**同一个开关的副作用** —— 阻塞与一次性是同一件事（`run_in_background: false` ⇒ 前台 ⇒ one-shot 描述符）。用户要求默认非阻塞，理由是只有 continuable 子代理才能被用户手动发消息 / 停止，并与规则 7 的"子代理复用"联动；非阻塞不影响后续工作（结算通知会回到调度者）。
+
+## 2026-09-28（晚间）— 挂 bili 的 profile 连**自动压缩**也交给 bili：`compaction-basic` 的 `auto: false` 改为构建期注入；bundle `1.2.0`
 
 - 第二处交界（同一旗标 `--with-billion-context`）：`tools/gen-preset-bundle.mjs` 在 preset 的 `compaction` 组里给 `compaction-basic` 行注入 `config: {auto: false}` —— 与 bili 自己的 `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）**同键同值**，两边都生效也无行为差异（幂等）。语义是"关掉自动折叠与溢出恢复、手动 `/compact` 仍可用"（该包 `README.md:76`、`lib/index.js:827`），**不是**整行 `disabled`。
 - 为什么写在 preset 自己的组里：那三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是另一份实例，而 bili 那份补丁打在 **profile 层**，"同 id 能不能跨 lane 命中"从未被观测 ⇒ 产物不依赖它。

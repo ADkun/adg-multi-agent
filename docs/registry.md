@@ -25,7 +25,7 @@ last_reviewed: 2026-09-28
 | `browser/design.md` | 工具链作为对象的设计：`BrowserTarget`（不可变值对象）/ `BrowserInstance`（生命周期型）/ `PageSession`（句柄型）/ `PageTab`（清理型）四个对象与 I1..I10（含 I9「不点名不关、不关到 0 个」与 I10「谁开的谁收」）；为什么"登录由人完成"是边界 | 要改命令行契约、profile 解析口径或标签页清理规则之前 |
 | `browser/testing-guide.md` | I1..I10 的用例（**36 个，不需要浏览器**）、三个状态机迁移矩阵全表、两条跨模块消费侧契约、未观测清单 | 改完 `browser/` 要跑什么、要判断某条不变量被测到什么程度时 |
 | `preset/AGENTS.md` | `preset/` 的独立命令、模块特有红线、跨模块路由、生效方式；开头写明"为什么本模块需要独立文档" | 要增删专家、或改调度 persona 的名册与分派规则之前 |
-| `preset/design.md` | preset 作为对象的设计：`PresetRevision`（生命周期型）/ `ExpertRow` / `SchedulerPersona` 三个对象与不变量（含 I16 交接专用叶子 `agent-general`）、专家行与调度名册的双向约束、体积旋钮三行的口径 | 要改专家行字段、`allow` 名单或旋钮口径时 |
+| `preset/design.md` | preset 作为对象的设计：`PresetRevision`（生命周期型）/ `ExpertRow` / `SchedulerPersona` 三个对象与不变量（含 I16 交接专用叶子 `agent-general`、I17 委派一律走后台）、专家行与调度名册的双向约束、体积旋钮三行的口径 | 要改专家行字段、`allow` 名单或旋钮口径时 |
 | `preset/testing-guide.md` | preset 侧不变量→用例全表、`PresetRevision` 迁移矩阵全表、两条跨模块消费侧契约（插件消费 preset **id** 而非 `preset.yml` 的 `name`；技能消费专家行的**字段形状**）、对 `check-preset.mjs` 的能力边界断言 | 改完 preset 要跑什么、要判断某条约束被测到什么程度时 |
 | `plugin/dsh-adg-token-budget/AGENTS.md` | 插件的独立命令、模块特有红线（**编号即 `design.md` 的不变量号**）、跨模块路由、生效方式 | 要改插件行为（筛选 / 计数 / 措辞 / 激活行）之前 |
 | `plugin/dsh-adg-token-budget/design.md` | 插件作为对象的设计：`PluginActivation`（生命周期型）/ `ChildStepState`（句柄型）/ `ResolvedConfig` / `ConvergenceReminder` 四个对象与不变量 | 要改插件行为或引用它的运行期口径时 |
