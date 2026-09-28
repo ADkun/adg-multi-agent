@@ -24,7 +24,7 @@ node --test --test-isolation=none test   # 同一目录；DSH 沙箱里**必须*
 **沙箱口径（两个独立的拦截，别混成一个）**：
 1. `node --test test` 在沙箱里**必然失败**，形态是测试文件报 `Error: spawn EPERM` ——
    `node --test` 默认给每个测试文件起一个 **piped-stdio 子进程**，沙箱拒绝 pipe。
-   **加 `--test-isolation=none` 即可**（不起子进程），实测 50 个测试全过。
+   **加 `--test-isolation=none` 即可**（不起子进程），实测 51 个测试全过。
    `spawn EPERM` 出现在输出里，**不是断言失败**，别把它当红灯。
 2. `| Select-String` / `| Select-Object` 这类 PowerShell 管道会被拒成
    `Program 'node.exe' failed to run: Access is denied`；**重定向到文件是允许的**。
@@ -42,6 +42,12 @@ node --test --test-isolation=none test   # 同一目录；DSH 沙箱里**必须*
    （design.md I14/I15/I16）。
 5. **禁止在同一水位重复注入**：一步最多一条消息、每个 tier 每驻留期一次（design.md I6/I7）。
 6. **禁止在 `dryRun` 打开时宣称"提醒已注入"**（design.md「For Agents」）。
+7. **禁止把注入消息的来源写回 `{kind:'plugin', plugin}`**：session format v4 在**持久化写入路径**上
+   拒这个 kind（`source.kind === 'plugin'`），而异常发生在监听器返回之后、插件接不住 ——
+   **整轮委派当场失败**：`format v4 message requires a producer-owned source kind`。写生产者自有的
+   `{kind:'plugin:dsh-adg-token-budget'}`（design.md I17；测试 + 变异 M18 钉住；宿主侧复测见
+   `testing-guide.md` 第 6 节）。2026-09-28 真机事故：当时新阶梯的第一档是第 4 步，
+   **凡走到第 4 步的受管子代理全部在那里失败**。
 
 ## 跨模块路由
 

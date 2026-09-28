@@ -287,8 +287,12 @@ Concretely:
 
 The single trigger injects one kind of object — the step checkpoint's
 `stepNudgeText({tierIndex, tierCount, stepCount, body})` — as a `UserMessage`:
-`{ id, role: 'user', content: ContentBlock[], source: { kind: 'plugin', plugin } }`.
-First-party code builds these with `createUserMessage` from
+`{ id, role: 'user', content: ContentBlock[], source: { kind: 'plugin:dsh-adg-token-budget' } }`.
+That `kind` is **load-bearing, not decoration**: session format v4 refuses the
+retired `{kind:'plugin', plugin}` wrapper in the durable write path, so a message
+carrying it makes the append throw and kills the whole delegated child (measured
+incident and the admission rule: next subsection). First-party code builds these
+with `createUserMessage` from
 `@deepseek-ai/dsh-llm`, which this plugin cannot import statically.
 
 So the plugin resolves it at call time, in this order:
@@ -374,6 +378,59 @@ that cannot be constructed, the failure is caught, the checkpoint is logged with
 instruction (`step stage (no nudge injected: nudge construction failed) …`), the tier stays
 unconsumed, and the step still passes through — the plugin never lets a
 nudge-construction failure escape the handler.
+
+### The source kind is a v4 admission contract, and the old wrapper fails the child
+
+Session format v4 **retired the `{kind:'plugin', plugin}` wrapper**. Only the bare
+`plugin` label is refused, and it is refused in the **durable write path**:
+`session.append('user/message', …)` throws
+`SessionFormatError: format v4 message requires a producer-owned source kind`. The
+append happens after this listener returned, so the plugin cannot catch it — the
+whole delegated child fails, and the dispatcher reports
+`Error: subagent run failed: Error: subagent run failed; dispose failed:
+SessionFormatError: format v4 message requires a producer-owned source kind`.
+
+**That is what happened on 2026-09-28, the day the session-format-v4 upgrade landed
+here, and it is the reason this file documents the kind at all** (measured,
+`docs/evidence.md` §15): on the 14-tier ladder the first checkpoint is step 4, and
+every governed `adg` child that reached one died there — the plugin log shows
+`step stage: nudged tier=1/14 step=4 label=adg/<id>` followed by `settled: released
+session state label=<id>` on the same child **12–35 ms later**, and the child's own
+`session.v4.jsonl.zstd` ends at the `step/end` of step 3, with no `turn/end` — the
+checkpoint message itself never reached the log because the write that carried it
+threw. The rule itself (`@deepseek-ai/dsh-session-format-v3-to-v4`, `source()`; the
+same predicate is inlined in the JSONL writer) refuses a source whose `kind` is not a
+string, is empty, or is exactly `'plugin'`. Two scopes of that rule are worth keeping
+apart, because a probe measured both: at the **physical-row** layer the check is only
+reached for a message that **already** carries the retired label (so an empty `kind`
+is not refused there), while the full **logical-event** check refuses empty and absent
+kinds too — that one is not exported, which is why the suite restates the rule rather
+than calling it. `@deepseek-ai/dsh-llm`'s message-source doc states the axis as "there
+is no shared catch-all `plugin` kind."
+
+The kind this plugin stamps is `plugin:dsh-adg-token-budget` — the exact string the
+harness's **own** V3→V4 conversion assigns to this plugin's historical records (an
+unrecognized producer becomes `` `plugin:${plugin}` ``; see
+`dsh-session-format-v3-to-v4/README.md`「Message-source conversion」, which also
+says a direct source kind is preserved unchanged). Old and new records therefore
+name the same producer, and the evidence greps in this file keep working across the
+migration boundary.
+
+Guard rails, and their exact reach:
+
+- the suite pins the rule the source must satisfy —
+  `the reminder source passes the session format v4 admission rule` (both the
+  resolved and the local-fallback constructor);
+- mutation **M18** restores the retired wrapper and is caught by **four**
+  assertions (the two constructor tests, the new rule test, and the checkpoint
+  injection test);
+- the rule is **restated** from the harness source, so nothing here notices a future
+  change in the harness by itself — I3 forbids importing it. Re-measure against a
+  real install instead, with the probe this evidence came from:
+  `node D:\dsh\.adg-step-mutations\verify-v4-source-admission.mjs`, which runs the
+  plugin's real message through the installed `assertV4RowAdmission` and prints both
+  outcomes (accepts the current kind; refuses the retired wrapper with the message
+  above).
 
 ## Install and enable
 
@@ -566,7 +623,11 @@ current shape is `step stage: nudged tier=<n>/<N> step=<S> label=…`.
 Reading the same events out of each child's session log (`session.v3.jsonl.zstd`,
 zstd frames) closes the loop. The first two children received the **old, directive**
 wording, and this is the message as it sits in the transcript, one millisecond after
-the log line — `role: user`, `source: {kind: 'plugin', plugin: 'dsh-adg-token-budget'}`:
+the log line — `role: user`, `source: {kind: 'plugin', plugin: 'dsh-adg-token-budget'}`.
+**The excerpt is history and its source shape is the retired v3 one**: that wrapper is
+what a v3 file stores, and a v4 reader converts it to `plugin:dsh-adg-token-budget`
+(the same kind new records are stamped with directly — see「The source kind is a v4
+admission contract」above), so nothing here needs re-reading as a different producer:
 
 ```json
 {"type":"user/message","seq":113,"time":1790272504616,"data":{"content":[{"type":"text","text":"【收敛检查点 1／3】调度代理提醒：这是你的第 12 步。\n请先做一次收敛判断……"}],"source":{"kind":"plugin","plugin":"dsh-adg-token-budget"},"role":"user","id":"4da24f75-…"}}
@@ -853,6 +914,7 @@ that the code they mutated is gone.
 | **M15** | ignore a configured `stepText` and always use the built-in body | yes |
 | **M16** | stop truncating an over-long `stepText` | yes |
 | **M17** | report `stepText=builtin` even when a custom body is set | yes |
+| **M18** | stamp the retired `{kind:'plugin', plugin}` source again (session format v4 refuses it, so the child dies) | yes (4 assertions) |
 | **D1b** | do not rethrow when `call.failed` (swallow a downstream failure, return a decision) | yes |
 | **D1b-all** | neuter **both** rethrows (the failure becomes a silent pass-through, `next()` runs twice) | yes |
 | **D2** | remove the `WeakSet` dedupe of same-context applies | yes |
@@ -874,6 +936,22 @@ M15–M17 cover the `stepText` path, which is new surface with no behaviour othe
 the words that reach the child: dropping the custom body, dropping its length cap, and
 lying about it in the activation line are each caught by exactly the assertion that
 exists for them.
+
+M18 covers the message source, and it is the one mutation here whose failure mode is
+not a wrong reminder but a **dead child**: under v4 the retired wrapper makes the
+durable append throw, so no later stage of this plugin runs at all. It is caught by
+**four** assertions because the source is asserted on both construction paths, on the
+rule itself, and on the injected message.
+
+**Dated re-run (2026-09-28, same harness).** Re-running the harness against the current
+code re-measured the older rows too, and five of them no longer apply: **M1**, **M3**,
+**M4**, **M5** and **M6** report `NOT-APPLIED`, because their `from` strings describe
+code the token-stage removal deleted (the two-trigger `else if` branch, the soft/hard
+stages, the old `stepNudge` check inside `postStep`). That is **harness drift, not a
+regression** — the surviving behaviour those rows targeted is pinned by M8 (every
+decision counted as an entry) and M13, both still caught. The table above is the pass
+that was actually run for those rows, against the code they mutated; the current
+full-harness result is recorded in `docs/evidence.md` §15.
 
 Four mutations are **not caught**, stated plainly rather than
 buried:

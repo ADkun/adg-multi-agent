@@ -1003,13 +1003,14 @@ dry-run（`dry-run step stage: would nudge …` / `dry-run step stage: would not
 
 | 事项 | 证据 |
 |---|---|
-| 决策逻辑（配置归一化、步数计数与 tier 判定、筛选条件、状态释放、每步最多一条消息） | **单元测试**：`cd plugin/dsh-adg-token-budget && node --test test`，只依赖 `node:test` / `node:assert`（checkout 里没有 `node_modules` 也能跑）；另做过**变异验证**：**步数档 17 个变异（M1..M17，含自定义措辞路径）全部被测试抓住**（详见插件 README 的「Mutation verification」） |
+| 决策逻辑（配置归一化、步数计数与 tier 判定、筛选条件、状态释放、每步最多一条消息、注入消息的来源） | **单元测试**：`cd plugin/dsh-adg-token-budget && node --test test`，只依赖 `node:test` / `node:assert`（checkout 里没有 `node_modules` 也能跑）—— **实测 51 个用例全过**；另做过**变异验证**：**步数档 18 个变异（M1..M18，含自定义措辞路径与那条消息来源）**。2026-09-28 复核新跑的 **M18 被 4 条断言抓住**；同一跑里 **M1 / M3 / M4 / M5 / M6 报 `NOT-APPLIED`** —— 它们的变异串是对 token 两档移除**之前**的代码写的，**是 harness 漂移、不是回归**（存活档由 M8 / M13 罩住，同跑仍被抓住）。详见插件 README 的「Mutation verification」与 `docs/evidence.md` §15 |
 | `package.json` 形状、ESM 可 import | 从**模拟的部署位置**（`…/$DSH_HOME/plugins/dsh-adg-token-budget/src/plugin.js`）import 起来验过 |
 | `createUserMessage` 的五个解析锚点都解析到同一份模块 | **实测**（详见插件自己的 README） |
 | 行能被 dsh 加载、不报 fatal | **实测**：`activation: inactive (enabled: false)` 就是宿主加载成功后写的 |
 | `agent/pre-step` 真的走到这个监听器 | **实测**：真机的三次检查点注入，以及几百行 dry-run 判定 |
 | `dryRun` 真的不注入 | **实测**：dry-run 期只有 `dry-run step stage: would nudge …` 行，**0 条**注入的消息 |
 | **步数检查点**（`step stage: nudged`）在真机上发生 | **已实测**：三次注入（17:45:49 / 17:55:04 / 18:22:13，都在 `tier=1/3 step=12`），且能在对应子代理的 `session.v3.jsonl.zstd` 里找到那条消息本身（`role: user`、`source: {kind:'plugin', plugin:'dsh-adg-token-budget'}`），毫秒级对齐。**未覆盖**：第一个 tier 之外的档、新阶梯下的注入、`dry-run step stage` |
+| 注入消息的来源在 session format v4 下合法 | **源码级事实 + 真机实测（2026-09-28）**：v4 **废弃**了上面那行的 `{kind:'plugin', plugin}` 包装，准入拒在**持久化写入路径**上（`format v4 message requires a producer-owned source kind`），异常在监听器返回之后抛出、插件接不住 —— 当时新阶梯的第一档是第 4 步，**凡走到第 4 步的受管子代理全部在那里失败**，调度者看到 `subagent run failed … SessionFormatError`。现在写的是生产者自有的 `{kind:'plugin:dsh-adg-token-budget'}`（与 v4 读 v3 记录时分配的 kind 逐一相同）：**用装好的宿主 `assertV4RowAdmission` 复测通过、旧包装被拒**（`docs/evidence.md` §15）。上面那行 v3 摘录**仍是历史原文，不许改写成新形状** |
 | 注入的提醒被子代理读到并回应 | **已实测（3 例）**：两个收到命令式措辞的表示要收敛；收到选择式措辞的那个明确选择"继续"并列出剩余必需工作、没有缩减计划 |
 | **更早更密的阶梯 + 选择式措辞到底有没有用** | **未观测，而且是这个功能的核心问题**：分布（37 个子代理，中位数 39、p10 6）、成本（214 条约占 0.25%）、以及"第 12 步时只花了 10–14 万 token"都是实测的；"收到 14 条检查点的子代理是否比不收到时更早收敛"没有任何证据。量法写在插件 README 里：`audit-steps.mjs` 前后各跑一次，比分位数 |
 | `settled: released session state …` / 恢复的子代理被再次提醒 | `settled:` **已实测**（17:55:33，收敛后 29 秒）；**恢复的子代理被再次提醒仍未观测** |

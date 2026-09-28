@@ -9,6 +9,45 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
+## 2026-09-28（上午 08:50+08:00，本文件最新的一条）— 同一个 dsh 升级的**第三个**成因：session format v4 废弃 `{kind:'plugin', plugin}`，插件注入检查点让**每一次委派**当场失败
+
+- **用户报的症状**：Adg 模式下子代理报「本轮运行失败」，原文
+  `format v4 message requires a producer-owned source kind`，任务做不完。与 §14 那两个成因不同：
+  preset 挂得上、会话能开，**是委派出去的每一个子代理在第一个步数检查点当场死掉**。
+  **preset 侧这次不用改** —— §14 的 bundle 迁移已经完成，本次只动插件。
+- **成因（源码级事实）**：v4 的原生准入只拒裸 `plugin` 这一个 `kind`，而它拒在**持久化写入路径**上
+  （`session.append('user/message', …)` 抛 `SessionFormatError`）；异常发生在监听器返回之后，
+  插件接不住，整轮委派失败。插件当时写的正是 `{kind:'plugin', plugin:'dsh-adg-token-budget'}`。
+- **定位（真机实测，一一对应）**：`adg-token-budget.log` 四条 `step stage: nudged tier=1/14 step=4`
+  与四个子代理的 `settled:` 相差 **12–35 毫秒**；四个子代理的 `session.v4.jsonl.zstd` **全部停在
+  `step/end`（step 3）**、没有 `turn/end`；同一时段**没有**注入的那个子代理走的是
+  `turn/end … aborted(parent)`（另一条已知路径）。调度者侧的同一次失败在它的转写 `tool/result` 里。
+  全部逐条见 `docs/evidence.md` §15。
+- `plugin/dsh-adg-token-budget/src/plugin.js`：`PLUGIN_SOURCE` 从
+  `{kind:'plugin', plugin: name}` 改成 `` {kind: `plugin:${name}`} `` ——
+  **逐字等于 v4 读取本插件 v3 记录时分配的那个 kind**（未识别生产者 → `plugin:<原名>`），
+  所以迁移前后的记录指向同一个生产者、本仓库"按 source 找证据"的 grep 口径不用改。代码注释与
+  `design.md` I17 记了准入规则的出处（`dsh-session-format-v3-to-v4` 的 `source()`，以及 JSONL writer
+  里内联的同一判据）。
+- **测试**：50 → **51** 个用例（新增 `the reminder source passes the session format v4 admission rule`：
+  两条构造路径 + 规则本身 + 旧包装的 `plugin` 属性必须消失），实测 `pass 51 / fail 0`；
+  变异 **M18**（把旧包装写回去）被 **4 条断言**抓住。**同一次复核还发现 harness 漂移**：
+  M1 / M3 / M4 / M5 / M6 的变异串是对 token 两档移除**之前**的代码写的，重跑报 `NOT-APPLIED`
+  —— 是 harness 漂移、不是回归（存活档由 M8 / M13 罩住，同跑仍被抓住），已写进插件 README、
+  `testing-guide.md` 第 6 节与 `docs/evidence.md` §15。
+- **宿主侧复测（不是复述规则）**：`node D:\dsh\.adg-step-mutations\verify-v4-source-admission.mjs`
+  用**装好的** `assertV4RowAdmission` 跑插件的真实消息 —— 当前 kind 通过、旧包装被拒并给出用户报的
+  那句原文。
+- 文档同步：`plugin/dsh-adg-token-budget/`（`AGENTS.md` 模块红线新增第 7 条、`design.md` 新增不变量
+  **I17** + 非功能红线第 7 条、`README.md` 新增「The source kind is a v4 admission contract」小节 +
+  变异表 M18 行 + 那一跑的漂移说明、`testing-guide.md` 不变量表 I17 行 + 第 6 节、`INSTALL.md` 引用
+  旧摘录处加"那是 v3 历史形状"的注）、仓库根 `README.md`（证据表新增一行 + 变异条数）、根 `AGENTS.md`
+  与插件 `AGENTS.md`（测试数 50 → 51）、`docs/evidence.md`（新增 §15；§8 的"本机没有 zstd 解压能力"
+  更正为已复核并给出多帧切分口径；§14.6 的"web 插件 dep 还是旧 tgz"更正为事实已对齐）。
+- **未观测（不许写成实测）**：修复后**没有再跑过一次真实 Adg 委派** —— 改插件 `src/` 必须重启 dsh，
+  而重启会结束当时正在跑的会话。验收动作写在 `docs/evidence.md` §15.4 末（三件事：注入后同一 label
+  不紧跟 `settled:`、转写里出现新的 `source.kind`、调度者不再收到那句 `SessionFormatError`）。
+
 ## 2026-09-28（晚）— dsh 0.1.7-rc.2 之后 preset 挂不上：旧目录机制被移除 + 引擎行包名改名，安装链路整体改成 bundle
 
 - **两个独立成因，都必须修（详见 `docs/evidence.md` §14）**：① dsh 0.1.7-rc.2 **移除**了

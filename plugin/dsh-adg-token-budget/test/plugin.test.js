@@ -441,11 +441,11 @@ test('normalizeConfig keeps an unusable logFile out of the way', () => {
 test('localCreateUserMessage matches createUserMessage output shape', () => {
   const message = localCreateUserMessage({
     content: [{ type: 'text', text: 'hi' }],
-    source: { kind: 'plugin', plugin: 'dsh-adg-token-budget' },
+    source: { kind: 'plugin:dsh-adg-token-budget' },
   })
   assert.deepEqual(Object.keys(message).sort(), ['content', 'id', 'role', 'source'])
   assert.equal(message.role, 'user')
-  assert.deepEqual(message.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
+  assert.deepEqual(message.source, { kind: 'plugin:dsh-adg-token-budget' })
   assert.deepEqual(message.content, [{ type: 'text', text: 'hi' }])
   assert.match(message.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   // createUserMessage returns deepFreeze(structuredClone(...)): the message and
@@ -457,7 +457,7 @@ test('localCreateUserMessage matches createUserMessage output shape', () => {
   assert.throws(() => {
     message.content.push({ type: 'text', text: 'x' })
   }, TypeError)
-  const input = { content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'x' } }
+  const input = { content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin:x' } }
   const detached = localCreateUserMessage(input)
   input.content[0].text = 'mutated'
   assert.equal(detached.content[0].text, 'hi')
@@ -488,7 +488,7 @@ test('the running profile from ctx.baseUrl is the first createUserMessage anchor
   const message = factory.create('hello')
   assert.equal(message.id, 'from-the-running-profile', 'the baseUrl anchor must be the one that resolved')
   assert.equal(message.role, 'user')
-  assert.deepEqual(message.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
+  assert.deepEqual(message.source, { kind: 'plugin:dsh-adg-token-budget' })
 })
 
 test('createNudgeFactory always yields a usable factory', () => {
@@ -496,10 +496,44 @@ test('createNudgeFactory always yields a usable factory', () => {
   const message = factory.create('hello')
   assert.equal(typeof factory.strategy, 'string')
   assert.equal(message.role, 'user')
-  assert.deepEqual(message.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
+  assert.deepEqual(message.source, { kind: 'plugin:dsh-adg-token-budget' })
   assert.equal(message.content.length, 1)
   assert.equal(message.content[0].type, 'text')
   assert.equal(message.content[0].text, 'hello')
+})
+
+test('the reminder source passes the session format v4 admission rule', () => {
+  // Session format v4 refuses a message whose source `kind` is exactly `'plugin'`
+  // — `format v4 message requires a producer-owned source kind` — and it refuses
+  // it while the message is being written to the session log
+  // (`@deepseek-ai/dsh-session-format-v3-to-v4`, `source()`, mirrored in the JSONL
+  // writer). That throw is not the plugin's to catch: it happens after this
+  // listener returned, inside `session.append('user/message', …)`, so it failed
+  // the whole delegated child. On 2026-09-28 every governed `adg` child that
+  // reached its first checkpoint died exactly there (plugin log `step stage:
+  // nudged` followed by `settled:` on the same child, ~30 ms apart). The rule is
+  // restated here in full — an empty or absent kind is refused too, and the
+  // retired wrapper's `plugin` property is gone — so the wording of the harness
+  // rule this package must satisfy is visible in one place.
+  const admittedByV4 = (source) =>
+    typeof source === 'object' && source !== null
+    && typeof source.kind === 'string' && source.kind.length > 0 && source.kind !== 'plugin'
+
+  const injected = createNudgeFactory().create('probe')
+  assert.equal(typeof injected, 'object')
+  const fallback = localCreateUserMessage({
+    content: [{ type: 'text', text: 'probe' }],
+    source: injected.source,
+  })
+
+  for (const [label, message] of [
+    ['the resolved createUserMessage path', injected],
+    ['the local fallback path', fallback],
+  ]) {
+    assert.deepEqual(message.source, { kind: 'plugin:dsh-adg-token-budget' }, label)
+    assert.ok(admittedByV4(message.source), `${label}: the source must be a producer-owned kind, not the retired plugin wrapper`)
+    assert.ok(!Object.hasOwn(message.source, 'plugin'), `${label}: the retired wrapper's plugin property must be gone`)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -707,7 +741,7 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
   assert.equal(second.messages[0].id, 'existing')
   const reminder = second.messages[1]
   assert.equal(reminder.role, 'user')
-  assert.deepEqual(reminder.source, { kind: 'plugin', plugin: 'dsh-adg-token-budget' })
+  assert.deepEqual(reminder.source, { kind: 'plugin:dsh-adg-token-budget' })
   assert.match(reminder.content[0].text, /^【收敛检查点 1／2】调度代理提醒：这是你的第 2 步。/)
   assert.ok(reminder.content[0].text.includes(STEP_CHOICE_BODY))
   assert.ok(!reminder.content[0].text.includes(STEP_LAST_TAIL), 'only the last tier adds the closing sentence')

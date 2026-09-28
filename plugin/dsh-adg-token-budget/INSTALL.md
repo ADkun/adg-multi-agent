@@ -124,6 +124,14 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 （`role: user`、`source: {kind:'plugin', plugin:'dsh-adg-token-budget'}`），与日志行毫秒级对齐；
 第 12 步时它们只花了 10–14 万 token。`settled: released session state …` 也已经观测到（17:55:33）。
 
+> **引用上面那行 source 时必须带上这一句**：那是 **v3 文件里的历史形状**。session format v4
+> **废弃**了 `{kind:'plugin', plugin}` 包装，新记录直接写生产者自有的 kind
+> `{kind:'plugin:dsh-adg-token-budget'}`（两者是同一个生产者身份：v4 读取 v3 记录时会把它转成
+> 后者的形状）。**写回旧包装会让每一次委派在持久化那一刻整轮失败**
+> —— `format v4 message requires a producer-owned source kind`（2026-09-28 实测事故，
+> 见 `plugin/dsh-adg-token-budget/README.md`「The source kind is a v4 admission contract」与
+> `docs/evidence.md` §15）。
+
 **已移除的 token 两档：当年实测（历史证据，不代表当前行为）。** 下面三行来自仍然带
 token 两档的旧构建，插件再也不会写出这类行；保留它们是因为"为什么会删掉"就是这些实测：
 

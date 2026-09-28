@@ -218,10 +218,41 @@ export function stepNudgeText(input) {
 }
 
 /**
- * The message source a plugin-authored user message carries; the variant is
- * `{kind:'plugin', plugin}` (`@deepseek-ai/dsh-llm/lib/types/message.d.ts:94-104`).
+ * The message source a plugin-authored user message carries.
+ *
+ * Session format v4 **retires** the `{kind:'plugin', plugin}` wrapper: native
+ * admission refuses a message whose source `kind` is exactly `'plugin'` with
+ * `format v4 message requires a producer-owned source kind`, and it refuses it in
+ * the **durable write path**, so the failure is not a rendering problem — the
+ * append throws and the whole turn dies
+ * (`@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:126`, `source()`; the
+ * same predicate is inlined at
+ * `@deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs:10901`, reached from
+ * `assertV4SourceRowAdmission` — `:10925` — only for a message that already
+ * carries `kind === 'plugin'`, so the retired label is the one shape a physical
+ * row is refused for). The vocabulary is documented as a "Merge-extensible sum
+ * type — each producer declares its own `kind` in its own module; there is no
+ * shared catch-all `plugin` kind" (`@deepseek-ai/dsh-llm/lib/types/message.d.ts:97`,
+ * interface at `:101-108`): only the bare `plugin` label is refused, so a
+ * producer-owned kind is any non-empty string it declares for itself.
+ *
+ * The kind used here is the one the harness's own v3→v4 conversion assigns to
+ * this plugin's historical records: an unrecognized producer becomes
+ * `` `plugin:${plugin}` `` (`dsh-session-format-v3-to-v4/lib/index.js:86-93`;
+ * the conversion's own README states that a source kind is preserved unchanged
+ * unless it is the retired wrapper, `dsh-session-format-v3-to-v4/README.md:130,134`).
+ * Stamping the same string keeps the producer identity stable across the
+ * migration, so a record written before it and one written after it still name the
+ * same thing — which is what the evidence greps in this package's `README.md`
+ * rely on.
+ *
+ * No `form` is declared, deliberately: `form` answers a different axis ("what kind
+ * of thing it is"), it is optional, and an absent one is the documented default
+ * presented as opaque content (`dsh-llm/lib/types/message.d.ts:30-45`). Records
+ * written before the v4 migration carried no `form` either, so adding one would be
+ * a presentation change rather than part of admitting this source.
  */
-const PLUGIN_SOURCE = Object.freeze({ kind: 'plugin', plugin: name })
+const PLUGIN_SOURCE = Object.freeze({ kind: `plugin:${name}` })
 
 /** Every listener this plugin registers sees events from any scope. */
 const GLOBAL = Object.freeze({ global: true })

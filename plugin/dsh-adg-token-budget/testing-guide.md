@@ -30,7 +30,7 @@ cd plugin/dsh-adg-token-budget && node --test test
 | 命令形态 | 结果 |
 |---|---|
 | `node --test test`（无管道、无重定向） | **失败**：测试文件报 `Error: spawn EPERM`（`node --test` 默认给每个测试文件起 piped-stdio 子进程，沙箱拒绝 pipe）。`tests 1 / fail 1`，与断言无关 |
-| `node --test --test-isolation=none test`（无管道、无重定向） | **跑通，50 个测试全过**（末尾 `pass 50 / fail 0`） |
+| `node --test --test-isolation=none test`（无管道、无重定向） | **跑通，51 个测试全过**（末尾 `pass 51 / fail 0`；2026-09-28 加 I17 那条用例后从 50 变 51） |
 | `node --test test > out.txt 2>&1`（重定向到文件） | 被**上一条**拦下：重定向本身允许，失败原因仍是子进程 pipe |
 | `node --test --test-isolation=none test 2>&1 \| Select-Object -Last 15` | 被拒：`Program 'node.exe' failed to run: Access is denied` —— 这一层拦的是**PowerShell 管道** |
 
@@ -67,8 +67,9 @@ cd plugin/dsh-adg-token-budget && node --test test
 | **I14** 禁止正文被读成停止指令 | `the built-in checkpoint wording is unchanged`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total`（含 `doesNotMatch(/立即停止/)`） | 单测；变异 **M13**（把那句"可以直接无视"反过来写） |
 | **I15** 禁止各档正文递进 | `stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total`；`a checkpoint injects its reminder on the tier step, once per tier`（只有最后一档带尾句） | 单测；变异 **M11**（去掉最后一档的尾句） |
 | **I16** 禁止自定义 `stepText` 再被追加内置尾句 | `a configured stepText is what actually reaches the child`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total` | 单测；变异 **M15** |
+| **I17** 禁止把注入消息的来源写回已废弃的 `{kind:'plugin', plugin}`（v4 在持久化写入路径上拒它，整轮失败） | `the reminder source passes the session format v4 admission rule`（两条构造路径 + 规则本身 + 旧包装的 `plugin` 属性必须消失）；`localCreateUserMessage matches createUserMessage output shape`；`the running profile from ctx.baseUrl is the first createUserMessage anchor`；`createNudgeFactory always yields a usable factory`；`a checkpoint injects its reminder on the tier step, once per tier` | 单测；变异 **M18**（被 4 条断言抓住）；**真机实测**（2026-09-28 事故 + 用装好的宿主 `assertV4RowAdmission` 复测，见 `docs/evidence.md` §15） |
 
-补充（I1–I16 之外、但属于本模块对外契约的检查）：
+补充（I1–I17 之外、但属于本模块对外契约的检查）：
 
 | 契约 | 用例 | 类型 |
 |---|---|---|
@@ -231,10 +232,18 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 
 ## 6. 变异验证总表（编号来自本目录 `README.md` 的「Mutation verification」小节）
 
-- **被抓住**：M1、M2、M6、M7、M8、M9、M10、M11、M12、M13、M14、M15、M16、M17、
+- **被抓住**：M1、M2、M6、M7、M8、M9、M10、M11、M12、M13、M14、M15、M16、M17、**M18**、
   D1b、D1b-all、D2、D5-header、D5-runtime、B2-activation。
 - **未被抓住（4 个）**：**D1a**、**D1b-inner**、**B2-logger**、**B2-logfile** ——
   原因与暴露面见第 5 节。
+- **`NOT-APPLIED`（5 个，2026-09-28 复核新增记录）**：**M1**、**M3**、**M4**、**M5**、**M6** ——
+  它们的 `from` 串描述的是 **token 两档移除之前**的代码（两触发 `else if` 分支、软/硬档、
+  `postStep` 里旧的 `stepNudge` 判定），在当前代码里已经匹配不到，所以是 **harness 漂移，不是回归**；
+  它们当年那次"被抓住"是针对当时存在的代码实测的，表格照原样保留。罩住同一行为的**存活**变异是
+  **M8**（把每个判定都当 `enter`）与 **M13**，两者本次仍被抓住。
+- **I17 的复测不是单测能兜的那一半**：宿主准入规则在包外（I3 禁止静态 import），所以除了 M18，
+  还要用装好的宿主复测一次 —— `node D:\dsh\.adg-step-mutations\verify-v4-source-admission.mjs`
+  （用真实 `assertV4RowAdmission` 跑插件的真实消息：当前 kind 通过、旧包装被拒并给出用户报的那句）。
 - 变异表里**没有**编号的缺口：I3（静态 import）与 I13（相对路径 `logFile`）既没有单测断言，
   也没有对应的变异项，只能靠人工 review（见第 1 节末表）。
 

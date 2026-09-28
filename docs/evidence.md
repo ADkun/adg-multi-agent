@@ -120,7 +120,7 @@ last_reviewed: 2026-09-28
 | 包被替换后，**改名目录 / 先删行再加行**能不能强制重新 import | 未尝试。安全结论就是"重启" |
 | 第一个 tier 之外的档（新阶梯下的注入） | **§9 复核：已被观测**（tier 1/14–11/14 都真的注入过）——下表既有文档记为"未观测"的说法已过期，处置权在人类 |
 | 恢复的子代理被再次提醒 | **仍未观测（原记载成立）**：§9 观测到的是**驻留期重置机制**在跑（同一 `label` 在 `settled:` 后从 tier 1/14 重新计数）；**"该子代理确实是被恢复的"无从判定**（`subagent/end` 对"结束"与"被恢复"发同一事件） |
-| **注入消息在会话转写里的原文**（`session.v3.jsonl.zstd`，§1/§6 引用的"毫秒级对齐"） | **本台账未独立复核**：本机没有 zstd 解压能力。日志侧的行存在是确认的；转写侧需要一台能解压的机器按 §9 的 `label` 比对 |
+| **注入消息在会话转写里的原文**（`session.v3.jsonl.zstd`；2026-09-28 起还有 `session.v4.jsonl.zstd`，§1/§6 引用的"毫秒级对齐"） | **2026-09-28 已独立复核（§15.2 就是按转写比对的）**：旧记载"本机没有 zstd 解压能力"**不成立** —— Node 26 自带 `zlib.zstdDecompressSync`，但**一次只解第一帧**，session 文件是多帧拼接，必须按魔数 `28 B5 2F FD` 切帧后逐帧解（脚本与判据见 §15.5） |
 | **调度者的权限闸门是否真的每次都触发**（派发 `agent_browser` 前是否先问用户） | **未观测**：闸门于 2026-09-26 落地，还没有一次真实 Adg 会话走过它。量法：Adg 会话转写里查 `ask_user_question` 的调用是否出现在 `agent_browser` 之前，以及本会话文件策略那一行当时是不是 `danger-full-access` |
 | **在沙箱外手工拉起浏览器、专家只连 CDP 端口** | **未实测**：`workspace-write` 下网络不受限、受限进程自建监听与本地 `fetch` 都通（§11），所以**设计上可能可行**；但没有人真的做过，不许写成可行。量法：用户在自己的（非沙箱）终端里起一个 `--remote-debugging-port=…` 的浏览器，再让 Adg 会话里的专家只调用 CDP HTTP/WebSocket |
 | **真实站点的登录／验证码端到端流程**（用户手动登录 → 专家接着抓登录后的内容） | **未观测**：§12 只验了**机制**（有头窗口跨工具调用存活 + 新进程 CDP 重连并继续驱动），没有一次真的走完「人工登录 → 继续」。量法：按 §12 的 `probe3-*` 起实例，请人在窗口里登录一个真实站点，再由另一个进程重连并断言登录后的页面元素存在 |
@@ -587,6 +587,12 @@ node cli.mjs close
   profile 的 `node_modules` 里之后**才写 `dsh.profile.bundles` 与插件挂载行；
   另有一条 5.1 专属坑：原生命令写 stderr 在 `$ErrorActionPreference='Stop'` 下会变成**终止错误**
   （实测脚本在 web 那一步整个退出、exit 1，后面的 profile 根本没跑到），所以 pnpm 走 `cmd /c` 重定向到日志。
+- **2026-09-28 08:50+08:00 更正（本次复核读到的磁盘事实）**：上面那条"`web` 的**插件 dep 还是旧的仓库
+  tgz**"**已经不再成立** —— `profiles/web/package.json` 现在写的是
+  `dsh-adg-token-budget: link:C:/Users/cenqian/.dsh/plugins/dsh-adg-token-budget`，
+  `profiles/web/node_modules/dsh-adg-token-budget` 是指向该目录的**符号链接**（同目录还留着 pnpm 的
+  `.ignored_dsh-adg-token-budget` 残余）。也就是说 `web` 与 `desktop` 现在**同形状**。
+  **没有重新检查**的是 `.modules.yaml` 缺失与锁文件漂移那两条，仍按本条正文的记载（"没修好"）。
 
 **未观测（不许写成实测）**：① `desktop` profile 的**挂载**没有测过 ——
 `dsh --profile desktop --dump-config` 被拒（`error: profile "desktop" is managed exclusively by the
@@ -594,3 +600,101 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 清单里是 `link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`），但没有运行期证据。
 ② Windows 上本机**没有 `sh`**，`install.sh` 这次的改动**没有在本机执行过**（只做了逐行 review 与语法对照）。
 ③ 探针那次没有单独记录 `agentPresets.list()` 的条数（只记了 `resolve` 与 `compositionInventory()`）。
+
+## 15. session format v4 废弃了 `{kind:'plugin', plugin}`：插件注入的检查点让每个受管子代理在第一档当场失败（真机实测 + 源码级事实，2026-09-28）
+
+**这是 dsh 0.1.7-rc.2 升级引起的第三个独立成因。** 前两个（§14）让「Adg 模式挂不上 / 不可用」，
+这一个让**挂上之后每一次委派都失败**：preset 侧的迁移做完了，插件侧漏了同一版里 session format 的
+消息来源改名。
+
+### 15.1 用户报告的那句话，原文与出处
+
+调度者（`adg` preset）收到的工具结果，逐字：
+
+```
+Error: subagent run failed: Error: subagent run failed; dispose failed: SessionFormatError: format v4 message requires a producer-owned source kind
+```
+
+出处：`C:\Users\cenqian\.dsh\sessions\--D-dsh--\session-76dc1198-8c23-4c20-b5ec-235071bf34df\session.v4.jsonl.zstd`
+的 `tool/result` seq 23（`2026-09-28T00:34:22Z`）。UI 上用户看到的是「本轮运行失败」后面接同一句。
+（`session.v4.jsonl.zstd` 的解压口径见 §15.5。）
+
+### 15.2 定位：失败与检查点严格一一对应（真机实测）
+
+`C:\Users\cenqian\.dsh\adg-token-budget.log` 里四条注入与四个子代理的结束**毫秒级相邻**，
+而且每个子代理的转写都**停在检查点那一步的 `step/end`**、没有 `turn/end`：
+
+| 时间（Z，2026-09-28） | 插件日志 | 子代理转写 |
+|---|---|---|
+| 00:29:39.900 | `step stage: nudged tier=1/14 step=4 label=adg/2bc8a238-…` | 00:29:39.935 `settled: released session state label=2bc8a238…`；转写停在 `step/end` seq 33（step 3），无 `turn/end` |
+| 00:30:00.634 | 同上，`6bcfd19c-…` | 00:30:00.682 `settled:`；转写停在 `step/end` seq 33 |
+| 00:31:12.810 | 同上，`43a6912c-…` | 00:31:12.842 `settled:`；转写停在 `step/end` seq 32 |
+| 00:34:22.173 | 同上，`3fbab55e-…` | 00:34:22.197 `settled:`；转写停在 `step/end` seq 48 |
+
+对照组：同一时段的 `b962f304-…` **没有**注入，它的转写以
+`turn/end {reason:{kind:'aborted',reason:{kind:'parent'}}}` 收尾 —— 那是**被父代理取消**的已知路径，
+不是这个故障。判据：**四次注入 → 四次失败**，没有注入的那条走另一条路径；
+注入的消息**没有**出现在任何一份转写里，因为抛错就发生在写它的那一次
+`session.append('user/message', …)` 里（插件在监听器里返回消息，写入是宿主的事）。
+
+### 15.3 成因（源码级事实）
+
+`@deepseek-ai/dsh-session-format-v3-to-v4` 的原生准入只拒绝 **裸 `plugin`** 这一个 `kind`：
+
+```js
+function source(message) {
+  const value = message["source"];
+  if (!isSessionFormatJsonObject(value) || typeof value["kind"] !== "string" ||
+      value["kind"].length === 0 || value["kind"] === "plugin")
+    throw new SessionFormatError("format v4 message requires a producer-owned source kind");
+}
+```
+
+（`lib/index.js:126`；同一判据内联在 JSONL writer 的 `worker.cjs:10901`，由
+`assertV4SourceRowAdmission`（`:10917`）在 `:10925` 上**只为已经带 `kind === 'plugin'` 的消息**调这一支 ——
+所以裸 `plugin` 也是物理行层面唯一会被拒的形状，本次探针把这个边界也测出来了。）
+`@deepseek-ai/dsh-llm` 的消息来源文档同时写明这套词表是 merge-extensible、
+**没有共享的 catch-all `plugin` kind**（`lib/types/message.d.ts:30-58, 94-108`）。
+旧插件写的正是 `{kind:'plugin', plugin:'dsh-adg-token-budget'}`，于是**每一次注入 = 一次持久化异常**，
+异常发生在监听器返回之后、插件接不住，整轮委派失败。
+
+### 15.4 修法与验收（本次实测）
+
+- 改 `plugin/dsh-adg-token-budget/src/plugin.js` 的 `PLUGIN_SOURCE`：
+  `{kind:'plugin', plugin: name}` → `` {kind: `plugin:${name}`} ``。
+  选这个字符串是因为它**逐字等于** v4 读取本插件 v3 记录时分配的 kind
+  （未识别生产者 → `` `plugin:${plugin}` ``，`dsh-session-format-v3-to-v4/README.md:130,134`），
+  迁移前后的记录因此指向同一个生产者、本仓库的证据 grep 不用改口径。
+- 单元测试 **50 → 51**（新增 `the reminder source passes the session format v4 admission rule`），
+  实测 `pass 51 / fail 0`；变异 **M18**（把旧包装写回去）被 **4 条断言**抓住。
+- **用装好的宿主复测**（不是复述规则）：`node D:\dsh\.adg-step-mutations\verify-v4-source-admission.mjs`，
+  实测输出（同一台机器、同一份 dsh）：
+
+  ```
+  nudge strategy     = dsh-home-profiles
+  message.source     = {"kind":"plugin:dsh-adg-token-budget"}
+  PASS: the installed v4 row admission accepts the injected reminder
+  EXPECTED refusal on the retired wrapper — SessionFormatError: format v4 message requires a producer-owned source kind
+  ```
+
+  探针调的是 `assertV4RowAdmission`（该包**不在** profile 的模块根里，要从
+  `dsh-session-persistence-jsonl` 所在位置解析 —— 脚本已这么做）。
+- 同一条探针也对**部署位置**的那一份跑过（`$DSH_HOME\plugins\dsh-adg-token-budget\src\plugin.js`，
+  与仓库同 `sha256 691e459a24cbafb9f5904ac1a1644ba1ab1e8ffbaf26e647c1afa8396dcf9f8c`），输出相同 ——
+  profile（`web` / `desktop`）的 `node_modules` 链接都指向这个目录，所以重启后加载的就是这份代码。
+- **未观测（不许写成实测）**：修复后**没有**再跑过一次真实 Adg 委派。改插件 `src/` 必须重启 dsh，
+  而重启会结束当时正在跑的会话，所以"子代理现在能跑到收敛"在本台账里仍是**未观测**。
+  验收动作：重启 dsh → 新建 Adg 对话 → 委派一件会走到第 4 步以上的任务 → 看三件事：
+  ① `logFile` 出现 `step stage: nudged` **且同一 label 没有紧跟着 `settled:`**；
+  ② 转写里出现 `"source":{"kind":"plugin:dsh-adg-token-budget"}`；
+  ③ 调度者不再收到 `subagent run failed … SessionFormatError`。
+
+### 15.5 附：本机怎么解压 session 转写（补 §8 那条"本机没有 zstd 解压能力"的更正）
+
+旧记载**不成立**：Node 26 自带 `zlib.zstdDecompressSync`（`node -e "console.log(typeof
+zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v*.jsonl.zstd` 是**多帧拼接**的，
+`zstdDecompressSync` 一次只解**第一帧**（实测一份 35,771 字节的文件只解出 257 字节 / 2 行，
+按帧切之后是 96,894 字节 / 50 行）。可用做法：按魔数 `28 B5 2F FD` 切帧后逐帧解再拼接。
+本次用的脚本都放在 `D:\dsh\.adg-step-mutations\`（**不属于本仓库**，与那份变异 harness 同一个目录）：
+`dump-session.mjs`（按帧解压 + `--tail N` / 搜关键字）、`scan-sessions.mjs`（批量扫）、
+`verify-v4-source-admission.mjs`（§15.4 的宿主准入复测探针）。

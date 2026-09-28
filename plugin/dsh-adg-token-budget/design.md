@@ -129,6 +129,15 @@ last_reviewed: 2026-09-28
     **禁止规定子代理汇报什么**（交付了什么、哪些没验证由它自己决定）；正文里禁止"立即停止"这类命令句。
   - **I15** 禁止各档正文递进：只有**最后**一档多一句信息，不是逐次加压。
   - **I16** 禁止自定义 `stepText` 再被追加内置尾句：整段替换。
+  - **I17** 禁止把消息来源写回已废弃的 `{kind:'plugin', plugin}` 包装：session format v4 的
+    原生准入**只**拒绝裸 `plugin` 这个 kind，而且拒在**持久化写入路径**上
+    （`session.append('user/message', …)` 抛
+    `format v4 message requires a producer-owned source kind`）—— 异常发生在监听器返回之后，
+    插件接不住，**整轮委派当场失败**（不是渲染问题）。本插件写的是生产者自有的
+    `{kind:'plugin:dsh-adg-token-budget'}`：与 v4 读取 v3 记录时给本插件分配的 kind 逐一相同，
+    所以迁移前后的记录指向同一个生产者。来源：2026-09-28 真机事故 + 源码级准入规则，
+    见 `plugin/dsh-adg-token-budget/README.md`「The source kind is a v4 admission contract」与
+    `docs/evidence.md` §15；测试钉住见 `testing-guide.md` 第 1 节，变异 **M18**。
 
 ## 对外接口
 
@@ -167,18 +176,24 @@ last_reviewed: 2026-09-28
 6. **禁止热重载后不复核激活行就宣称新代码已生效** —— 来源：实测（换包后宿主重放了 `config:`、
    但激活行仍是旧形状：Node 的 ESM registry 按文件 URL 缓存，热重载不重新 `import`）；
    见 `plugin/dsh-adg-token-budget/INSTALL.md` 第 3 节。对应 I4 的"激活行是版本判据"。
+7. **禁止把注入消息的来源写回 `{kind:'plugin', plugin}`** —— 来源：**事故**（2026-09-28 真机：
+   新阶梯的第一档是第 4 步，凡是走到第 4 步的受管子代理**全部**在那里失败，调度者收到的报错是
+   `subagent run failed … SessionFormatError: format v4 message requires a producer-owned source kind`；
+   日志上 `step stage: nudged` 与 `settled:` 同一子代理相差 12–35 毫秒）。准入规则是源码级事实
+   （`@deepseek-ai/dsh-session-format-v3-to-v4` 的 `source()`，同一判据在 JSONL writer 里内联）。
+   对应 I17。
 
 ## For Agents
 
 - **动手前先读**：`plugin/dsh-adg-token-budget/AGENTS.md`（命令与模块红线）→ 本 `design.md` →
   改行为之前先读 `plugin/dsh-adg-token-budget/test/plugin.test.js`：**该行为是否已经被钉住**
   （被钉住的行为改之前要先想清楚是改测试还是改实现）。
-- **绝不能做**：本文件"非功能红线"6 条；以及**禁止在 `dryRun` 打开时宣称"提醒已注入"**
+- **绝不能做**：本文件"非功能红线"7 条；以及**禁止在 `dryRun` 打开时宣称"提醒已注入"**
   （`dryRun` 下 `firedTiers` 不被消费、只写 dry-run 判定行）。
 - **停止并升级人类**（只有起草权，批准权在人类）：要推翻"提醒只能是可选"这条语义；要恢复任何
   token 档；要改挂载位置或包名 —— **包名与行 id 是热重载身份**，改名属于部署变更。
 
 ## 测试与验证
 
-指向 `plugin/dsh-adg-token-budget/testing-guide.md`（不变量 I1–I16 的穷举用例、两个状态机的迁移
+指向 `plugin/dsh-adg-token-budget/testing-guide.md`（不变量 I1–I17 的穷举用例、两个状态机的迁移
 矩阵、跨模块消费侧契约测试、无破坏性路径的源码级检查、未被断言覆盖的变异面）。
