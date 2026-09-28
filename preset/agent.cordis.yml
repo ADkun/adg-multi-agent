@@ -363,6 +363,13 @@
     #      名字缺失的后果是"这一次委派失败"，不是挂载失败。
     #   4. 有 pwsh 的专家一律同时给 job_list / job_output / job_kill：工具的指导段落
     #      会讲后台任务，只给 pwsh 不给收集工具会让"后台跑了但取不回来"。
+    #   5. 这份名单里**没有** billion-context 的那几个上下文工具（compress / decompress /
+    #      search_context / acp_status），是有意为之：它们由另一个 bundle 注册在全局层，
+    #      装了才存在，所以只能出现在**生成物**里 ——
+    #      `node tools/gen-preset-bundle.mjs --with-billion-context`（install.* 会探测目标
+    #      profile 有没有挂 billion-context 再决定）。手写进这里，没装的人每一次委派都会
+    #      抛 `names unknown global tool`（见上第 3 条 + AGENTS.md 红线 11）；完全不注入的
+    #      代价则是：专家收得到 bili 注入的压缩/nudge 指令，却没有工具可调用。
     #
     # 注意两个刻意的设计：
     #   1. 这里没有通用 `subagent` / `subagent_fork` 行。子代理会继承父代理的

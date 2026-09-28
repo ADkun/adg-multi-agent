@@ -100,6 +100,22 @@ const CONDITIONAL_TOOLS = new Map([
  */
 const SCHEDULER_ONLY = new Set(['workflow', 'ralph'])
 
+/**
+ * 由**构建期**注入、不该出现在源文件里的名字：别的 bundle 注册到全局层的工具。
+ * 本文件（preset/agent.cordis.yml）是单一事实来源，必须对"没装那个 bundle"的机器也成立 ——
+ * 那些名字在未挂载时**不存在**，写进 allow 会让每一次委派当场抛 `names unknown global tool`。
+ * 要它们生效请走生成那一步：`node tools/gen-preset-bundle.mjs --with-billion-context`
+ * （install.ps1 / install.sh 会探测目标 profile 有没有挂 billion-context 自动带上）。
+ * 名字清单与 tools/gen-preset-bundle.mjs 的 BILLION_CONTEXT_TOOLS 一致。
+ */
+const BUILD_TIME_INJECTED_TOOLS = new Map([
+  ['compress', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
+  ['decompress', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
+  ['search_context', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
+  ['acp_status', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
+  ['acp_cache', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 BILLION_CONTEXT_TOOLS）'],
+])
+
 const errors = []
 const warnings = []
 const fail = (message) => errors.push(message)
@@ -200,6 +216,10 @@ for (const row of rows) {
   else if (row.personaChars < 60) warn(`第 ${row.line} 行 ${row.id}：persona 只有 ${row.personaChars} 字，可能没写清边界与越界处理`)
   if (row.allow.length === 0) fail(`第 ${row.line} 行 ${row.id}：toolFilter.allow 为空`)
   for (const tool of row.allow) {
+    if (BUILD_TIME_INJECTED_TOOLS.has(tool)) {
+      fail(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是构建期注入的名字（${BUILD_TIME_INJECTED_TOOLS.get(tool)}）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`)
+      continue
+    }
     if (SCHEDULER_ONLY.has(tool)) {
       warn(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是策略越界——它只留给调度智能体（restrict() 会接受它、不会让委派失败，但专家拿到就能绕开名册开任意代理）`)
       continue

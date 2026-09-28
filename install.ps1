@@ -13,7 +13,13 @@
 # cordis.patch.yml 提供（旧装法是把行手贴进 profile 的 patch 层，那条路已废弃，脚本只负责报告残留）。
 param(
   [string[]]$Profiles,
-  [switch]$SkipPackages
+  [switch]$SkipPackages,
+  # billion-context 协同开关（2026-10 加），两个作用见下面「billion-context 探测」那段注释：
+  #   auto（默认）= 每个目标 profile 都挂了 bili 才给专家注入 bili 工具；没有任何 profile 挂 bili 时不注入
+  #   on  = 强制注入（自己保证每个目标 profile 都挂了 billion-context，否则委派会抛 unknown global tool）
+  #   off = 强制不注入
+  # 注意：dsh-adg-token-budget 的"挂了就别启用"始终按**每个 profile 自己**是否挂 bili 决定，不看这个开关。
+  [ValidateSet('auto', 'on', 'off')] [string]$BillionContext = 'auto'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -55,6 +61,50 @@ if (-not $Profiles -or $Profiles.Count -eq 0) {
 }
 if ($Profiles.Count -eq 0) { throw "在 $profilesDir 下没找到可装 preset 的 profile（判据：dsh.profile.bundles 含 @deepseek-ai/dsh-web-app）" }
 
+# ── 0. billion-context 探测（2026-10 加）─────────────────────────────────────────
+# 同一件事有两半，判据不一样：
+#   1. 专家要不要看见 bili 的上下文工具（compress / decompress / search_context / acp_status）。
+#      这决定 tools\gen-preset-bundle.mjs 的旗标。生成物是**全机一份**（$DSH_HOME\bundles\dsh-adg-preset
+#      被每个目标 profile 的 node_modules 链接共用），所以 auto 只在"每个目标 profile 都挂着 bili"时才开：
+#      给一个没挂 bili 的 profile 注入这些名字，会让它每一次委派都抛
+#      `names unknown global tool "compress"`（restrict() 的真行为，AGENTS.md 红线 7）。
+#   2. 挂了 bili 的 profile 不再启用 dsh-adg-token-budget（同一批子代理不同时吃两套收敛/压缩提醒）。
+#      这件事天然**按 profile** 决定 —— dsh.profile.bundles 本来就是 per-profile 的，不看下面的开关，见 4c。
+# 两条判据都要成立才算"挂着"，判据本身在 tools\has-billion-context.mjs —— 它同时决定"要不要注入工具"
+# 和"要不要启用 token-budget 插件"这两件方向相反的事，所以两处安装脚本共用一份实现，不要在这里重写。
+$biliMounts = [ordered]@{}
+foreach ($line in @(& node (Join-Path $here 'tools\has-billion-context.mjs') $profilesDir @($Profiles | ForEach-Object { [string]$_ }))) {
+  $parts = "$line".Split("`t")
+  if ($parts.Length -ge 2) { $biliMounts[[string]$parts[0]] = ($parts[1].Trim() -eq '1') }
+}
+foreach ($name in @($Profiles)) {
+  if ($biliMounts[[string]$name] -eq $null) { $biliMounts[[string]$name] = $false }
+}
+$biliOnProfiles = @($biliMounts.Keys | Where-Object { $biliMounts[$_] } | ForEach-Object { [string]$_ })
+$biliOffProfiles = @($biliMounts.Keys | Where-Object { -not $biliMounts[$_] } | ForEach-Object { [string]$_ })
+switch ($BillionContext) {
+  'on' { $useBiliTools = $true }
+  'off' { $useBiliTools = $false }
+  default { $useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0) }
+}
+if ($useBiliTools) {
+  Write-Host "billion-context：目标 profile 都挂着它（$($biliOnProfiles -join ', ')）→ 生成物给每个专家的 toolFilter.allow 追加 bili 的工具"
+} else {
+  $biliWhy = switch ($BillionContext) {
+    'off' { '-BillionContext off' }
+    'on' { $null }
+    default {
+      if ($biliOnProfiles.Count -eq 0) { '没有目标 profile 挂着它' }
+      else { "只有部分 profile 挂着（没挂的：$($biliOffProfiles -join ', ')）—— 生成物全机共用一份，宁可少给也不要让没挂的 profile 一委派就抛 unknown global tool；想单给它装：-BillionContext on -Profiles <name>" }
+    }
+  }
+  if ($null -eq $biliWhy) {
+    Write-Host "billion-context：-BillionContext on 但没有任何 profile 挂着它 —— 仍按 on 生成，请确认这些 profile 之后会装上 billion-context（否则委派会抛 unknown global tool）" -ForegroundColor Yellow
+  } else {
+    Write-Host "billion-context：不注入专家工具（$biliWhy）"
+  }
+}
+
 # ── 1. 用户技能 ────────────────────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path $skillDest | Out-Null
 Copy-Item (Join-Path $here 'skills\adg-add-agent\SKILL.md') (Join-Path $skillDest 'SKILL.md') -Force
@@ -75,7 +125,11 @@ if (Test-Path -LiteralPath $browserSrc) {
 # ── 3. preset bundle：生成 → 落到稳定位置 → 装进 profile ───────────────────────
 # 源文件永远只有 preset\preset.yml + preset\agent.cordis.yml；bundle\adg-preset\ 是构建产物
 # （在 .gitignore 里），每次安装都重新生成，所以没有人需要手改 patch。
-& node (Join-Path $here 'tools\gen-preset-bundle.mjs')
+# 旗标由上面第 0 节的探测决定：bili 的上下文工具**只进生成物**、不进源文件（见
+# tools\gen-preset-bundle.mjs 的注释），所以同一份源文件要能为挂了 / 没挂 bili 的机器各生成一份。
+$genArgs = @()
+if ($useBiliTools) { $genArgs += '--with-billion-context' }
+& node (Join-Path $here 'tools\gen-preset-bundle.mjs') @genArgs
 if ($LASTEXITCODE -ne 0) { throw "tools\gen-preset-bundle.mjs 失败（exit $LASTEXITCODE）" }
 
 # $DSH_HOME\bundles\ 是稳定位置：profile 只引用这里，仓库可以随便挪/删。
@@ -195,9 +249,25 @@ foreach ($name in $Profiles) {
       $patchNotes += "$name : $patchFile 里还有旧机制手贴的挂载行（$($handRows.Count) 处）—— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
     }
   }
+  # 挂了 billion-context 的 profile **不启用**这个插件（用户 2026-10 的决定）：它给 adg 的每个
+  # 子代理注入步数收敛检查点，而 bili 自己已经在这个 profile 上给同一批子代理注入压缩/收敛指令，
+  # 两套提醒互相重复还都算进每一次请求的前缀。这一半是**按 profile** 决定的：
+  # dsh.profile.bundles 本来就是 per-profile 的，不像 preset 生成物那样全机共用一份，
+  # 所以混装（一个 profile 挂 bili、另一个没挂）时两边都能各拿对的形状。
+  # 摘掉的做法是不选中，而不是给包塞 enabled:false —— profile 层按 id 覆盖是整块替换 config，
+  # 要重写阶梯里每一个键；不选中则连挂载行都不读（AGENTS.md 红线 3 同一个理由）。
   $json = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
   $bundles = @($json.dsh.profile.bundles)
-  if ($bundles -contains $pluginName) {
+  if ($biliMounts[[string]$name]) {
+    if ($bundles -contains $pluginName) {
+      Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force
+      $json.dsh.profile.bundles = @($bundles | Where-Object { $_ -ne $pluginName })
+      [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
+      $patchNotes += "$name : 这个 profile 挂着 billion-context → 已从 dsh.profile.bundles 移除 $pluginName（原文件备份 $manifest.bak-adg-token-budget；包还留在 node_modules 里，想恢复就把它加回列表）"
+    } else {
+      $patchNotes += "$name : 这个 profile 挂着 billion-context → 不启用 $pluginName（步数检查点与 bili 的收敛/压缩提醒重复）"
+    }
+  } elseif ($bundles -contains $pluginName) {
     $patchNotes += "$name : $pluginName 已在 dsh.profile.bundles 里（挂载行来自 $pluginLayer）"
   } else {
     Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force

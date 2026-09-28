@@ -9,7 +9,22 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（上午 10:00+08:00，本文件最新的一条）— `dsh-adg-token-budget` 从手贴挂载行迁移成 bundle：挂载行改由包自己声明，落点并入 `$DSH_HOME/bundles/`
+## 2026-09-28（下午 15:31+08:00，本文件最新的一条）— billion-context 协同：那四个上下文工具改为**构建期条件化注入**；挂着 bili 的 profile **不再启用** `dsh-adg-token-budget`
+
+- `tools/gen-preset-bundle.mjs`：新增 `--with-billion-context`，给 9 个专家行的 `toolFilter.allow` 追加 `compress` / `decompress` / `search_context` / `acp_status`（**不含** `acp_cache` —— 它是账本诊断，归调度者）。不带旗标时产物逐字节不变。
+- 新增 `tools/has-billion-context.mjs`：判据"某个 profile 算不算挂着 billion-context" = `dsh.profile.bundles` 含该包 **且** `node_modules/billion-context/dsh.bundle.patch.yml` 存在；输出每 profile 一行 `<name><TAB>1|0`，退出码恒 0。**注入与停用两件方向相反的事共用这一份实现**。
+- 新增 `tools/check-bundle-flavor.mjs`：钉住**产物**里那四个名字的有无（`check-preset.mjs` 读源文件、专家行在第 4 列；产物里它们在第 14 列，产物是它的盲区）。自己探测缩进；`acp_cache` 出现在产物里即 ERROR。
+- `tools/check-preset.mjs`：新增 `BUILD_TIME_INJECTED_TOOLS`，源文件里**手写**这四个名字判 **ERROR** 并指回构建期旗标（红线 11）。
+- `install.sh`：新增 `--billion-context[=auto|on|off]` 与 `ADG_BILLION_CONTEXT`；探测段（auto = 每个目标 profile 都挂着才注入）；gen 调用带旗标；4c 段把挂着 bili 的 profile 的 `dsh-adg-token-budget` 从 `dsh.profile.bundles` **移除**（备份 `.bak-adg-token-budget`）。
+- `install.ps1`：同上四处（参数 `-BillionContext`，UTF-8 BOM 已复核 `EF BB BF` + 解析零错误）。
+- `preset/agent.cordis.yml`：只加名册注释块第 5 条（说明这四个名字来自构建期注入、源文件保持中立）。**源文件的 `allow` 名单一项未增删** ⇒ 不挂 bili 的人拿到的产物不变。
+- `preset/bundle.package.json`：`1.0.0` → `1.1.0`。
+- `AGENTS.md`：新增**红线 11**（两侧后果、判据位置、"生成物全机共用一份"、token-budget 让位用"移除选中"而不是塞 `enabled: false`）；命令段加两条；`Context Loading` / 生效方式表补一行。
+- `README.md`：新增「与 billion-context 协同（可选能力）」一节（L615-656）。
+- `docs/evidence.md`：新增 §17（逐条带状态档 + 交叉断言与零回归证据）、§8 三条未观测、证据来源表两行。
+- 依据：`allow` 是真白名单（`restrict()` 未知名当场抛 ⇒ 红线 7），而 bili 的压缩指令与 nudge **不看可见性**（`billion-context/src/server.ts:3427`）⇒ 不给就是指令悬空、乱给就是委派必挂；`dsh-adg-token-budget` 与 bili 都给同一批子代理下收敛/压缩提醒，两套同时开会互相抢阈值。
+
+## 2026-09-28（上午 10:00+08:00）— `dsh-adg-token-budget` 从手贴挂载行迁移成 bundle：挂载行改由包自己声明，落点并入 `$DSH_HOME/bundles/`
 
 - 挂载行来源：手贴进 `profiles/<profile>/cordis.patch.yml` 的 `- insert:` 条目 → 包自己的 `plugin/dsh-adg-token-budget/cordis.patch.yml`（**bundle 层**），由 `package.json` 的 `dsh.bundle.patch: ./cordis.patch.yml` 声明。
 - 部署落点：`$DSH_HOME/plugins/dsh-adg-token-budget/` → `$DSH_HOME/bundles/dsh-adg-token-budget/`（与 `dsh-adg-preset` 同一根）；profile 依赖 spec 同步由 `link:$DSH_HOME/plugins/dsh-adg-token-budget` 改成 `link:$DSH_HOME/bundles/dsh-adg-token-budget`；旧落点目录已删除（`install.ps1` 第 5 步：只有没有任何 profile 的链接指着它才删）。

@@ -16,6 +16,15 @@ node tools/check-preset.mjs
 
 # 生成 preset bundle（构建产物，落在 .gitignore 忽略的 bundle/adg-preset/；install.* 每次都会重跑它）
 node tools/gen-preset-bundle.mjs
+node tools/gen-preset-bundle.mjs --with-billion-context   # 目标 profile 挂了 billion-context 时才用：给 9 个专家的 toolFilter.allow 追加它的 4 个上下文工具（红线 11）
+
+# 生成物自检：check-preset 读的是**源文件**（专家行在第 4 列），产物里它们在第 14 列 —— 产物是它的盲区，
+# 所以"注入没生效 / 注错方向"必须靠这个脚本钉住。它自己探测缩进，两种模式都要验：
+node tools/gen-preset-bundle.mjs bundle/adg-plain && node tools/check-bundle-flavor.mjs bundle/adg-plain/cordis.patch.yml plain
+node tools/check-bundle-flavor.mjs bundle/adg-preset/cordis.patch.yml bili
+
+# 判据："某个 profile 到底算不算挂着 billion-context" —— 两件方向相反的事共用这一份实现，别在别处重写
+node tools/has-billion-context.mjs ~/.dsh/profiles web      # → 每 profile 一行 `web<TAB>1|0`，退出码恒 0
 
 # 插件单元测试（只依赖 node:test / node:assert，无 node_modules 也能跑）
 cd plugin/dsh-adg-token-budget && node --test test
@@ -27,11 +36,16 @@ cd browser && node --test --test-isolation=none test                       # 沙
 
 # 安装到本机 dsh 用户根（技能 + preset bundle + 插件 bundle + browser 工具链；挂载行由包自己带，不再手贴）
 sh install.sh                                                              # macOS / Linux
+sh install.sh --billion-context=on web                                     # 只给这个 profile 用注入版（见红线 11）
 powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Windows
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profiles web
 # preset 与插件现在都是 bundle：脚本生成 / 拷贝 → $DSH_HOME/bundles/dsh-adg-preset 与
 # $DSH_HOME/bundles/dsh-adg-token-budget → link 进每个能装 preset 的 profile → 把两个包名都写进该 profile
 # 的 dsh.profile.bundles（光有依赖不算选中）。dsh 正在运行时 pnpm 会因文件被占用而失败（脚本会如实报告并
 # 继续）—— 要真正装/换依赖先关掉 dsh。
+# 两个脚本都会探测 billion-context（tools/has-billion-context.mjs）：auto 模式下"每个目标 profile 都挂着"
+# 才生成注入版；挂着 bili 的 profile 一律**不启用** dsh-adg-token-budget（会把它从 dsh.profile.bundles 里
+# 移除并备份 .bak-adg-token-budget）—— 理由见红线 11。
 ```
 
 **本仓库没有"一条命令跑完全部"的入口**：上面几组命令彼此独立，各自覆盖一层。验收方式是这几组 + 一次真实挂载，见「Quality Gates」。
@@ -49,12 +63,14 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 8. **`install.ps1` 必须保留 UTF-8 BOM。** Windows PowerShell 5.1 没有 BOM 时会按系统 ANSI 代码页读脚本，中文乱码并直接解析失败；编辑工具会**悄悄**去掉它，改完单独确认前三个字节仍是 `EF BB BF`。
 9. **插件的提醒只能是"可选提醒"，不能读成停止指令**（文本里禁止"立即停止"这类命令句）。这条由测试钉住（变异 M13）。
 10. **`browser/` 工具链的边界**：禁止引入第三方依赖（`playwright` / `puppeteer` / `ws`）；禁止把 profile 放进会话工作区、或写死任何本机绝对路径；禁止代填账号密码、读取 profile 的 cookie 库、验证码识别与指纹伪装。来源与不变量见 `browser/design.md`（I1 / I6）与 `browser/AGENTS.md`「模块特有红线」。
+11. **billion-context 的上下文工具只能由构建期注入，禁止手写进 `preset/agent.cordis.yml`。** `compress` / `decompress` / `search_context` / `acp_status` 这四个名字不属于本组合，它们是 billion-context 的 DSH 插件注册在**全局层**的工具（实测：子代理的工具目录里它们是裸名、没有 `mcp__` 前缀，所以 `restrict()` 接受）。两侧后果都不轻：**不给** —— bili 的压缩指令与 nudge 只看自己的 config、不看这个请求有没有那些工具（`billion-context/src/server.ts:3427` 的系统段与 L3447 的 nudge 都没有 pluginMode 护栏），于是专家收到"去调 `compress` / `acp_status`"的指令却没有工具可调；**给了但目标 profile 没挂 bili** —— 名字不存在，撞红线 7，每一次委派当场抛 `names unknown global tool "compress"`。所以口径是"源文件中立、生成物按探测决定"：`node tools/gen-preset-bundle.mjs --with-billion-context`，探测在 `tools/has-billion-context.mjs`（判据 = 包在 `dsh.profile.bundles` 里 **且** 装上的那份真的带 `dsh.bundle.patch.yml`）；`tools/check-preset.mjs` 会把源文件里手写的这四个名字判成 **ERROR** 并指回这个旗标。生成物**全机共用一份**（各 profile 的 node_modules 链接同一个 `$DSH_HOME/bundles/dsh-adg-preset`），所以 auto 只在"每个目标 profile 都挂着"时才注入。同一份判据的另一半：**挂着 bili 的 profile 不启用 `dsh-adg-token-budget`**（它按步数档位给子代理下收敛提醒，bili 的压缩/nudge 是同类指令，两套同时给同一批子代理会互相抢阈值）。实现方式是把这个 bundle 从该 profile 的 `dsh.profile.bundles` 里**移除**（脚本会备份 `.bak-adg-token-budget`）—— **不要**改成塞一条 `enabled: false` 覆盖行（红线 3 的同一理由：按 id 覆盖是整块替换 `config`，为关一个键重写整份 config 容易丢别的键）。
 
 ## 生效方式（口径不同，别承诺错）
 
 | 改了什么 | 怎么生效 | 怎么复核 |
 |---|---|---|
 | `preset/` 任何文件（含增删专家） | 先重跑 `tools/gen-preset-bundle.mjs` 并重装 bundle（`install.*` 会自动做），再**重启 dsh**，然后在**新对话**里选「Adg 多智能体模式」 | 重启后按 `README.md`「给 AI 的安装指令」第 8 步做真实挂载校验。**不要**再去 `.agent-presets/` 找那第二份文件——它已经不存在了 |
+| 只切换 billion-context 注入与否（同一份源文件的两种生成物，见红线 11） | 重新生成 + 重装 bundle（`install.*` 探测后自动带旗标）+ **重启 dsh** + 新会话 | 先看 `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml` 里每个专家行末尾有没有那四个名字；再在新会话里委派任一专家，让它报工具目录里看得见 `compress` / `acp_status` |
 | composition 里写的 `@deepseek-ai/*` 包名 | 包名会随 dsh 升级**改名**，改完必须真实挂载 | `resolve('adg')` 的 `.broken` 为空；用旧名会报 `… never started`（2026-09-28 实录：`dsh-workflow-worker-thread` → `dsh-workflow-ptc`） |
 | 插件的挂载行**本体**（bundle 层：`$DSH_HOME/bundles/dsh-adg-token-budget/cordis.patch.yml`） | **以重启 dsh 为准**——没有任何东西 watch `bundles/`，单独改这个文件不会自己触发重读；**禁止宣称"不重启也会生效"** | 重启后 `plugin_manager list_bundles` 仍有 `dsh-adg-token-budget` 这条 + `logFile` 新出现一行 `activation: …`（**冷启动后的 bundle 层：未观测**，量法见 `docs/evidence.md` §8 / §16.5） |
 | 插件的 `config:` **覆盖行**（`profiles/<profile>/cordis.patch.yml`；Plugins 页保存写的就是这一层） | **热重载，不用重启**（`web` 是 `patchReload: live`）——但覆盖行按 id **整块替换** `config`、不是深合并，要留的键必须全部重写 | `logFile` 里新出现一行 `activation: …` |
@@ -94,6 +110,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1                     # Win
 ## Quality Gates
 
 1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 2 警告**（`agent-file` 与 `agent-general` 的 `read_image` 是条件性注册；2026-09-28 加第 9 个专家之前是 0 / 1）。
+1b. **改了 `tools/gen-preset-bundle.mjs` 或 `preset/agent.cordis.yml` → 两种味道的产物都要验**（红线 11）：`node tools/gen-preset-bundle.mjs bundle/adg-plain && node tools/check-bundle-flavor.mjs bundle/adg-plain/cordis.patch.yml plain` 与 `node tools/gen-preset-bundle.mjs --with-billion-context && node tools/check-bundle-flavor.mjs bundle/adg-preset/cordis.patch.yml bili`，两条都必须 **exit 0**。`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列 —— **产物是它的盲区**，只跑第 1 条证明不了注入有没有生效。本仓库实测：plain = 9 行全 `NONE`（`10/7/7/10/2/5/9/7/16`）、bili = 9 行全 `ALL`（`14/11/11/14/6/9/13/11/20`，每行正好 +4）；交叉断言两个方向都 exit 1（拿 bili 产物按 plain 断、拿 plain 产物按 bili 断），所以这个门**不会假绿**。
 2. `cd plugin/dsh-adg-token-budget && node --test test` → 全绿（本仓库实测 **54 个测试全通过**）。**在 DSH 沙箱（`workspace-write`）里这条命令必然失败**，失败形态是测试文件本身报 `Error: spawn EPERM`（不是断言失败）：`node --test` 默认每个测试文件起一个 piped-stdio 子进程，沙箱拒绝 pipe。加 `--test-isolation=none` 即走同一条测试路径且不需要子进程，实测全绿；另外 `| Select-String / Select-Object` 这类 PowerShell 管道在沙箱里也会被拒（`Access is denied`），重定向到文件则正常。
 3. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 8 步做**真实挂载**（静态自检证明不了挂载）。
 4. 改了插件的 `src/` → 重启后复核激活行形状（见上表）。

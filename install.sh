@@ -39,10 +39,43 @@ esac
 # 默认：能装 preset 的所有 profile —— 判据是它的 bundle 列表里有 @deepseek-ai/dsh-web-app，
 # 因为 agent-preset-registry（agentPresets 服务）正是这个 bundle 声明的（实测：dsh-base 和
 # dsh-headless 都不声明它）。往缺 registry 的 profile 里塞声明行会让该 profile 启动失败。
+#
+# billion-context 协同（与 install.ps1 同一份判据 tools/has-billion-context.mjs）：
+#   1) 目标 profile 都挂着 bili → 给 preset 生成物加 --with-billion-context，专家的
+#      toolFilter.allow 里才有 bili 那几个上下文工具（不注入 = 专家收到 bili 的压缩指令却没工具可调；
+#      给没挂 bili 的 profile 注入 = 每一次委派抛 names unknown global tool，所以宁可不注入）。
+#   2) 挂着 bili 的那个 profile 不再启用配套插件 dsh-adg-token-budget（两套收敛/压缩提醒不给
+#      同一批子代理同时用）。这一半天然按 profile 决定，见下面 4c。
+# 覆盖：--billion-context=auto|on|off，或环境变量 ADG_BILLION_CONTEXT（默认 auto）。
+billion_context_mode="${ADG_BILLION_CONTEXT:-auto}"
+positional=""
+has_positional=0
+for arg in "$@"; do
+  case "$arg" in
+    --billion-context=*) billion_context_mode="${arg#--billion-context=}" ;;
+    --billion-context)
+      echo "--billion-context 需要值：--billion-context=auto|on|off" >&2
+      exit 1
+      ;;
+    *)
+      positional="$positional $arg"
+      has_positional=1
+      ;;
+  esac
+done
+case "$billion_context_mode" in
+  auto | on | off) ;;
+  *)
+    echo "billion-context 模式只认 auto|on|off，给的是：$billion_context_mode" >&2
+    exit 1
+    ;;
+esac
+
 profiles=""
 package_failed=0
-if [ "$#" -gt 0 ]; then
-  profiles="$*"
+if [ "$has_positional" -eq 1 ]; then
+  # shellcheck disable=SC2086
+  profiles="$positional"
 else
   profiles="$(node -e '
     const fs = require("fs"), path = require("path");
@@ -61,6 +94,50 @@ if [ -z "$profiles" ]; then
   echo "在 $root/profiles 下没找到可装 preset 的 profile（判据：dsh.profile.bundles 含 @deepseek-ai/dsh-web-app）" >&2
   exit 1
 fi
+
+# ── 0. billion-context 探测（与 install.ps1 共用 tools/has-billion-context.mjs 那一份判据）────
+# 两张名单：
+#   bili_on  = 挂着 bili 的 profile —— 这些 profile 不启用 dsh-adg-token-budget（见 4c，按 profile 决定）
+#   bili_off = 没挂的 profile —— 只要有一个，preset 生成物就不注入 bili 工具：全机共用一份生成物，
+#              注入了会让没挂的 profile 每次委派抛 names unknown global tool，宁可少给这个能力。
+# shellcheck disable=SC2086
+bili_map="$(node "$here/tools/has-billion-context.mjs" "$root/profiles" $profiles)"
+tab="$(printf '\t')"
+bili_on=""
+bili_off=""
+while IFS="$tab" read -r bili_name bili_flag; do
+  [ -n "$bili_name" ] || continue
+  if [ "$bili_flag" = "1" ]; then bili_on="$bili_on $bili_name"; else bili_off="$bili_off $bili_name"; fi
+done <<EOF
+$bili_map
+EOF
+# has_bili <profile> → 打印 0/1（供 4c 按 profile 决定 token-budget）
+has_bili() {
+  printf '%s\n' "$bili_map" | awk -F'\t' -v want="$1" '$1 == want { print $2 }'
+}
+use_bili_tools=0
+case "$billion_context_mode" in
+  on) use_bili_tools=1 ;;
+  off) use_bili_tools=0 ;;
+  auto)
+    if [ -n "$bili_on" ] && [ -z "$bili_off" ]; then use_bili_tools=1; fi
+    ;;
+esac
+echo "billion-context 探测：$([ -n "$bili_on" ] && echo "已挂载 [${bili_on# }]" || echo "没有任何目标 profile 挂载") / 未挂载 $([ -n "$bili_off" ] && echo "[${bili_off# }]" || echo "无")"
+if [ "$use_bili_tools" -eq 1 ]; then
+  echo "  preset 生成物给专家的 toolFilter.allow 追加 bili 的上下文工具（--with-billion-context）"
+elif [ "$billion_context_mode" = "auto" ] && [ -n "$bili_off" ]; then
+  echo "  不注入：生成物全机共用一份，而 $bili_off 没挂 billion-context（给其中任一方注入都会踩到"
+  echo "    「未注册的工具名让 restrict() 抛错、委派当场失败」）。只想给挂了的那几个 profile 用："
+  echo "    sh install.sh --billion-context=on $bili_on"
+elif [ "$billion_context_mode" = "on" ]; then
+  echo "  注意：--billion-context=on 但按名单没有任何 profile 挂着 billion-context —— 仍按 on 生成，" >&2
+  echo "    没挂的 profile 里委派给专家会失败（names unknown global tool）。" >&2
+fi
+
+# shellcheck disable=SC2086
+bili_gen_flag=""
+if [ "$use_bili_tools" -eq 1 ]; then bili_gen_flag="--with-billion-context"; fi
 
 # ── 1. 用户技能 ────────────────────────────────────────────────────────────────
 mkdir -p "$root/skills/adg-add-agent"
@@ -83,7 +160,9 @@ fi
 # ── 3. preset bundle：生成 → 落到稳定位置 → 装进 profile ───────────────────────
 # 源文件永远只有 preset/preset.yml + preset/agent.cordis.yml；bundle/adg-preset/ 是构建产物
 # （在 .gitignore 里），每次安装都重新生成，所以没有人需要手改 patch。
-node "$here/tools/gen-preset-bundle.mjs"
+# bili 的上下文工具只进生成物、不进源文件：源文件得对没装 billion-context 的人也成立（见 --with-billion-context 说明）。
+# shellcheck disable=SC2086
+node "$here/tools/gen-preset-bundle.mjs" $bili_gen_flag
 
 # $DSH_HOME/bundles/ 是稳定位置：profile 只引用这里，仓库可以随便挪/删。
 rm -rf "$bundle_stable"
@@ -164,8 +243,36 @@ for name in $profiles; do
   # 不动机器级的 $root/cordis.patch.yml：那一层套在每个 profile 上（web / headless / sdk / 自建），
   # 而这个插件只对 adg preset 的子代理生效，选进机器级等于让每个 profile 都去 import 它。
   patch_file="$profile_dir/cordis.patch.yml"
+  hand_row=0
   if [ -f "$patch_file" ] && grep -Eq '^[[:space:]]*- id: adg-token-budget' "$patch_file"; then
+    hand_row=1
     echo "  patch   -> $name : $patch_file 里还有旧机制手贴的挂载行 —— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
+  fi
+  # 4c-1. 挂着 billion-context 的 profile **不启用**这个插件（2026-10）：插件按步数档位给子代理追加
+  # 收敛提醒，bili 的压缩/nudge 干的是同一类事，两套同时给同一批子代理下指令会互相打架（谁先撞到
+  # 阈值谁说话），所以只保留一个。这里靠"不选进 dsh.profile.bundles"实现，而不是塞一条 enabled:false
+  # 覆盖行 —— profile 层按 id 覆盖是**整块替换 config**，为了关一个键得把整份 config 重写一遍，
+  # 容易把别的键弄丢（AGENTS.md 红线 3 的同一理由）。
+  if [ "$(has_bili "$name")" = "1" ]; then
+    verdict="$(node -e '
+      const fs = require("fs");
+      const [manifest, pluginName] = process.argv.slice(1);
+      const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
+      const bundles = ((m.dsh || {}).profile || {}).bundles || [];
+      if (!bundles.includes(pluginName)) { console.log("not-selected"); process.exit(0); }
+      fs.writeFileSync(manifest + ".bak-adg-token-budget", fs.readFileSync(manifest));
+      m.dsh.profile.bundles = bundles.filter((b) => b !== pluginName);
+      fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
+      console.log("deselected");' "$profile_dir/package.json" "$plugin_name")"
+    if [ "$verdict" = "deselected" ]; then
+      echo "  patch   -> $name : 已把 $plugin_name 从 dsh.profile.bundles 移除 —— 该 profile 挂着 billion-context，收敛提醒由它提供（原文件备份 $manifest.bak-adg-token-budget）"
+    else
+      echo "  patch   -> $name : $plugin_name 保持不启用（该 profile 挂着 billion-context）"
+    fi
+    if [ "$hand_row" -eq 1 ]; then
+      echo "  patch   -> $name : 但 $patch_file 里那条手贴挂载行还在 —— 它会绕过 bundle 选择继续把插件挂上，请删掉（本脚本不代删 profile 层）" >&2
+    fi
+    continue
   fi
   verdict="$(node -e '
     const fs = require("fs");

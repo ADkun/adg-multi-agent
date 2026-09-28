@@ -612,6 +612,49 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 
 **preset 的改动不会立即生效 —— 必须重启 dsh**（见「装完必须重启 dsh」）。
 
+## 与 billion-context 协同（可选能力）
+
+[billion-context](https://github.com/ranxianglei/billion-context)（下称 bili）是另一个 bundle：一个本机代理 +
+DSH 插件，把会话上下文折叠进 pack，并往**全局工具层**注册 `compress` / `decompress` / `search_context` /
+`acp_status` / `acp_cache`。它和本 preset 的交界只有一处，但那一处是硬的：
+
+- `toolFilter.allow` 是**真白名单**（见「设计要点」），专家只看得见 allow 里列出的名字；
+- bili 注入给模型的压缩指令与 nudge **只看自己的 config，不看这个请求有没有那些工具**。
+
+两头凑起来的后果是：装了 bili 又不给专家那几个名字，专家会收到"去调 `compress` / `acp_status`"的指令，
+工具目录里却没有它们（实测：调度者自己看得见，因为它是全局层；被裁的是专家）。反过来，把这些名字
+**手写**进 `preset/agent.cordis.yml`，没装 bili 的人每一次委派都会当场抛 `names unknown global tool "compress"`
+—— 名字不存在时 `restrict()` 直接抛，那一次委派就废了。
+
+所以口径是**源文件中立、生成物按探测决定**：
+
+```bash
+node tools/gen-preset-bundle.mjs --with-billion-context   # 把四个名字追加进 9 个专家行的 allow（只改生成物）
+node tools/has-billion-context.mjs ~/.dsh/profiles web    # 探测：每 profile 一行 "<name>\t<0|1>"
+sh install.sh                                              # 自动探测并决定旗标
+```
+
+`install.ps1` / `install.sh` 会先探测每个目标 profile（判据 = bili 在 `dsh.profile.bundles` 里 **且** 装上的那份
+真的带 `dsh.bundle.patch.yml`），auto 模式下**只有每个目标 profile 都挂着**才注入 —— 因为生成物全机共用一份
+（各 profile 的 `node_modules/dsh-adg-preset` 链接同一个 `$DSH_HOME/bundles/dsh-adg-preset`），一份带名字的配置
+会砸在没装的人头上。混合场景想单独给某个 profile 打开：`sh install.sh --billion-context=on web`
+（PowerShell：`-BillionContext on -Profiles web`，随后自己重装一次 bili 未装的 profile）。
+手动跑 `gen-preset-bundle.mjs` 默认**不注入**，忘带旗标 = 少个能力，不会装坏。
+
+注入的是四个名字，**不含 `acp_cache`**：那份工具只读缓存经济学账本，是调度者诊断"这轮折叠值不值"用的，
+并且它能用 `conversation_id` 代读子代理的账；给每个专家只会加长它们每次请求的稳定 prefix。
+
+**同一份判据的另一半：挂着 bili 的 profile 不启用 `dsh-adg-token-budget`。** 那个插件按步数档位给子代理下
+收敛提醒，bili 的压缩/nudge 是同类指令，两套同时给同一批子代理会互相抢阈值、模型会收到"既该收敛又该折叠"
+的矛盾信号。实现方式是把这个 bundle 从该 profile 的 `dsh.profile.bundles` 里**移除**（脚本会备份成
+`package.json.bak-adg-token-budget`），**不是**塞一条 `enabled: false` 覆盖行 —— 按 id 覆盖是整块替换 `config`，
+为关一个键重写整份 config 太容易丢别的键。注意这条按 profile 的**实际挂载状态**决定，不受 `--billion-context`
+旗标影响（旗标只管工具注入）。想两套并存：把 `dsh-adg-token-budget` 加回那个 profile 的 `dsh.profile.bundles` 即可。
+
+自检：`Select-String`/`grep` 一下 `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml`，注入版里 9 个 `agent-*` 行的
+`toolFilter.allow` 末尾应有那四个名字；再到新会话里委派任一专家，让它报"工具目录里有没有 `acp_status`"。
+两个方向都要测的完整口径见 `docs/evidence.md` §17「billion-context 的上下文工具对 ADG 专家可见吗」。
+
 ## 第二层：子代理的步数收敛检查点（插件 `dsh-adg-token-budget`）
 
 上一节那三组旋钮（现已回归出厂默认）压的是**单条结果的体积**，它们管不到**步数**。

@@ -35,6 +35,8 @@ last_reviewed: 2026-09-28
 | 沙箱探测（§11） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
 | 人工介入探测（§12） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘） | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
+| 生成物自检（§17） | `node tools/check-bundle-flavor.mjs <cordis.patch.yml> <plain\|bili>` | 钉住 **bundle 产物**里 billion-context 那四个名字的有无；`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列，产物是它的盲区。零依赖按行扫、自己探测缩进 |
+| billion-context 挂载判据（§17） | 判据实现 `tools/has-billion-context.mjs`；被判对象 = 某 profile 的 `package.json` 里 `dsh.profile.bundles` 含 `billion-context` **且** `profiles/<p>/node_modules/billion-context/dsh.bundle.patch.yml` 存在 | 同一份判据管两件方向相反的事（给专家注入那四个工具 / 让 token-budget 不启用），实现只在这一处 |
 
 ## 1. 步数分布与阶梯校准（真机实测）
 
@@ -135,6 +137,9 @@ last_reviewed: 2026-09-28
 | **冷启动后的 bundle 层** | **未观测**（§16.5）：迁移是在**迁移前就起来的进程**里生效的 —— 触发点是 `install_bundle` 改写 profile 清单导致**整份 patch 栈重读**（§16.3 第二条、§16.4 第 1 条的机制归属），**不是** bundle 层自己被 watch。量法：重启 dsh → `plugin_manager list_bundles` 仍有 `dsh-adg-token-budget` 这一条 + 日志新出现一行 `activation: …` |
 | **`desktop` profile 迁移后生效** | **未观测**（§16.5）：该 profile 已装成同一形状（§16.5「已就位」），但它的 `patchReload` **不是** `live` ⇒ 要下次启动才生效。量法：启动 `desktop` profile → 看同一日志的 `activation` 行。（§14.6 未观测 ① 那条 `desktop` 挂载未观测仍然独立成立） |
 | **已撤销的 token 两档旧口径**（§4 / §7 / §15 里的历史行） | **仍是历史证据，不许写成当前行为**：包括那五个惰性旧键（§7）、`hard stage:` / `dry-run …would cancel` 前缀（§9）、`{kind:'plugin', plugin}` 包装（§15），以及"旧落点 `$DSH_HOME/plugins/dsh-adg-token-budget/`"与旧部署集合的五项形状（§14.5 / §14.6 的历史标注、§15.4 那条探针跑的部署位置、§16.1）。量法：无 —— 代码路径已删；本行只是防止引用时把历史数字读成现值 |
+| **重启后真实 `adg` 专家行是否看得见、调得通 bili 那四个上下文工具** | **未观测**（§17 未观测 ①）：注入只在产物里，可见性探针走的是**通用委派**路径（§17.1 第 1 条），不是 `adg` 专家行。量法：重启 dsh → 新会话选「Adg 多智能体模式」→ 让调度者派一次 `agent_search`，在委派 prompt 里要求"先调一次 `acp_status` 并把结果原样报回来"；成功 = 该步返回工具结果而不是 `names unknown global tool`。注意第二个前提：bili 的 proxy 必须活着（端口读 `C:\Users\cenqian\.local\state\billion-context\proxy-origin`，本机上一进程留下的端口会失效） |
+| **从 `dsh.profile.bundles` 移除 `dsh-adg-token-budget` 后冷启动无副作用** | **未观测**（§17 未观测 ②）。量法：重启挂了 bili 的那个 profile → dsh 正常起来 + 该 profile 日志里**不再**出现 `adg-token-budget` 的 `activation:` 行 + `list_bundles` 里这一条变成未选中 |
+| **preset realm 里 `compaction-basic` 的 `auto` 到底取什么值** | **未观测**，且**刻意留在本次范围外**（§17 未观测 ③）：bili 的 patch 层写了 `compaction-basic` / `config.auto: false`，但 profile 层那条能不能进 realm 没有量过；若进不去，专家就同时受**原生自动压缩**与 **bili 的压缩指令**两套约束（本仓库红线 3 明确不动尺寸旋钮，所以这里只是登记，不是待修的洞）。量法：Adg 会话转写里找原生压缩发生的痕迹（`compress` 工具调用之外的自动折叠），与 bili 的 `/acp-cache` 台账对齐 |
 
 ## 9. 活证据复核快照（2026-09-25T13:46:37Z / 21:46:37+08:00）
 
@@ -886,3 +891,30 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 （第 3 条走的是 `presets: ['cordis']` 的通用委派，机制见 §16.4 第二条技术事实）；② **冷启动后的 bundle 层**
 （当前进程是迁移前起的，这次生效靠的是改写 profile 清单带来的**整份 patch 栈重读**，不是 bundle 层自己被 watch，见 §16.3）；
 ③ **`desktop` profile 生效**（`patchReload` 非 live）。三条的量法都写在 §8 对应行里。
+
+## 17. billion-context 的上下文工具对 ADG 专家可见吗（2026-09-28）
+
+**这一节回答的问题**：ADG 的专家行能不能用 billion-context（下称 bili）那套上下文工具；口径为什么是"构建期条件化注入"；以及"挂了 bili 就别启用 `dsh-adg-token-budget`"这条决定的依据。
+**边界**：本节**不**回答"步数检查点到底有没有用"（§8 第 1 行的核心问题，至今未观测），也不改 preset-realm 的压缩语义（`compaction-basic` 的尺寸旋钮仍按红线 3 不碰）。
+
+### 17.1 结论与依据（逐条带状态档）
+
+1. **真机实测（有局限）**：bili 的工具在子代理可见目录里是**裸名**（`compress` / `decompress` / `search_context` / `acp_status`，另加未纳入的 `acp_cache`），**没有 `mcp__` 前缀** ⇒ 它们能被 `toolFilter.allow` 引用。量法：在挂了 bili 的 profile `web` 的会话里用**通用 `subagent`** 派一个子代理，让它枚举自身可见/可调用工具 —— 回报 **34 个**，其中包含这 5 个裸名。
+   **局限（不许读成 Adg 实测）**：这次探测走的是通用委派路径（其 session 头记 `agentPreset: "cordis"`，机制见 §16.4 第二条技术事实），**不是** `adg` 专家行 ⇒ "真实 Adg 专家重启后看得见、调得通"已登记为 §8 未观测。
+2. **源码级事实（为什么 allow 是硬边界）**：`dsh-subagent/lib/types/child-agent.js:171-172` `if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter);`；`dsh-tools/lib/types/index.js:488-511` `restrict(filter)` 拿 `this.view(scope).restrictableNames` 比对、**未知名直接抛** `names unknown global tool ...`，L541 把限制作用在 **INHERITED** 可见面上（L553-557 的注释解释了 preset 迁到 agent plane 后"子过滤器不再约束它拿到的东西"这一历史成因）；`dsh-subagent/lib/types/descriptor.js:46` `TOOL_FILTER_KEYS = new Set(['allow', 'deny'])`（两者至少要给一个）。⇒ 后果是**那一次委派当场失败**，不是挂载失败（红线 7）。
+3. **源码级事实（为什么只能在 global 层解决）**：`dsh-base/lib/contracts.js:464-467`「A realm context has no session, no model plane, and no agent-facing tool plane」，preset 的工具面是 `@@ global @ preset` ⇒ **realm 里注册的工具永远进不了子代理的可见列表**。所以"给专家压缩能力"这件事必须靠一个注册在**全局层**的工具，bili 恰好如此（第 1 条）。
+4. **源码级事实（"不给工具"这一侧的代价）**：bili `src/server.ts:3335-3336` `const shouldInject = opts.compress.injectTool && !isTitleGen;`、`server.ts:3427` `if (shouldInject) sysParts.push(buildCompressSystemPrompt(...))` —— **系统提示那一段没有工具可见性护栏**（护栏只在 `plugin.ts:627` 的 `toolNames` 与 `plugin.ts:959` `const allowed = [...PROXY_TOOL_NAMES]` 这类**注册面**上）。⇒ 专家会收到"该压缩了就调 `compress` / 先看 `acp_status`"的指令，**手里却没有这两个工具**。这是本次改动真正的动机，不是"锦上添花"。
+5. **检验（生成物两种味道都验过，脚本已进仓库）**：`tools/check-bundle-flavor.mjs`，2026-09-28 本机输出：
+   - plain 产物（`node tools/gen-preset-bundle.mjs bundle/adg-plain`）→ 9 个专家行全 `NONE`，allow 计数 `agent_file[10] agent_computer[7] agent_app[7] agent_browser[10] agent_search[2] agent_researcher[5] agent_coder[9] agent_reviewer[7] agent_general[16]`，`通过：9 个专家行，plain 模式断言成立`，**exit 0**。
+   - bili 产物（`node tools/gen-preset-bundle.mjs --with-billion-context`）→ 全 `ALL`，计数 `14 / 11 / 11 / 14 / 6 / 9 / 13 / 11 / 20`（**每行正好 +4**），**exit 0**。
+   - 交叉断言（钉"假绿"）：bili 产物按 `plain` 断 → 9 个 ERROR、exit 1；plain 产物按 `bili` 断 → 9 个 ERROR、exit 1。
+   - 零回归证据：**不带旗标重跑生成物，与本机当时已装的稳定产物 SHA256 逐字节相同**（`8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`）⇒ 改动没有触碰任何没挂 bili 的人的产物。
+   - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
+6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
+7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。
+8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。
+9. **源码级事实（token-budget 让位为什么选"不选中 bundle"而不是塞 `enabled: false`）**：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。
+
+### 17.2 未观测（已照 §8 登记，引用本节时不许抹平）
+
+① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② 从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**；③ **preset realm 里 `compaction-basic` 的 `auto`** 到底取什么值（bili 在 profile 层写了 `auto: false`，能不能进 realm 未量；若进不去，专家就同时受原生自动压缩与 bili 指令两套约束）。三条的量法都写在 §8 对应行里。
