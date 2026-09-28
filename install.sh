@@ -7,6 +7,16 @@
 # 一个 bundle：包清单声明 dsh.bundle.patch，patch 里 insert 一行 @deepseek-ai/dsh-agent-preset
 # 声明（id/name/description/order/plugins）。本脚本：生成 bundle → 放到 $DSH_HOME/bundles/ →
 # 装进目标 profile 的 node_modules 并写进该 profile 的 dsh.profile.bundles。
+#
+# 2026-09-28 追加：preset 的生成物有**两种味道**（plain / 注入版），各自占一个稳定目录 ——
+#   $DSH_HOME/bundles/dsh-adg-preset        plain（gen 不带旗标）
+#   $DSH_HOME/bundles/dsh-adg-preset-bili   注入版（专家的 allow 里带 bili 的四个上下文工具）
+# 两份的**包名都是 dsh-adg-preset**，所以 profile 的 dsh.profile.bundles 那一行两种味道通用，
+# 差别只在它 node_modules 里的那个 link 指向哪一个目录。每个 profile 按**自己的**探测结果选，
+# 于是混装（一个 profile 挂 bili、另一个没挂）也能各拿对的形状。
+# **不要再退回"生成物全机共用一份 + 每个目标 profile 都挂着才注入"那套口径**：那种做法在混装机器上
+# 必然给挂着 bili 的那个 profile 装 plain —— 专家收到 bili 的压缩指令却没有工具可调（2026-09-28 本机实测：
+# web 挂 bili、desktop 没挂 ⇒ auto 选中 plain ⇒ web 的子代理报 `unknown tool compress`）。
 # 插件 dsh-adg-token-budget 自 2026-09-28 起是**同一个形状**：它的挂载行由包自己的
 # cordis.patch.yml 提供（旧装法是把行手贴进 profile 的 patch 层，那条路已废弃，脚本只负责报告残留）。
 set -eu
@@ -15,7 +25,10 @@ root="${DSH_HOME:-$HOME/.dsh}"
 here="$(cd "$(dirname "$0")" && pwd)"
 bundle_name='dsh-adg-preset'
 plugin_name='dsh-adg-token-budget'
+# 两种味道两个稳定落点（包名相同，见文件头）：plain = bundle_stable（沿用旧路径，老链接不用动），
+# bili = bundle_bili_stable。每个 profile 只 link 其中一个。
 bundle_stable="$root/bundles/$bundle_name"
+bundle_bili_stable="$root/bundles/$bundle_name-bili"
 plugin_stable="$root/bundles/$plugin_name"
 plugin_legacy_stable="$root/plugins/$plugin_name"
 
@@ -30,6 +43,7 @@ case "$root" in
     fi
     root="$resolved"
     bundle_stable="$root/bundles/$bundle_name"
+    bundle_bili_stable="$root/bundles/$bundle_name-bili"
     plugin_stable="$root/bundles/$plugin_name"
     plugin_legacy_stable="$root/plugins/$plugin_name"
     ;;
@@ -41,9 +55,10 @@ esac
 # dsh-headless 都不声明它）。往缺 registry 的 profile 里塞声明行会让该 profile 启动失败。
 #
 # billion-context 协同（与 install.ps1 同一份判据 tools/has-billion-context.mjs）：
-#   1) 目标 profile 都挂着 bili → 给 preset 生成物加 --with-billion-context，专家的
-#      toolFilter.allow 里才有 bili 那几个上下文工具（不注入 = 专家收到 bili 的压缩指令却没工具可调；
-#      给没挂 bili 的 profile 注入 = 每一次委派抛 names unknown global tool，所以宁可不注入）。
+#   1) 每个 profile 链接**自己该拿的**那份味道的生成物（plain / bili 两个稳定目录，见文件头）：
+#      bili 版给专家的 toolFilter.allow 追加 bili 那几个上下文工具（不注入 = 专家收到 bili 的压缩
+#      指令却没工具可调；给没挂 bili 的 profile 注入 = 每一次委派抛 names unknown global tool，
+#      所以两种形状必须分开装，不能"宁可少给"一刀切）。--billion-context=on|off 是整体覆盖。
 #   2) 挂着 bili 的那个 profile 不再启用配套插件 dsh-adg-token-budget（两套收敛/压缩提醒不给
 #      同一批子代理同时用）。这一半天然按 profile 决定，见下面 4c。
 # 覆盖：--billion-context=auto|on|off，或环境变量 ADG_BILLION_CONTEXT（默认 auto）。
@@ -115,29 +130,55 @@ EOF
 has_bili() {
   printf '%s\n' "$bili_map" | awk -F'\t' -v want="$1" '$1 == want { print $2 }'
 }
-use_bili_tools=0
-case "$billion_context_mode" in
-  on) use_bili_tools=1 ;;
-  off) use_bili_tools=0 ;;
-  auto)
-    if [ -n "$bili_on" ] && [ -z "$bili_off" ]; then use_bili_tools=1; fi
-    ;;
-esac
+# 每个目标 profile 要哪一种味道：auto = 它自己的探测结果；on / off = 全部强制同一种。
+flavor_of() {
+  case "$billion_context_mode" in
+    on) echo bili ;;
+    off) echo plain ;;
+    *)
+      if [ "$(has_bili "$1")" = "1" ]; then echo bili; else echo plain; fi
+      ;;
+  esac
+}
+bili_flavor_profiles=""
+plain_flavor_profiles=""
+for name in $profiles; do
+  if [ "$(flavor_of "$name")" = "bili" ]; then
+    bili_flavor_profiles="$bili_flavor_profiles $name"
+  else
+    plain_flavor_profiles="$plain_flavor_profiles $name"
+  fi
+done
 echo "billion-context 探测：$([ -n "$bili_on" ] && echo "已挂载 [${bili_on# }]" || echo "没有任何目标 profile 挂载") / 未挂载 $([ -n "$bili_off" ] && echo "[${bili_off# }]" || echo "无")"
-if [ "$use_bili_tools" -eq 1 ]; then
-  echo "  preset 生成物给专家的 toolFilter.allow 追加 bili 的上下文工具（--with-billion-context）"
-elif [ "$billion_context_mode" = "auto" ] && [ -n "$bili_off" ]; then
-  echo "  不注入：生成物全机共用一份，而 $bili_off 没挂 billion-context（给其中任一方注入都会踩到"
-  echo "    「未注册的工具名让 restrict() 抛错、委派当场失败」）。只想给挂了的那几个 profile 用："
-  echo "    sh install.sh --billion-context=on $bili_on"
-elif [ "$billion_context_mode" = "on" ]; then
-  echo "  注意：--billion-context=on 但按名单没有任何 profile 挂着 billion-context —— 仍按 on 生成，" >&2
-  echo "    没挂的 profile 里委派给专家会失败（names unknown global tool）。" >&2
+for name in $profiles; do
+  flavor="$(flavor_of "$name")"
+  if [ "$flavor" = "bili" ]; then
+    echo "  味道 -> $name : bili（专家的 allow 里带 bili 的四个上下文工具）"
+  else
+    echo "  味道 -> $name : plain（不带 bili 工具）"
+  fi
+done
+# 覆盖开关与探测结果对不上时必须明说：判断错的那一方不是少个能力就是每次委派都挂（红线 7）。
+forced_onto_off=""
+forced_off_of_on=""
+for name in $bili_flavor_profiles; do
+  if [ "$(has_bili "$name")" != "1" ]; then forced_onto_off="$forced_onto_off $name"; fi
+done
+for name in $plain_flavor_profiles; do
+  if [ "$(has_bili "$name")" = "1" ]; then forced_off_of_on="$forced_off_of_on $name"; fi
+done
+if [ "$billion_context_mode" = "on" ] && [ -z "$bili_flavor_profiles" ]; then
+  echo "  注意：--billion-context=on 但按名单没有任何 profile 挂着 billion-context —— 仍按 on 装注入版，" >&2
+  echo "    请确认这些 profile 之后会装上 billion-context（否则委派给专家会失败：names unknown global tool）。" >&2
 fi
-
-# shellcheck disable=SC2086
-bili_gen_flag=""
-if [ "$use_bili_tools" -eq 1 ]; then bili_gen_flag="--with-billion-context"; fi
+if [ -n "$forced_onto_off" ]; then
+  echo "  注意：--billion-context=on 强制注入，但这些目标 profile 没挂 bili：${forced_onto_off# } ——" >&2
+  echo "    它们每一次委派都会抛 names unknown global tool \"compress\"（要么装上 bili，要么改回 auto）。" >&2
+fi
+if [ -n "$forced_off_of_on" ]; then
+  echo "  注意：--billion-context=off 强制不注入，但这些目标 profile 挂着 bili：${forced_off_of_on# } ——" >&2
+  echo "    它们的专家会收到 bili 的压缩指令却没有工具可调（改回 auto 才会按 profile 选味道）。" >&2
+fi
 
 # ── 1. 用户技能 ────────────────────────────────────────────────────────────────
 mkdir -p "$root/skills/adg-add-agent"
@@ -157,18 +198,24 @@ else
   browser_note="未找到 $browser_src，跳过 browser/ 工具链部署"
 fi
 
-# ── 3. preset bundle：生成 → 落到稳定位置 → 装进 profile ───────────────────────
-# 源文件永远只有 preset/preset.yml + preset/agent.cordis.yml；bundle/adg-preset/ 是构建产物
+# ── 3. preset bundle：两种味道各生成 → 各落到自己的稳定位置（每 profile 只 link 一份）──
+# 源文件永远只有 preset/preset.yml + preset/agent.cordis.yml；bundle/adg-*/ 是构建产物
 # （在 .gitignore 里），每次安装都重新生成，所以没有人需要手改 patch。
 # bili 的上下文工具只进生成物、不进源文件：源文件得对没装 billion-context 的人也成立（见 --with-billion-context 说明）。
-# shellcheck disable=SC2086
-node "$here/tools/gen-preset-bundle.mjs" $bili_gen_flag
+# **两份都无条件生成**：省掉"这一跑要不要重建那一份"的判断，稳定目录里的形状永远等于它该有的形状。
+# outDir 传绝对路径：gen 脚本用的是 process.cwd()，不能跟着"用户从哪个目录调用本脚本"漂。
+node "$here/tools/gen-preset-bundle.mjs" "$here/bundle/adg-plain"
+node "$here/tools/gen-preset-bundle.mjs" "$here/bundle/adg-preset" --with-billion-context
 
 # $DSH_HOME/bundles/ 是稳定位置：profile 只引用这里，仓库可以随便挪/删。
 rm -rf "$bundle_stable"
 mkdir -p "$bundle_stable"
-cp "$here/bundle/adg-preset/cordis.patch.yml" "$bundle_stable/cordis.patch.yml"
-cp "$here/bundle/adg-preset/package.json" "$bundle_stable/package.json"
+cp "$here/bundle/adg-plain/cordis.patch.yml" "$bundle_stable/cordis.patch.yml"
+cp "$here/bundle/adg-plain/package.json" "$bundle_stable/package.json"
+rm -rf "$bundle_bili_stable"
+mkdir -p "$bundle_bili_stable"
+cp "$here/bundle/adg-preset/cordis.patch.yml" "$bundle_bili_stable/cordis.patch.yml"
+cp "$here/bundle/adg-preset/package.json" "$bundle_bili_stable/package.json"
 
 # ── 4. 插件：作为 bundle 拷到稳定位置（同上去掉仓库依赖）────────────────────────
 # 部署集合六项 = package.json / cordis.patch.yml / src / examples / README.md / LICENSE
@@ -193,17 +240,21 @@ for name in $profiles; do
   # pnpm 在 **dsh 正在运行时**会失败：它发现 node_modules 不是自己管的（.modules.yaml 缺失）
   # 就想整目录重建，而文件被运行中的 dsh 占着（实测：os error 32 / ERR_PNPM_…_REMOVE_MODULES_DIR）。
   # 那要先关掉 dsh，重跑没用 —— 所以这里只报告，不中断后面的步骤。
+  # 这个 profile 该拿哪一种味道的稳定目录（见上面第 0 节的 flavor_of）。换味道也只在这一步发生：
+  # 同一个包名 link: 到另一个目录，profile 的 dsh.profile.bundles 一行都不用改（两种味道包名相同）。
+  flavor="$(flavor_of "$name")"
+  if [ "$flavor" = "bili" ]; then want_bundle="$bundle_bili_stable"; else want_bundle="$bundle_stable"; fi
   pnpm_failed=0
   if command -v pnpm >/dev/null 2>&1; then
-    if (cd "$profile_dir" && pnpm add "link:$bundle_stable" "link:$plugin_stable"); then
-      echo "  profile -> $name : 已 link $bundle_name + $plugin_name"
+    if (cd "$profile_dir" && pnpm add "link:$want_bundle" "link:$plugin_stable"); then
+      echo "  profile -> $name : 已 link $bundle_name（$flavor 味道）+ $plugin_name"
     else
       pnpm_failed=1
       echo "  profile -> $name : pnpm add 失败 —— 常见原因是 dsh 正在运行、node_modules 被占用；关掉 dsh 后重跑本脚本" >&2
     fi
   else
     pnpm_failed=1
-    echo "  profile -> $name : 未找到 pnpm，跳过依赖安装 —— 请在该 profile 里执行 pnpm add link:$bundle_stable link:$plugin_stable"
+    echo "  profile -> $name : 未找到 pnpm，跳过依赖安装 —— 请在该 profile 里执行 pnpm add link:$want_bundle link:$plugin_stable"
   fi
 
   # 4b. bundle 必须被选进 dsh.profile.bundles，否则它的 patch 层根本不会被读。
@@ -217,6 +268,28 @@ for name in $profiles; do
   # pnpm 那一步失败、但包其实早就在位（例如上一次安装留下的）时不算失败，只说明本次没重装依赖。
   if [ "$pnpm_failed" -eq 1 ]; then
     echo "  profile -> $name : pnpm 那一步没成功，但 $bundle_name / $plugin_name 已在 node_modules 里 —— 本次安装不受影响"
+  fi
+  # 4b-1. 断言**已经链接进去的那一份**的味道，正是这个 profile 该拿的味道。
+  # 判据不能是"包在不在"：两种味道的 package.json 逐字节相同、包名也一样，只有产物本体不同 ——
+  # 所以让 tools/check-bundle-flavor.mjs 逐行验 9 个专家行的 allow 与 compaction-basic 的 auto。
+  # 这一格是本缺陷的"静默失效"出口：味道换错时一切看起来都正常，只有专家的工具目录少四个名字。
+  linked_patch="$profile_dir/node_modules/$bundle_name/cordis.patch.yml"
+  flavor_ok=0
+  flavor_report=""
+  if [ -f "$linked_patch" ]; then
+    flavor_report="$(node "$here/tools/check-bundle-flavor.mjs" "$linked_patch" "$flavor" 2>&1)" || flavor_ok=$?
+  else
+    flavor_ok=1
+    flavor_report="$linked_patch 不存在"
+  fi
+  if [ "$flavor_ok" -eq 0 ]; then
+    echo "  profile -> $name : 落点味道 = $flavor（tools/check-bundle-flavor.mjs 通过）"
+  else
+    echo "  profile -> $name : 落点味道 ≠ $flavor —— 链接到的还是另一种味道（换味道那一步没成功；专家会看不到或看不见 bili 的上下文工具）" >&2
+    printf '%s\n' "$flavor_report" | while IFS= read -r flavor_line; do
+      echo "      $flavor_line"
+    done
+    package_failed=1
   fi
   node -e '
     const fs = require("fs");
@@ -335,7 +408,8 @@ fi
 
 echo "已安装到 dsh 用户根：$root"
 echo "  skill   -> $root/skills/adg-add-agent"
-echo "  bundle  -> $bundle_stable（生成物来自 preset/preset.yml + preset/agent.cordis.yml）"
+echo "  bundle  -> $bundle_stable（plain：生成物来自 preset/preset.yml + preset/agent.cordis.yml，不带 bili 工具）"
+echo "  bundle  -> $bundle_bili_stable（注入版：9 个专家的 allow 里带 bili 的四个上下文工具 + compaction-basic auto: false）"
 echo "  plugin  -> $plugin_stable（bundle：挂载行来自它自己的 cordis.patch.yml）"
 echo "  legacy  -> $legacy_note"
 echo "  browser -> $browser_note"

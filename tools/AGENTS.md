@@ -31,7 +31,7 @@ node tools/has-billion-context.mjs ~/.dsh/profiles web [desktop ...]   # 每 pro
 3. **改 composition 的 tool 行必须同步 `KNOWN_TOOLS`**（漏同步会误报或漏报，`restrict()` 的后果见 `design.md` 非功能红线）。
 4. **禁止把 WARN 当失败，也禁止把 `exit 0` 说成"运行期一定生效"**。见 `design.md` I8、I9。
 5. **禁止在校验路径里引入第三方依赖、写文件或联网**（零依赖是它的部署前提）。
-6. **生成物不许手改**：`bundle/adg-preset/` 是 `gen-preset-bundle.mjs` 的产物（`.gitignore` 忽略、每次安装都被覆盖），`$DSH_HOME/bundles/dsh-adg-preset/` 只是它的稳定落点。要改就改 `preset/` 的源文件再重新生成（`preset/design.md` I3c）。
+6. **生成物不许手改**：`bundle/adg-preset/` 与 `bundle/adg-plain/` 是 `gen-preset-bundle.mjs` 的产物（`.gitignore` 忽略、每次安装都被覆盖），`$DSH_HOME/bundles/dsh-adg-preset/`（plain）与 `$DSH_HOME/bundles/dsh-adg-preset-bili/`（注入版）只是它的两个稳定落点，按 profile 选一份（见根 `AGENTS.md` 红线 11）。要改就改 `preset/` 的源文件再重新生成（`preset/design.md` I3c）。
 
 ## 跨模块路由
 

@@ -64,7 +64,7 @@ message 回到调度者 —— **不用递归也能交接回来**。
 
 | 仓库里的路径 | 安装到 |
 |---|---|
-| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（`bundle/adg-preset/`，构建产物、在 `.gitignore` 里），装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles` |
+| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（`bundle/adg-preset/`，构建产物、在 `.gitignore` 里），装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`（挂 bili 的 profile 用注入版 `.../bundles/dsh-adg-preset-bili/`，见红线 11），再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles` |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
 | `plugin/dsh-adg-token-budget/` 的 `package.json` / **`cordis.patch.yml`** / `src/` / `examples/` / `README.md` / `LICENSE`（**六项**，与 `package.json` 的 `files` 一致；`cordis.patch.yml` 就是挂载行本身，缺了它这个包只是普通依赖；`test/` 与 `INSTALL.md` 不进部署） | `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-token-budget/`（**2026-09-28 起与 `dsh-adg-preset` 同一根**；旧落点 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/` 已删除），再由目标 profile `pnpm add link:` 过去，**还要把包名写进该 profile 的 `dsh.profile.bundles`——光有依赖不算选中**（**不要再放 `profiles/node_modules/`**，那个共享根在本版 dsh 的解析里被排除了） |
 | `browser/`（浏览器工具链，零依赖） | `${DSH_HOME:-~/.dsh}/browser/`（**重新跑一次安装脚本即生效，不用重启 dsh**） |
@@ -650,22 +650,27 @@ sh install.sh                                              # 自动探测并决�
 ```
 
 `install.ps1` / `install.sh` 会先探测每个目标 profile（判据 = bili 在 `dsh.profile.bundles` 里 **且** 装上的那份
-真的带 `dsh.bundle.patch.yml`），auto 模式下**只有每个目标 profile 都挂着**才注入 —— 因为生成物全机共用一份
-（各 profile 的 `node_modules/dsh-adg-preset` 链接同一个 `$DSH_HOME/bundles/dsh-adg-preset`），一份带名字的配置
-会砸在没装的人头上。混合场景想单独给某个 profile 打开：`sh install.sh --billion-context=on web`
-（PowerShell：`-BillionContext on -Profiles web`，随后自己重装一次 bili 未装的 profile）。
+真的带 `dsh.bundle.patch.yml`），然后**逐个 profile** 决定它拿哪种味道：生成物分两份、各有自己的稳定目录 ——
+plain 在 `$DSH_HOME/bundles/dsh-adg-preset`，注入版在 `$DSH_HOME/bundles/dsh-adg-preset-bili`（两份的
+`package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以 `dsh.profile.bundles` 那一行两种味道通用），
+每个 profile 的 `node_modules/dsh-adg-preset` 只 `link:` 自己该拿的那一份。挂 bili 的拿注入版、没挂的拿
+plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不会猜。`--billion-context=on|off`
+（PowerShell：`-BillionContext on|off`）是**整体覆盖**，覆盖结果与探测不一致时会多打一行黄字警告；探测段在
+`install.sh` / `install.ps1` 的第 0 节，两份脚本共用同一份判据。装完脚本还用
+`tools/check-bundle-flavor.mjs` 断言**那个 profile 实际链接到的那一份**的味道（判据不能是"包在不在"——
+两种味道的 `package.json` 逐字节相同）。
 手动跑 `gen-preset-bundle.mjs` 默认**不注入**，忘带旗标 = 少个能力，不会装坏。
 
-> **本机特例（2026-09-28 起）：`web` 这个 profile 的 `dsh-adg-preset` 是一个实体目录，不是指向
-> `$DSH_HOME/bundles/dsh-adg-preset` 的链接。** 原因是生成物全机共用一份、而当时只有 `web` 挂着 bili
-> （`desktop` 也真的在用 Adg 模式）：把共享目录改成 bili 味道会让 `desktop` 每次委派抛
-> `names unknown global tool "compress"`。代价要说清楚 —— **这个 profile 从此不走 `install.*` 的
-> 「共享稳定目录 + SymbolicLink」模型，重跑 `install.*` 会把它打平回 plain 味道**（并且按红线 11 的
-> 探测结果，那一跑本来就该给所有目标 profile 一致的味道）。恢复到 bili 味道：
-> `node tools/gen-preset-bundle.mjs --with-billion-context && `
-> `Copy-Item bundle/adg-preset/* $DSH_HOME/profiles/web/node_modules/dsh-adg-preset/`，
-> 然后 `node tools/check-bundle-flavor.mjs $DSH_HOME/profiles/web/node_modules/dsh-adg-preset/cordis.patch.yml bili`。
-> 想永久避开这个特例，就换一条路：给 `desktop` 也装上 bili（两个 profile 同味道 ⇒ 共享目录不再冲突）。
+> **本机（2026-09-28 起由"两种味道"接管）：`web` 应该指向注入版、`desktop` 指向 plain。** 本机 `web` 挂着
+> bili、`desktop` 没挂，所以 `web` 的 `node_modules/dsh-adg-preset` 该链接 `$DSH_HOME/bundles/dsh-adg-preset-bili`，
+> `desktop` 的该链接 `$DSH_HOME/bundles/dsh-adg-preset` —— 重跑 `install.*` 就会按探测结果各给一份。
+> 这正是旧结构做不到的事：以前只有**一份**共享生成物，为了不让 `desktop` 每次委派撞
+> `names unknown global tool "compress"`，只能把 `web` 那份**改成实体目录**绕过"共享稳定目录 + 链接"模型，
+> 代价是重跑 `install.*` 会把它打平回 plain、而 `web` 的专家就再也调不动 `compress`（**2026-09-28 用户报告的
+> 就是这件事**）。现在那个特例**不需要了**：`web` 拿注入版、`desktop` 拿 plain，两者都是链接。
+> 复核：`node tools/has-billion-context.mjs "$DSH_HOME/profiles" web desktop`（应 `web` 1 / `desktop` 0）+ 看
+> `web` 的链接目标 + `node tools/check-bundle-flavor.mjs "$DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml" bili`。
+> 想彻底避开混装：给 `desktop` 也装上 bili（两个 profile 同味道，但仍然各拿各的那一份）。
 
 注入的是四个名字，**不含 `acp_cache`**：那份工具只读缓存经济学账本，是调度者诊断"这轮折叠值不值"用的，
 并且它能用 `conversation_id` 代读子代理的账；给每个专家只会加长它们每次请求的稳定 prefix。
@@ -690,11 +695,14 @@ dsh 自带的自动压缩是**唯一**的压缩手段，关掉等于让上下文
 为关一个键重写整份 config 太容易丢别的键。注意这条按 profile 的**实际挂载状态**决定，不受 `--billion-context`
 旗标影响（旗标只管工具注入）。想两套并存：把 `dsh-adg-token-budget` 加回那个 profile 的 `dsh.profile.bundles` 即可。
 
-自检：`node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml bili`（或 plain）——
+自检：先看这个 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份，再断言**那一份** ——
+`node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml bili`（挂 bili 的 profile）
+或 `node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml plain`（没挂的）——
 它同时断言两件事：9 个 `agent-*` 行的 `toolFilter.allow` 末尾有没有那四个名字，以及 `compaction-basic` 行的
 `config.auto` 是不是恰好 `false`（plain 味道则断言这两个都不存在）。再到新会话里委派任一专家，让它报"工具目录里
 有没有 `acp_status`"，并确认它没有被 dsh 自带的自动压缩插过手（手动 `/compact` 仍应可用）。
-两个方向都要测的完整口径见 `docs/evidence.md` §17「billion-context 的上下文工具对 ADG 专家可见吗」。
+两个方向都要测的完整口径见 `docs/evidence.md` §17「billion-context 的上下文工具对 ADG 专家可见吗」，
+按 profile 分味道的落点、这次真机缺陷与修法则见 §18。
 
 ## 第二层：子代理的步数收敛检查点（插件 `dsh-adg-token-budget`）
 
@@ -1319,12 +1327,16 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
    它读 `preset/preset.yml`（显示元数据）+ `preset/agent.cordis.yml`（整个插件条目列表）+
    `preset/bundle.package.json`（包清单模板），写 `<tempdir>/bundle/adg-preset/{cordis.patch.yml,package.json}`。
    **`bundle/` 是构建产物（在 `.gitignore` 里），任何情况下都不要手改生成物** —— 要改就改
-   `preset/` 下的源文件再重跑；`install.ps1` / `install.sh` 每次安装都会重跑一遍。
+   `preset/` 下的源文件再重跑；`install.ps1` / `install.sh` 每次安装都会把两种味道都重跑一遍。
+   **目标 profile 挂着 billion-context 时还要生成注入版**：`node <tempdir>/tools/gen-preset-bundle.mjs
+   --with-billion-context`（同一份源文件的第二种味道，见红线 11）；手工装的时候别只装 plain。
 3. **装 bundle**：用 `plugin_manager` 的 `install_bundle`，`target` 给 bundle 目录的绝对路径 ——
    包安装与 `dsh.profile.bundles` 选中由它自己完成，**不要**用 shell 命令复刻这两步。
-   想让"仓库被删/被挪也不影响已装好的 dsh"，先把 `bundle/adg-preset/` 整个拷到
-   `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，再拿那个**稳定目录**当 `target`
-   （`install.ps1` / `install.sh` 就是这么做的）。装完 `list_bundles` 里应能看到 `dsh-adg-preset`。
+   想让"仓库被删/被挪也不影响已装好的 dsh"，先把生成物整个拷到**它自己的稳定目录**（plain →
+   `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，注入版 → `.../bundles/dsh-adg-preset-bili/`），再拿那个
+   **稳定目录**当 `target`（`install.ps1` / `install.sh` 就是这么做的）。**每个 profile 只装它该拿的那一份**
+   （挂 bili = 注入版，没挂 = plain），不要把两份都 `link:` 进同一个 profile。装完 `list_bundles` 里应能看到
+   `dsh-adg-preset`。
 4. 复制 `<tempdir>/skills/adg-add-agent/SKILL.md`
    → `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md`
 5. **部署插件 —— 它现在是一个 bundle**（包名 `dsh-adg-token-budget` 是历史名称，它不比较任何 token 阈值）：把

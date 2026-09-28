@@ -36,7 +36,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 ## 落盘步骤
 
 1. **定位 preset 的源文件**，不要猜路径，也不要改错那一份：Adg 现在是一个 **bundle** ——
-   `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml` 是 `tools/gen-preset-bundle.mjs` 从
+   `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml`（挂 bili 的 profile 拿到的是注入版 `$DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml`，见根 `AGENTS.md` 红线 11）是 `tools/gen-preset-bundle.mjs` 从
    `preset/preset.yml` + `preset/agent.cordis.yml` **生成**的构建产物，**每次安装都会被覆盖**，
    所以**要改的是仓库里的 `preset/agent.cordis.yml`**。仓库不在本机就先 `git clone`
    （或让用户给出仓库路径）。旧的 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 自 dsh 0.1.7-rc.2
@@ -73,7 +73,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
   挂一个临时插件注册工具即可。
 - **生效**：改完源文件之后还有一步——**重跑生成与安装**（`node tools/gen-preset-bundle.mjs`
   再 `plugin_manager install_bundle`，或直接重跑 `install.ps1` / `install.sh`，它两步都做），
-  否则装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset` 的还是旧 bundle。
+  否则装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset`（或挂 bili 时 `.../bundles/dsh-adg-preset-bili`）的还是旧 bundle —— **两种味道都要重跑**，`--with-billion-context` 那一份才是挂 bili 的 profile 用的。
   然后：**已挂载的 preset 不会因为 composition 文件被改动而重新组合。** 已实测：挂载后把
   28 行改成含 3 个专家行的版本，`compositionInventory()` 仍返回旧的 28 行。因此新增或删除智能体后
   **必须重启 dsh（Host 进程）**，新组合才会在 Adg 的新对话里生效。

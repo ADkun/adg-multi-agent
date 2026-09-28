@@ -27,7 +27,7 @@ last_reviewed: 2026-09-28
 
 - 依赖（组合层）：host 组合提供的 `tools` / `fs` / `subagents` / `workflows` / `skills` / `goals` / `sessionProjections` 注册表，经 `cordis:group` 的 `isolate` realm 发布（`delegation` 组带 `workflowEngine: true`，`compaction` 组带 `compaction` + `toolResultPruner`，`planning` 组带 `planMode`）。无需经契约的理由：这些是宿主服务，preset 只是消费方，实例的创建与回收都不在本模块。注册与组合由声明行插件 `@deepseek-ai/dsh-agent-preset`（`config.id` 就是 preset 身份）与 `@deepseek-ai/dsh-agent-preset-registry`（`agentPresets` 服务）承担，可用判据只有一个：`agentPresets.resolve('adg')` 的 `broken` 为空（**真机实测** 2026-09-28，见根 `README.md`「给 AI 的安装指令」第 8 步）。旧的 `${DSH_HOME}/.agent-presets/<id>/` 目录发现机制与 `@deepseek-ai/dsh-agent-presets`（复数）包已随 dsh 0.1.7-rc.2 移除，**没有任何组件会读那个目录**（**真机实测**，`docs/evidence.md` §14）。I13 的「恢复既有专家」依赖 `subagents` 的 continuable 语义（`@deepseek-ai/dsh-subagent` 的 `coldResume` 从已持久化会话重建），同样是消费方。
 - 依赖（同仓库）：`tools/check-preset.mjs` 是它的静态校验器；`tools/gen-preset-bundle.mjs` 把 `preset/preset.yml`（显示元数据）+ `preset/agent.cordis.yml`（整个条目列表，**原样**）+ `preset/bundle.package.json`（包清单模板）生成成 bundle（**生成物 `bundle/adg-preset/` 是构建产物，不手改**）；`skills/adg-add-agent/SKILL.md` 是它的修改入口手册。
-- 被依赖：`plugin/dsh-adg-token-budget` 通过 `session.header.agentPreset === 'adg'` 识别自己要治理的子代理 —— **preset 是它的输入事实来源**，但插件不读这个文件，只读会话头；`install.ps1` / `install.sh` 生成并部署它的 bundle（生成物落到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`、`link:` 进每个能装 preset 的 profile、并把 `dsh-adg-preset` 写进该 profile 的 `dsh.profile.bundles`）；`tools/check-preset.mjs` 校验它；`browser/` 是 `agent_browser` persona 所消费的**命令行契约**（persona 只写命令名、`KEY=value` 输出行与纪律，不复制选项表 —— 唯一的真相源是 `browser/cli.mjs` 的 `USAGE`）。
+- 被依赖：`plugin/dsh-adg-token-budget` 通过 `session.header.agentPreset === 'adg'` 识别自己要治理的子代理 —— **preset 是它的输入事实来源**，但插件不读这个文件，只读会话头；`install.ps1` / `install.sh` 生成并部署它的 bundle（生成物落到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，挂 bili 的 profile 则落到注入版 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset-bili/` —— **逐 profile 选味道**，见根 `AGENTS.md` 红线 11；再 `link:` 进每个能装 preset 的 profile、并把 `dsh-adg-preset` 写进该 profile 的 `dsh.profile.bundles`）；`tools/check-preset.mjs` 校验它；`browser/` 是 `agent_browser` persona 所消费的**命令行契约**（persona 只写命令名、`KEY=value` 输出行与纪律，不复制选项表 —— 唯一的真相源是 `browser/cli.mjs` 的 `USAGE`）。
 - 跨模块改动路由：
   1. 改专家名册 → 先读 `preset/AGENTS.md`，再读 `skills/adg-add-agent/SKILL.md`，改完跑 `node tools/check-preset.mjs`，重新生成并重装 bundle（`install.*` 每次安装都会重跑 `tools/gen-preset-bundle.mjs`），然后**重启 dsh**，在**新对话**里验收；
   1b. 改调度 persona 的分派规则或派发拓扑规则（I13）→ 先读 `preset/testing-guide.md` 的 I10 / I13 用例，再读根 `README.md`「多智能体的 token 消耗：已落地与可选手段」（成本口径与量法）；
@@ -40,11 +40,11 @@ last_reviewed: 2026-09-28
 
 ### PresetRevision（生命周期型）
 
-- 属性：组合文本（`preset/agent.cordis.yml`）、显示元数据（`preset/preset.yml`）、包清单模板（`preset/bundle.package.json`）、生成物（`bundle/adg-preset/`，在 `.gitignore` 里）、bundle 稳定落点 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`、目标 profile 的 `dsh.profile.bundles` 与 `node_modules`（`link:`）。
+- 属性：组合文本（`preset/agent.cordis.yml`）、显示元数据（`preset/preset.yml`）、包清单模板（`preset/bundle.package.json`）、生成物（`bundle/adg-plain/` 与 `bundle/adg-preset/` 两种味道，都在 `.gitignore` 里）、bundle 稳定落点（**两个**：plain `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`、注入版 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset-bili/`，每个 profile 只 `link:` 自己该拿的那一份 —— 见根 `AGENTS.md` 红线 11）、目标 profile 的 `dsh.profile.bundles` 与 `node_modules`（`link:`）。
 - 状态机：`drafted` → `validated` → `deployed` → `mounted` → `live`
   - `drafted`：仓库里的源文本已改，尚未自检。**它不是**「已生效」：dsh 读的是 profile 里注册的那一行声明，而它来自上一次生成的 bundle。
   - `validated`：`node tools/check-preset.mjs` 退出码 0。**它不是** YAML 可解析性的证明（自检是逐行文本扫描器），**也不是** bundle 已重新生成，**更不是** `mounted`。
-  - `deployed`：`install.ps1` / `install.sh` 已生成 bundle（`node tools/gen-preset-bundle.mjs`）、把它放到 `$DSH_HOME/bundles/dsh-adg-preset/`、`link:` 进 profile，并把 `dsh-adg-preset` 写进该 profile 的 `dsh.profile.bundles`。**它不是** `mounted`：包在位不触发组合，声明行还要被 registry 读到。**同一个 profile 里 `preset-adg` 只能有一个"家"** —— bundle 或 profile patch 二者之一，两份同 id 的 `insert:` 行是危险形状（**实测**，`docs/evidence.md` §14.3；当时那条临时 profile-patch 行已撤掉）。
+  - `deployed`：`install.ps1` / `install.sh` 已生成 bundle（`node tools/gen-preset-bundle.mjs`）、把它放到**该 profile 该拿的那份稳定落点**（plain 或 `-bili`；`auto` 下由该 profile 自己的探测结果决定）、`link:` 进 profile，并把 `dsh-adg-preset` 写进该 profile 的 `dsh.profile.bundles`；落点味道由第 4b-1 步用 `tools/check-bundle-flavor.mjs` 断言。**它不是** `mounted`：包在位不触发组合，声明行还要被 registry 读到。**同一个 profile 里 `preset-adg` 只能有一个"家"** —— bundle 或 profile patch 二者之一，两份同 id 的 `insert:` 行是危险形状（**实测**，`docs/evidence.md` §14.3；当时那条临时 profile-patch 行已撤掉）。
   - `mounted`：声明行已被 registry 注册且真的挂载。判据只有一个：`agentPresets.resolve('adg')` 的 `.broken` 为空（**真机实测** 2026-09-28：`broken` 为空、35 行 / 32 行启用 / 3 行关闭、9 条 `@deepseek-ai/dsh-tool-subagent` 专家行启用、0 条 fork、32 行 `fiberState === 2`）。**它不是**「旧会话也跟着换」。
   - `live`：新对话加入该组合。**它不是**「已有会话会跟着换组合」——预设选择在会话起步后就锁定。
   - 迁移唯一入口：`install.ps1` / `install.sh`；其后由 registry 的注册与组合接续。禁止绕过对象直接改状态（例如手工往 `$DSH_HOME/bundles/` 里贴文件、或手改 `bundle/adg-preset/` 的生成物而后宣称已挂载）。
@@ -54,7 +54,7 @@ last_reviewed: 2026-09-28
   - I2: 禁止在未重启 dsh 的情况下宣称新组合已对会话生效。
   - I3: 禁止改动任何成本结论而不附 `docs/evidence.md` §10 的两条前后对比数字（改动前后各跑一次）。
   - I3b: 禁止把 §2 的成本基线当作可比基线——语料是活的，跨快照直接比数字不成立。
-  - I3c: 禁止手改 `bundle/adg-preset/` 下的生成物，也禁止把 `$DSH_HOME/bundles/dsh-adg-preset/` 当真相源——要改就改 `preset/` 的源文件再重新生成（生成物每次安装都被覆盖）。
+  - I3c: 禁止手改 `bundle/adg-preset/` 或 `bundle/adg-plain/` 下的生成物，也禁止把 `$DSH_HOME/bundles/dsh-adg-preset/`（或 `-bili/`）当真相源——要改就改 `preset/` 的源文件再重新生成（生成物每次安装都被覆盖）。
 
 ### ExpertRow（不可变值对象）
 

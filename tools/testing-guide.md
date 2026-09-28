@@ -74,7 +74,7 @@ last_reviewed: 2026-09-28
 
 ### 3.1 `install.ps1` / `install.sh` 消费 preset 与插件部署集合
 
-两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及三个落点：preset bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及落点：preset bundle 的**两种味道**稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`（plain）与 `$DSH_HOME/bundles/dsh-adg-preset-bili/`（注入版；`auto` 下按每个 profile 自己的探测结果选一份，见根 `AGENTS.md` 红线 11）、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
@@ -152,6 +152,6 @@ last_reviewed: 2026-09-28
 | 把 `preset/agent.cordis.yml` 的第一条有效行改成不是 `- ` 开头 | CLI 冒烟 | exit `1`，stderr 报"第一条有效行不是 `- ` 开头的数组项" |
 | 往 `preset/agent.cordis.yml` 里塞一个制表符 / 一个 CR 行尾 | CLI 冒烟 | exit `1`（YAML 缩进不允许 tab；CR 会让缩进块带上 `\r`） |
 | 生成物形状 | 人工 review | 一行 `insert:` → Loader 行 `id: preset-adg` / `name: '@deepseek-ai/dsh-agent-preset'` / `config:` 里 `id: adg` + `name` + `description`（有才写）+ `order` + `plugins:`；条目缩进 = 10 空格；标量一律双引号（JSON 转义是合法 YAML） |
-| **手改过生成物**（改 `bundle/adg-preset/` 或 `$DSH_HOME/bundles/dsh-adg-preset/` 里的文件） | CLI 冒烟 | 重跑生成器 / 重跑 `install.*` 即被覆盖 —— 这就是"生成物不许手改"的兜底；判违例看语义：有人拿它们当源文件 |
+| **手改过生成物**（改 `bundle/adg-preset/` / `bundle/adg-plain/` 或 `$DSH_HOME/bundles/dsh-adg-preset/` / `.../dsh-adg-preset-bili/` 里的文件） | CLI 冒烟 | 重跑生成器 / 重跑 `install.*` 即被覆盖 —— 这就是"生成物不许手改"的兜底；判违例看语义：有人拿它们当源文件 |
 | 生成物的**运行期**效果（dsh 会不会挂载它） | 未实现 | 生成器只保证形状。要真实挂载：装进 profile（`plugin_manager` 的 `install_bundle`，或 `install.*`）后看 `agentPresets.resolve('adg').broken` 与 `compositionInventory()` 里的 `fiberState` |
 | 生成器与校验器的分工是否被混用 | 人工 review | `check-preset.mjs` 管 `agent.cordis.yml` 的**语义硬约束**；生成器管**形状与嵌缩进**。谁都不覆盖对方，别用其一代替其二 |

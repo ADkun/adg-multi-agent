@@ -34,7 +34,7 @@ last_reviewed: 2026-09-28
 | `docs/changelog.md` | 变了什么：一行一条、时间倒序，只记"变了什么"不记为什么 | 要判断某条口径/文件是何时变的、或写完改动要登记一行时 |
 | `docs/docs-guide.md` | 文档分层契约、写作规范的可执行判据、状态陈述四档分层、新模块登记义务、引用真实性怎么查 | 要新写或重构任何文档时 |
 | `docs/registry.md`（本页） | 有什么文档、什么场景读哪篇、哪些还只是计划、冷启动三问的答题路径 | 找不到该读哪篇时；接手一个陌生任务时 |
-| `install.ps1` / `install.sh` | 装到本机 dsh 用户根的部署集合与落点、bundle 选中的处理（两个 bundle 都靠 `dsh.profile.bundles` 选入；插件已不再是手贴挂载行，脚本只报告、不代删 profile 层遗留行）、生效方式（重启 or 热重载） | 要部署、要核对部署集合、要判断脱钩时 |
+| `install.ps1` / `install.sh` | 装到本机 dsh 用户根的部署集合与落点、bundle 选中的处理（两个 bundle 都靠 `dsh.profile.bundles` 选入；preset 生成物分两种味道、按每个 profile 自己的探测结果选落点，见 `AGENTS.md` 红线 11；插件已不再是手贴挂载行，脚本只报告、不代删 profile 层遗留行）、生效方式（重启 or 热重载） | 要部署、要核对部署集合、要判断脱钩时 |
 | `plugin/dsh-adg-token-budget/INSTALL.md` | 插件那一层的部署/启用/确认/回滚操作清单 | 要开、要关、要回滚、要确认插件是否已武装时 |
 | `plugin/dsh-adg-token-budget/README.md` | 插件自己的口径、配置键含义、安全设计、验证方式 | 要改插件行为或引用插件侧证据时 |
 

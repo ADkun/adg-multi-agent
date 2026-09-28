@@ -9,7 +9,17 @@ last_reviewed: 2026-09-28
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（追加，本文件最新的一条）— 调度 persona 规则 8：**委派一律走后台**（阻塞会把这一次降级成一次性、接不回来）
+## 2026-09-28（追加，本文件最新的一条）— 生成物分**两种味道两个稳定目录**，`install.*` 逐 profile 选味道（修"挂了 bili 的 profile 也拿到 plain"）
+
+- 症状与根因：`install.ps1:88` 的 `$useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0)` 配上"生成物全机共用一份" ⇒ 混装机器（本机 `desktop` 没挂 bili、`web` 挂）**给所有 profile 都装 plain**，`web` 的专家 `allow` 里一个 bili 工具都没有，子代理一调就报 `unknown tool compress`（真机实测：两个 profile 的 `node_modules/dsh-adg-preset` 都指向 `bundles/dsh-adg-preset`，那份产物里 `- name: compress` 出现 **0** 次）。源文件 9 个专家行的 `allow` 齐全，"缺 allow"的假设不成立。
+- `install.ps1` / `install.sh`：生成物改为**两份**（plain → `$DSH_HOME/bundles/dsh-adg-preset`，注入版 → `$DSH_HOME/bundles/dsh-adg-preset-bili`，包名都叫 `dsh-adg-preset`，两份味道无条件都生成），`auto` 下**逐个 profile** 用它自己的探测结果决定 `link:` 哪一份，`on` / `off` 只做整体覆盖（覆盖与探测不一致时打黄字警告）。
+- `install.ps1` / `install.sh`：新增第 4b-1 步 —— 用 `tools/check-bundle-flavor.mjs` 断言该 profile **实际链接到的那一份**的味道（判据不能是"包在不在"：两种味道的 `package.json` 逐字节相同），不一致即判失败（exit 2）。
+- `install.ps1` / `install.sh`：第 0 节探测与 4b-1 都改成"`cmd /c` 重定向写文件 + 读文件 + 显式查退出码"——沙箱里 `@(& node ...)` 捕获会把输出吞成空串、`$LASTEXITCODE` 还是上一条的值（会静默把味道判反、断言假绿）。
+- `AGENTS.md` 红线 11：删掉"生成物全机共用一份 ⇒ auto 只在'每个目标 profile 都挂着'时才注入"，改为两种味道两个落点 + 逐 profile 选味道 + 4b-1 断言；命令段与生效方式表同步（复核第一步改成"先确认该 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份"）。
+- `README.md`：「与 billion-context 协同」的 auto 口径改写；**删掉"本机特例（`web` 的 `dsh-adg-preset` 是实体目录）"**——那套绕法不再需要，改为写明 `web` 该指向注入版、`desktop` 指向 plain；第 2 步"生成 bundle"、第 3 步"装 bundle"与部署目标表都补第二种味道。
+- `docs/evidence.md`：新增 **§18**（症状 / 根因 / 修法 / 临时 DSH_HOME 端到端四轮检验 / 未观测）；§17.1 第 8 条加"该口径已被推翻"的指针，§17.2 ① 补一条负向观测（plain 落点下真实专家确实报 `unknown tool compress`）。
+
+## 2026-09-28（追加）— 调度 persona 规则 8：**委派一律走后台**（阻塞会把这一次降级成一次性、接不回来）
 
 - `preset/agent.cordis.yml` 规则 8（原来只有"同一条回复里同时启动多个委派、不要串行等待"）补一条口径：委派一律用后台方式发出（不设 `run_in_background: false`），并写明代价 —— 前台（阻塞）分支走 `subagents.start()`，而 `dsh-subagent` 的 `start()` 固定发 `mode: "one-shot"` 描述符，于是这一次委派**不进 `list_agents`**（`dsh-tool-subagent-control` 的 `list-agents` 只保留 continuable）、`send_message` 报 `NOT_RESUMABLE`，规则 6 / 7 省下的"重读"退回原价，用户也不能在界面上给这个子代理发消息或停它。同时写明"后台不等于结果丢了、也不用停在那里等"：即使这一轮下一步就要用该结果，也照样后台派出后结束本轮，由子代理的**结算通知**（唤醒型投递）把它重新唤起。**没有任何阻塞例外**（初稿曾写"唯一例外 = 同一轮下一步要用到该结果且无可并行工作"，同日**按用户指出纠正**：前台不会让它更快拿到结果）。代价 +429 字符（`prefix` 正文按不含换行实测 7219 —— 同日纠正"唯一例外"时又改过措辞，初版是 +366 / 7156；顶注第 10 条记的 4820 是那一次改动之后的旧值）。
 - `preset/agent.cordis.yml` 顶注新增第 13 条改动说明（源码依据 + "只能是提示级"：`enableRunInBackground: false` 是反方向，会强制永远阻塞 + 永远一次性；框架没有"只能后台"的开关；含"没有阻塞例外"的唤醒型投递依据 `notifySettlement` → `sendWaking(...)`）。

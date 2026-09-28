@@ -912,7 +912,7 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
    - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
 6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
 7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。
-8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。
+8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分两种味道、两个稳定目录，按 profile 各拿一份 —— 见 §18。）**
 9. **源码级事实（token-budget 让位为什么选"不选中 bundle"而不是塞 `enabled: false`）**：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。
 10. **第二处交界：挂 bili 的 profile 要关掉 preset realm 里的自动压缩（本次新增）**，依据分四层：
     - **源码级事实（bili 官方就是这么做的）**：`C:\Users\cenqian\.dsh\profiles\web\node_modules\billion-context\dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
@@ -924,3 +924,30 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 ### 17.2 未观测（已照 §8 登记，引用本节时不许抹平）
 
 ① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② 从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**；③ **profile 层的 `- id: compaction-basic` / `config: {auto: false}` 到底有没有落到 realm 里那份实例**（第 10 条已不再依赖它 —— 生成物把同键同值写进 preset 组，但"官方那份能不能跨 lane 命中"仍未量，所以"两处都生效"这件事本身也未被观测）；④ **注入进产物的 `auto: false` 在真实 Adg 会话里确实关掉了原生自动折叠**（产物断言只证明键写对了，不证明运行期行为；第 10 条的量法：转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐）。四条的量法都写在 §8 对应行里。
+
+**§17.2 ① 的负向观测（2026-09-28 补）**：真机 `web`（当时链接的是 plain 落点）里，**真实 `adg` 专家子代理**调用 `compress` 得到 `unknown tool compress` ⇒"可见性由 `allow` 决定"这一半在真实专家行上被观测到；正向（换成注入版后专家看得见、调得通）仍**未观测**，见 §18。
+
+## §18 生成物按 profile 分两种味道（2026-09-28：真机缺陷与修法）
+
+**症状（真机实测，用户报告）**：挂着 bili 的 `web` profile 里，真实 Adg 专家子代理调用 `compress` 得到 `unknown tool compress`（子代理原话："The compress tool is not present in my available toolset (an earlier call returned "unknown tool compress")"）；同一次会话里调度者自己看得见这些工具（它是全局层）。
+
+**根因（源码级事实 + 真机实测）**：
+1. 注入与否原本**全机一票**：`install.ps1:88` 原文 `default { $useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0) }`，配上"生成物全机共用一份"（§17.1 第 8 条）⇒ 只要有一个目标 profile 没挂 bili，**所有** profile 都拿 plain。
+2. 真机实测：`C:\Users\cenqian\.dsh\profiles\desktop\node_modules\dsh-adg-preset` 与 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 当时都是指向 `..\..\..\bundles\dsh-adg-preset` 的 reparse point，而那份产物里 `- name: compress` 出现 **0** 次 ⇒ `web` 的 9 个专家行 `allow` 里一个 bili 工具都没有（`web` 挂着 bili、`desktop` 没挂 —— 探测 `web<TAB>1` / `desktop<TAB>0`，见 §17.1 第 7 条）。
+3. "有专家行缺 `allow`"的假设**不成立**：`preset/agent.cordis.yml` 里 9 个专家行全部带 `toolFilter.allow`（id 行 / allow 行：agent-file 416/431、agent-computer 443/456、agent-app 466/479、agent-browser 489/521、agent-search 533/547、agent-researcher 553/568、agent-coder 575/589、agent-reviewer 600/614、agent-general 635/650），当时的 `node tools/check-preset.mjs` 也是 **0 错误 / 2 警告**（两处 `read_image` 条件注册，与本次无关）。缺陷在"装到 profile 里的那一份"，不在源文件。
+
+**修法（已进仓库）**：生成物分**两种味道、两个稳定目录**，两份 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**（所以 `dsh.profile.bundles` 那一行两种味道通用）：
+- `$DSH_HOME/bundles/dsh-adg-preset` = plain（沿用旧路径）
+- `$DSH_HOME/bundles/dsh-adg-preset-bili` = 注入版
+
+`install.*` 的 `auto` 改为**逐个 profile** 用同一条探测判据决定它拿哪一份（`on` / `off` 只做整体覆盖，覆盖与探测不一致时打黄字警告）；新增第 4b-1 步用 `tools/check-bundle-flavor.mjs` 断言**该 profile 实际链接到的那一份**的味道（判据不能是"包在不在"——两份 `package.json` 相同），不一致即 exit 2。
+
+**检验（临时 `DSH_HOME` 端到端四轮，不动真机）**：临时根 `D:\dsh\.adg-scratch\home` 造出与真机同形的混装（`web` 的 `dsh.profile.bundles` 含 `billion-context` 且装了 `dsh.bundle.patch.yml` ⇒ 探测 `web=1` / `desktop=0`；两个 profile 的 `node_modules` 用 junction 指向稳定目录），跑 `install.ps1 -SkipPackages`：
+- 无 `node_modules` 时：exit 2，两份味道都生成并落到两个稳定目录（plain **85794** 字节 / bili **87818** 字节，各 18 个顶层条目）—— 4b 的 `continue`（包不在 `node_modules`）在 4b-1 之前，那一轮没跑味道断言。
+- junction 就位（`desktop`→plain、`web`→bili）：exit **0**，输出 `已挂载 [web] / 未挂载 [desktop]`、`味道 -> desktop : plain`、`味道 -> web : bili`、两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）`；4c 把 `dsh-adg-token-budget` 从 `web` 的 `dsh.profile.bundles` 移除（备份 `package.json.bak-adg-token-budget`）、`desktop` 保留。
+- 再跑一次：同结果 exit 0（幂等）。
+- **故意把 `web` 的 junction 改指 plain**（模拟"换味道那一步没成功"）：exit **2**，note `落点味道 ≠ bili —— 链接到的还是另一种味道…`，并原样打印报告（`agent_file[10]=NONE` … `compaction-basic[auto=未写]` + 10 个 `ERROR …bili 模式期望四个名字全有，实际 一个都没有` + `不通过：10 个错误（bili 模式 / 10 个专家行）`）⇒ 这个断言**不会假绿**。
+
+**踩过的坑（登记，防重踩）**：安装脚本里**不能**用 `@(& node ...)` 捕获原生命令的 stdout —— 在 DSH 沙箱（workspace-write）的 pwsh 里它拿回**空串**、`$LASTEXITCODE` 还停在上一条命令的值（管道形式直接 `Program 'node.exe' failed to run: Access is denied` + `NativeCommandFailed`）。后果是探测静默变成"全都没挂 bili"、味道断言**假装通过**。两处（第 0 节探测、4b-1）都改成 `cmd /c "node ... > <log> 2>&1"` + 读文件 + **显式检查退出码与结果文件存在**。
+
+**未观测**：① 真机 `web` 换到注入版、重启后**真实 `adg` 专家**看得见并调通 `compress` / `acp_status`（§17.2 ① 仍未闭合；本次只多了"plain 落点下专家确实报 `unknown tool`"这一负向观测）；② 同一个 dsh 进程里两个 profile 各拿各的味道（不同 profile 的会话并存）**冷启动无副作用**；③ `install.ps1` 的 4b-1 在**真机**上换味道成功那一次是否也通过（本次只在临时根里量过）。
