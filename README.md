@@ -1181,6 +1181,12 @@ tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
+  gen-preset-bundle.mjs   # 构建脚本：preset/ 三份源文件 → bundle/adg-preset/（生成物，gitignore）。
+                          # --with-billion-context 追加 bili 的四个上下文工具进 9 个专家行的 allow
+  check-bundle-flavor.mjs # 产物自检：按 plain|bili 断言 9 个专家行的 allow 里有没有那四个名字
+                          # （check-preset.mjs 只看源文件，产物是它的盲区）
+  has-billion-context.mjs # 判据：某 profile 到底挂没挂 billion-context。install.* 用它同时决定两件
+                          # 相反的事 —— 注入那四个工具 / 不启用 dsh-adg-token-budget
 browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
   cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
   lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
