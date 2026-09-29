@@ -1074,7 +1074,7 @@ test('the built-in checkpoint wording is pinned literally', () => {
     '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
     '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划；下一步选**通往目标的最短路径上的那一步**（哪一步最快让目标可交付，不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
     '选哪个由任务本身决定，不是由这条提醒决定。在下一条消息开头用一句话说明你的选择，再按它继续。',
-    '**本提醒只对注入它的这一步有效**：上下文被压缩（compaction）之后，若它仍留在摘要或复述里，那份副本已经过期、**直接忽略它**；本条在注入它的那一步仍然适用。',
+    '**压缩（compaction）时把本段整条删除**：不要写进摘要、也不要复述——它只对注入它的那一步有意义。若它仍残留在摘要里，那份副本已经过期、**直接忽略**；本条在注入它的那一步仍然适用。',
   ].join('\n'))
   assert.equal(STEP_LAST_TAIL, [
     '',
@@ -1131,15 +1131,17 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   // ...and it must not become a licence to cut the goal short: the same line
   // still forbids shrinking or rewriting the plan in response to the reminder.
   assert.match(STEP_CHOICE_BODY, /不要为了回应它而缩减或改写计划/)
-  // The expiry note (operator request, 2026-09-30): the text is a snapshot of one
-  // step, so a copy that survives context compaction must be ignored instead of
-  // obeyed a second time. It is an expiry, not a second order — it must not read
-  // as a stop, it must not take either branch away, and it must not be misread as
-  // "discard this whole message" (hence the closing half-sentence).
-  assert.match(STEP_CHOICE_BODY, /压缩（compaction）/)
+  // The compaction-time disposal note (operator request, 2026-09-30; its wording was
+  // corrected the same day after the operator clarified the intent): when the context
+  // is compacted, this paragraph must be deleted outright rather than summarized or
+  // restated — and if a copy survives anyway, that copy is expired and must be
+  // ignored. It is a disposal, not a second order: it must not read as a stop, it
+  // must not take either branch away, and it must not be misread as "discard this
+  // whole message" (hence the closing half-sentence).
+  assert.match(STEP_CHOICE_BODY, /压缩（compaction）时把本段整条删除/)
+  assert.match(STEP_CHOICE_BODY, /不要写进摘要、也不要复述/)
   assert.match(STEP_CHOICE_BODY, /那份副本已经过期/)
-  assert.match(STEP_CHOICE_BODY, /直接忽略它/)
-  assert.match(STEP_CHOICE_BODY, /只对注入它的这一步有效/)
+  assert.match(STEP_CHOICE_BODY, /直接忽略/)
   assert.match(STEP_CHOICE_BODY, /本条在注入它的那一步仍然适用/)
   // It must not read as an order to stop exploring: "继续" has to be a real
   // option a child can take without penalty.

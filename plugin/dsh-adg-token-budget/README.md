@@ -133,8 +133,9 @@ ladders and are kept as the comparison that produced this one (the second row is
 
 The literal reminder cost is what makes a flat ladder affordable: each message was
 ~180 characters **in the wording measured then** and is re-sent once per later step. (The
-built-in body is ~320 characters today — the shortest-path half and the 2026-09-30 expiry
-sentence are both new, and the full message is ~350 characters.) Under the 14-tier ladder all 214
+built-in body is 333 characters today — the shortest-path half and the 2026-09-30
+compaction-disposal sentence are both new, and the full first message is ~360 characters.)
+Under the 14-tier ladder all 214
 messages across the whole corpus added up to roughly **0.5M token-equivalents** of input
 against ~205M spent by those same children — about 0.25%. A flat ladder injects
 more messages than that, and the figure has **not** been re-measured. The lever is the
@@ -175,16 +176,21 @@ worse:
   long child on the fastest path instead of drifting. It constrains the **order** of the
   remaining work, never its scope — the same clause still forbids shrinking or rewriting
   the plan in response to the reminder, and the suite pins both halves together.
-- **A copy that survives compaction is stale.** Since 2026-09-30 the body ends by saying
-  that it is valid only for the step it was injected on: after the context is compacted
-  (compaction), if the reminder is still sitting in a summary or in a restatement of the
-  transcript, *that copy* has expired and must be **直接忽略** — while the sentence also
-  states that the reminder does apply on the step it was injected on, so the note cannot be
-  misread as "discard this whole message". This is an *expiry*, not a second
-  order — it takes neither branch away, and it is pinned by its own clauses. The reason is
-  mechanical: compaction folds this text into a summary (or repeats it verbatim), and a copy
-  that has lost the "that was step N" coordinate would otherwise be obeyed a second
-  time, at a moment nobody asked the question.
+- **When the context is compacted, this paragraph is disposed of.** Since 2026-09-30 the
+  body ends by instructing that on compaction (compaction) **本段整条删除** — it must not be
+  written into the summary and must not be restated, because it only means anything on the
+  step it was injected on. The same sentence covers non-compliance: *a copy that survives*
+  in a summary or in a restatement of the transcript has expired and must be **直接忽略**.
+  It also states that the reminder does apply on the step it was injected on, so the note
+  cannot be misread as "discard this whole message". This is a *disposal*, not a second
+  order — it takes neither branch away, and it is pinned by its own clauses. **It is a
+  prompt-level request, not a mechanism**: DSH's compaction has no per-message exclusion
+  switch (`dsh-compaction-basic`'s default summarizer replays the conversation prefix and
+  appends a fixed directive; message selection has no `exclude` / `skip` field), so whether
+  the paragraph really disappears depends on the summarizer complying. The reason to ask at
+  all is mechanical: a copy that has lost the "that was step N" coordinate would otherwise be
+  obeyed a second time, at a moment nobody asked the question, and it would sit in every
+  later request of that child until then.
 - **The bodies do not escalate.** Only the last tier adds a sentence, and that
   sentence is information (the reminders stop here; if you continue, say how many
   steps and what "done" means), not mounting pressure. A flat ladder whose messages

@@ -169,12 +169,17 @@ export function resetRegistrationStateForTests() {
  *    2026-09-29): the child still decides what to do, but it has to pick the
  *    step that makes the goal deliverable soonest rather than the handy,
  *    cheapest-looking or busiest-looking one — and say which it picked.
- * 5. carries an expiry note (operator request, 2026-09-30): this text is a
- *    snapshot of one step, so a copy of it that survives context compaction —
- *    folded into a summary or restated in the transcript — is stale and must be
- *    ignored rather than obeyed a second time. The same sentence says the
- *    reminder *is* applicable on the step it was injected on, so the note cannot
- *    be misread as "discard this whole message".
+ * 5. carries a compaction-time disposal note (operator request, 2026-09-30): this
+ *    text is a snapshot of one step, so when the context is compacted the
+ *    paragraph must be **deleted outright** — not written into the summary and
+ *    not restated. The same sentence covers the case where the summarizer does
+ *    not comply: a copy that survives (in a summary or in a restatement of the
+ *    transcript) has expired and must be ignored. It also says the reminder *is*
+ *    applicable on the step it was injected on, so the note cannot be misread as
+ *    "discard this whole message". There is no harness-level way to exclude one
+ *    message from compaction (`dsh-compaction-basic` replays the prefix and
+ *    appends a fixed directive), so this is a prompt-level request by
+ *    construction.
  *
  * What it must never do is trade the result for tokens, so the body does not
  * prescribe *what* to report: the first branch only asks whether the goal can
@@ -183,7 +188,7 @@ export function resetRegistrationStateForTests() {
  * knows. Item 4 constrains the *order* of the remaining work, never its scope:
  * the same line still says not to shrink or rewrite the plan in response to the
  * reminder, and "shortest path to the goal" is defined as what makes the goal
- * deliverable soonest, not as what is easiest. Item 5 is an *expiry*, not a
+ * deliverable soonest, not as what is easiest. Item 5 is a *disposal*, not a
  * second order: it takes nothing away from the two branches above it. The suite
  * pins all five properties, and the wording is overridable through `stepText`
  * for operators who want to tune it without a new package.
@@ -193,7 +198,7 @@ export const STEP_CHOICE_BODY = [
   '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
   '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划；下一步选**通往目标的最短路径上的那一步**（哪一步最快让目标可交付，不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
   '选哪个由任务本身决定，不是由这条提醒决定。在下一条消息开头用一句话说明你的选择，再按它继续。',
-  '**本提醒只对注入它的这一步有效**：上下文被压缩（compaction）之后，若它仍留在摘要或复述里，那份副本已经过期、**直接忽略它**；本条在注入它的那一步仍然适用。',
+  '**压缩（compaction）时把本段整条删除**：不要写进摘要、也不要复述——它只对注入它的那一步有意义。若它仍残留在摘要里，那份副本已经过期、**直接忽略**；本条在注入它的那一步仍然适用。',
 ].join('\n')
 
 /**
