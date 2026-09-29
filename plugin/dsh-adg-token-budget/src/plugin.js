@@ -184,8 +184,8 @@ export function resetRegistrationStateForTests() {
 export const STEP_CHOICE_BODY = [
   '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
   '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
-  '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。继续时把下一步选成**通往目标的最短路径上的那一步**（哪一步最快让目标可交付；不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
-  '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
+  '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划；下一步选**通往目标的最短路径上的那一步**（哪一步最快让目标可交付，不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
+  '选哪个由任务本身决定，不是由这条提醒决定。在下一条消息开头用一句话说明你的选择，再按它继续。',
 ].join('\n')
 
 /**
@@ -197,7 +197,7 @@ export const STEP_CHOICE_BODY = [
  */
 export const STEP_LAST_TAIL = [
   '',
-  '这是本轮的最后一个检查点，后面不会再提醒。如果选择继续，请顺便写一句预计还需要多少步、以及完成标准是什么。',
+  '这是本轮的最后一个检查点，后面不再提醒。若选择继续，请顺带写一句预计还需多少步、完成标准是什么。',
 ].join('\n')
 
 /**
@@ -224,7 +224,7 @@ export function stepNudgeText(input) {
     : 0
   const custom = typeof input?.body === 'string' && input.body.trim() !== '' ? input.body : undefined
   const body = custom ?? (tierIndex >= tierCount - 1 ? STEP_CHOICE_BODY + STEP_LAST_TAIL : STEP_CHOICE_BODY)
-  return `【收敛检查点 ${tierIndex + 1}／${tierCount}】调度代理提醒：这是你的第 ${stepCount} 步。\n\n${body}`
+  return `【收敛检查点 ${tierIndex + 1}／${tierCount}】调度代理提醒：第 ${stepCount} 步。\n\n${body}`
 }
 
 /**

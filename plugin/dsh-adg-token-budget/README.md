@@ -90,8 +90,8 @@ Polling for it would re-send the dispatcher's own context — the largest in the
 reminder saves, and a background child is not observable step-by-step in the
 first place. So the reminder is injected here, deterministically, **on the
 dispatcher's behalf**: every checkpoint message opens with
-`【收敛检查点 n／N】调度代理提醒：这是你的第 N 步。` — "the dispatcher reminds you:
-this is your step N".
+`【收敛检查点 n／N】调度代理提醒：第 N 步。` — "the dispatcher reminds you:
+this is step N".
 
 A step is counted when the child **enters** it, so a step a downstream listener
 rejected is never charged, and the count is strictly per child. The counter lives in one

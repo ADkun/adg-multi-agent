@@ -746,7 +746,7 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
   const reminder = second.messages[1]
   assert.equal(reminder.role, 'user')
   assert.deepEqual(reminder.source, { kind: 'plugin:dsh-adg-token-budget' })
-  assert.match(reminder.content[0].text, /^【收敛检查点 1／2】调度代理提醒：这是你的第 2 步。/)
+  assert.match(reminder.content[0].text, /^【收敛检查点 1／2】调度代理提醒：第 2 步。/)
   assert.ok(reminder.content[0].text.includes(STEP_CHOICE_BODY))
   assert.ok(!reminder.content[0].text.includes(STEP_LAST_TAIL), 'only the last tier adds the closing sentence')
   assert.ok(Object.isFrozen(reminder), 'the injected message must be immutable like a real UserMessage')
@@ -757,7 +757,7 @@ test('a checkpoint injects its reminder on the tier step, once per tier', async 
   // Step 4: tier 2 — the last one, so the closing sentence is appended.
   const fourth = await handler({ agent }, trackedNext())
   assert.equal(fourth.messages.length, 1)
-  assert.match(fourth.messages[0].content[0].text, /^【收敛检查点 2／2】调度代理提醒：这是你的第 4 步。/)
+  assert.match(fourth.messages[0].content[0].text, /^【收敛检查点 2／2】调度代理提醒：第 4 步。/)
   assert.ok(fourth.messages[0].content[0].text.includes(STEP_CHOICE_BODY))
   assert.ok(fourth.messages[0].content[0].text.includes(STEP_LAST_TAIL))
 
@@ -784,7 +784,7 @@ test('a configured stepText is what actually reaches the child', async (t) => {
   // A custom body replaces the built-in text entirely, closing sentence included.
   assert.ok(!text.includes(STEP_CHOICE_BODY), text)
   assert.ok(!text.includes(STEP_LAST_TAIL), text)
-  assert.match(text, /^【收敛检查点 1／1】调度代理提醒：这是你的第 2 步。/)
+  assert.match(text, /^【收敛检查点 1／1】调度代理提醒：第 2 步。/)
   // The log still records the decision, not the wording.
   assert.match(readLog(logFile), /step stage: nudged tier=1\/1 step=2 /)
 })
@@ -1068,12 +1068,12 @@ test('the built-in checkpoint wording is pinned literally', () => {
   assert.equal(STEP_CHOICE_BODY, [
     '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
     '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
-    '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。继续时把下一步选成**通往目标的最短路径上的那一步**（哪一步最快让目标可交付；不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
-    '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
+    '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划；下一步选**通往目标的最短路径上的那一步**（哪一步最快让目标可交付，不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
+    '选哪个由任务本身决定，不是由这条提醒决定。在下一条消息开头用一句话说明你的选择，再按它继续。',
   ].join('\n'))
   assert.equal(STEP_LAST_TAIL, [
     '',
-    '这是本轮的最后一个检查点，后面不会再提醒。如果选择继续，请顺便写一句预计还需要多少步、以及完成标准是什么。',
+    '这是本轮的最后一个检查点，后面不再提醒。若选择继续，请顺带写一句预计还需多少步、完成标准是什么。',
   ].join('\n'))
 })
 
@@ -1081,7 +1081,7 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   const bodyOf = (text) => text.slice(text.indexOf('\n\n') + 2)
   const first = stepNudgeText({ tierIndex: 0, tierCount: 3, stepCount: 4 })
   const last = stepNudgeText({ tierIndex: 2, tierCount: 3, stepCount: 32 })
-  assert.match(first, /^【收敛检查点 1／3】调度代理提醒：这是你的第 4 步。/)
+  assert.match(first, /^【收敛检查点 1／3】调度代理提醒：第 4 步。/)
   assert.equal(bodyOf(first), STEP_CHOICE_BODY)
   assert.equal(bodyOf(last), STEP_CHOICE_BODY + STEP_LAST_TAIL)
 
@@ -1090,7 +1090,7 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   // says anything extra, and that extra is information, not a firmer order.
   const middle = stepNudgeText({ tierIndex: 1, tierCount: 3, stepCount: 8 })
   assert.equal(bodyOf(middle), STEP_CHOICE_BODY)
-  assert.match(middle, /^【收敛检查点 2／3】调度代理提醒：这是你的第 8 步。/)
+  assert.match(middle, /^【收敛检查点 2／3】调度代理提醒：第 8 步。/)
 
   // A custom body replaces the built-in text entirely, last-tier sentence
   // included; a blank one falls back instead of leaving the checkpoint silent.
@@ -1101,7 +1101,7 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   assert.ok(stepNudgeText({ tierIndex: 0, tierCount: 1, stepCount: 4, body: 7 }).includes(STEP_CHOICE_BODY))
 
   // Junk input cannot throw inside a live step.
-  assert.match(stepNudgeText(undefined), /^【收敛检查点 1／1】调度代理提醒：这是你的第 0 步。/)
+  assert.match(stepNudgeText(undefined), /^【收敛检查点 1／1】调度代理提醒：第 0 步。/)
   assert.match(stepNudgeText({ tierIndex: -1, tierCount: 0, stepCount: Number.NaN }), /^【收敛检查点 1／1】/)
 
   // Each property exists because the alternative is the trade this feature is
