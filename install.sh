@@ -59,8 +59,8 @@ esac
 #      bili 版给专家的 toolFilter.allow 追加 bili 那几个上下文工具（不注入 = 专家收到 bili 的压缩
 #      指令却没工具可调；给没挂 bili 的 profile 注入 = 每一次委派抛 names unknown global tool，
 #      所以两种形状必须分开装，不能"宁可少给"一刀切）。--billion-context=on|off 是整体覆盖。
-#   2) 挂着 bili 的那个 profile 不再启用配套插件 dsh-adg-token-budget（两套收敛/压缩提醒不给
-#      同一批子代理同时用）。这一半天然按 profile 决定，见下面 4c。
+#   2) （2026-10 起**不再**有这一半）早先挂着 bili 的 profile 不启用配套插件 dsh-adg-token-budget，
+#      理由是两套收敛/压缩提醒重复；用户决定推翻：挂着 bili 也一律启用（见 4c）。
 # 覆盖：--billion-context=auto|on|off，或环境变量 ADG_BILLION_CONTEXT（默认 auto）。
 billion_context_mode="${ADG_BILLION_CONTEXT:-auto}"
 positional=""
@@ -112,9 +112,9 @@ fi
 
 # ── 0. billion-context 探测（与 install.ps1 共用 tools/has-billion-context.mjs 那一份判据）────
 # 两张名单：
-#   bili_on  = 挂着 bili 的 profile —— 这些 profile 不启用 dsh-adg-token-budget（见 4c，按 profile 决定）
-#   bili_off = 没挂的 profile —— 只要有一个，preset 生成物就不注入 bili 工具：全机共用一份生成物，
-#              注入了会让没挂的 profile 每次委派抛 names unknown global tool，宁可少给这个能力。
+#   bili_on  = 挂着 bili 的 profile —— 只决定它拿哪份生成物（注入版）；**不再**决定 token-budget 插件
+#              启不启用（2026-10 用户决定：挂着 bili 也一律启用，此前那一半已推翻，见 4c）
+#   bili_off = 没挂的 profile —— 它拿 plain 生成物
 # shellcheck disable=SC2086
 bili_map="$(node "$here/tools/has-billion-context.mjs" "$root/profiles" $profiles)"
 tab="$(printf '\t')"
@@ -126,7 +126,7 @@ while IFS="$tab" read -r bili_name bili_flag; do
 done <<EOF
 $bili_map
 EOF
-# has_bili <profile> → 打印 0/1（供 4c 按 profile 决定 token-budget）
+# has_bili <profile> → 打印 0/1（4c 只用它给提示语加一句"挂着 bili 也照样启用"的说明）
 has_bili() {
   printf '%s\n' "$bili_map" | awk -F'\t' -v want="$1" '$1 == want { print $2 }'
 }
@@ -321,32 +321,14 @@ for name in $profiles; do
     hand_row=1
     echo "  patch   -> $name : $patch_file 里还有旧机制手贴的挂载行 —— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
   fi
-  # 4c-1. 挂着 billion-context 的 profile **不启用**这个插件（2026-10）：插件按步数档位给子代理追加
-  # 收敛提醒，bili 的压缩/nudge 干的是同一类事，两套同时给同一批子代理下指令会互相打架（谁先撞到
-  # 阈值谁说话），所以只保留一个。这里靠"不选进 dsh.profile.bundles"实现，而不是塞一条 enabled:false
-  # 覆盖行 —— profile 层按 id 覆盖是**整块替换 config**，为了关一个键得把整份 config 重写一遍，
-  # 容易把别的键弄丢（AGENTS.md 红线 3 的同一理由）。
-  if [ "$(has_bili "$name")" = "1" ]; then
-    verdict="$(node -e '
-      const fs = require("fs");
-      const [manifest, pluginName] = process.argv.slice(1);
-      const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
-      const bundles = ((m.dsh || {}).profile || {}).bundles || [];
-      if (!bundles.includes(pluginName)) { console.log("not-selected"); process.exit(0); }
-      fs.writeFileSync(manifest + ".bak-adg-token-budget", fs.readFileSync(manifest));
-      m.dsh.profile.bundles = bundles.filter((b) => b !== pluginName);
-      fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
-      console.log("deselected");' "$profile_dir/package.json" "$plugin_name")"
-    if [ "$verdict" = "deselected" ]; then
-      echo "  patch   -> $name : 已把 $plugin_name 从 dsh.profile.bundles 移除 —— 该 profile 挂着 billion-context，收敛提醒由它提供（原文件备份 $manifest.bak-adg-token-budget）"
-    else
-      echo "  patch   -> $name : $plugin_name 保持不启用（该 profile 挂着 billion-context）"
-    fi
-    if [ "$hand_row" -eq 1 ]; then
-      echo "  patch   -> $name : 但 $patch_file 里那条手贴挂载行还在 —— 它会绕过 bundle 选择继续把插件挂上，请删掉（本脚本不代删 profile 层）" >&2
-    fi
-    continue
-  fi
+  # 4c-1. 挂着 billion-context 的 profile **同样启用**这个插件（2026-10 用户决定，推翻此前的"挂了 bili
+  # 就不启用"）：早先的理由是它按步数档位给子代理注入收敛提醒，而 bili 在同一个 profile 上也有自己的
+  # 压缩 / nudge 指令，两套重复；用户判定步数检查点保留（bili 不做"按步数问一句要不要收尾"这件事），
+  # 重复的代价由用户接受。所以这里不再按 profile 分叉，所有目标 profile 都走同一条"确保已选进
+  # dsh.profile.bundles"的路径；旧版安装按 bili 移除过的 profile 会由此加回去。
+  # 选中的做法不变、也不改塞一条 enabled:false/true 覆盖行 —— profile 层按 id 覆盖是**整块替换 config**，
+  # 为了改一个键得把整份 config 重写一遍（AGENTS.md 红线 3 的同一理由）。
+  mounts_bili="$(has_bili "$name")"
   verdict="$(node -e '
     const fs = require("fs");
     const [profileDir, pluginName] = process.argv.slice(1);
@@ -376,10 +358,18 @@ for name in $profiles; do
       continue
       ;;
     added:*)
-      echo "  patch   -> $name : 已把 $plugin_name 加进 dsh.profile.bundles（挂载行来自 ${verdict#added:}，原文件备份 $manifest.bak-adg-token-budget）"
+      if [ "$mounts_bili" = "1" ]; then
+        echo "  patch   -> $name : 已把 $plugin_name 加进 dsh.profile.bundles（挂载行来自 ${verdict#added:}，原文件备份 $manifest.bak-adg-token-budget）—— 这个 profile 挂着 billion-context：2026-10 起挂 bili 也启用它（旧版安装曾按 bili 移除过就由此加回）"
+      else
+        echo "  patch   -> $name : 已把 $plugin_name 加进 dsh.profile.bundles（挂载行来自 ${verdict#added:}，原文件备份 $manifest.bak-adg-token-budget）"
+      fi
       ;;
     *)
-      echo "  patch   -> $name : $plugin_name 已在 dsh.profile.bundles 里（挂载行来自 ${verdict#present:}）"
+      if [ "$mounts_bili" = "1" ]; then
+        echo "  patch   -> $name : 这个 profile 挂着 billion-context，$plugin_name 保持启用（挂载行来自 ${verdict#present:}；2026-10 起挂 bili 也不停用）"
+      else
+        echo "  patch   -> $name : $plugin_name 已在 dsh.profile.bundles 里（挂载行来自 ${verdict#present:}）"
+      fi
       ;;
   esac
 done

@@ -36,7 +36,7 @@ last_reviewed: 2026-09-28
 | 人工介入探测（§12） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘） | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
 | 生成物自检（§17） | `node tools/check-bundle-flavor.mjs <cordis.patch.yml> <plain\|bili>` | 钉住 **bundle 产物**里 billion-context 那四个名字的有无；`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列，产物是它的盲区。零依赖按行扫、自己探测缩进 |
-| billion-context 挂载判据（§17） | 判据实现 `tools/has-billion-context.mjs`；被判对象 = 某 profile 的 `package.json` 里 `dsh.profile.bundles` 含 `billion-context` **且** `profiles/<p>/node_modules/billion-context/dsh.bundle.patch.yml` 存在 | 同一份判据管两件方向相反的事（给专家注入那四个工具 / 让 token-budget 不启用），实现只在这一处 |
+| billion-context 挂载判据（§17） | 判据实现 `tools/has-billion-context.mjs`；被判对象 = 某 profile 的 `package.json` 里 `dsh.profile.bundles` 含 `billion-context` **且** `profiles/<p>/node_modules/billion-context/dsh.bundle.patch.yml` 存在 | 判据是**单向**的，只决定这个 profile 拿哪份味道（给专家注入那四个工具）—— **不再**决定 `dsh-adg-token-budget` 启不启用（2026-10 按用户要求推翻，见 §17.1 第 11 条）。实现只在这一处 |
 
 ## 1. 步数分布与阶梯校准（真机实测）
 
@@ -905,7 +905,7 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 
 ## 17. billion-context 的上下文工具对 ADG 专家可见吗（2026-09-28）
 
-**这一节回答的问题**：ADG 的专家行能不能用 billion-context（下称 bili）那套上下文工具；口径为什么是"构建期条件化注入"；以及"挂了 bili 就别启用 `dsh-adg-token-budget`"这条决定的依据。
+**这一节回答的问题**：ADG 的专家行能不能用 billion-context（下称 bili）那套上下文工具；口径为什么是"构建期条件化注入"；以及"`dsh-adg-token-budget` 与 bili 能不能同处一个 profile"这条政策的沿革（第 9 条 = 2026-09-28 的"让位"口径，**2026-10 已被用户推翻**，见第 11 条）。
 **边界**：本节**不**回答"步数检查点到底有没有用"（§8 第 1 行的核心问题，至今未观测），也**不碰任何尺寸旋钮**（红线 3：`compaction-basic` 的 0.8/0.16 与 `tool-result-pruner` 的 8192/4096/1024 一律出厂默认）。本节改动的是 realm 里 `compaction-basic` 的**开关**（`auto`，见 17.1 第 10 条）—— 开关不是旋钮。
 
 ### 17.1 结论与依据（逐条带状态档）
@@ -924,17 +924,29 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
 7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。
 8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分两种味道、两个稳定目录，按 profile 各拿一份 —— 见 §18。）**
-9. **源码级事实（token-budget 让位为什么选"不选中 bundle"而不是塞 `enabled: false`）**：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。
+9. **源码级事实（2026-09-28 的"让位"口径；2026-10 已被推翻 —— 见第 11 条）**：当时决定"挂着 bili 的 profile 不启用 `dsh-adg-token-budget`"，实现选"从 `dsh.profile.bundles` 里移除选中"而不是塞 `enabled: false`：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。**这条"为什么不用覆盖行"的理由在 2026-10 的新口径下依然成立、照旧执行**，被推翻的只是"该不该让位"这件事本身。
 10. **第二处交界：挂 bili 的 profile 要关掉 preset realm 里的自动压缩（本次新增）**，依据分四层：
     - **源码级事实（bili 官方就是这么做的）**：`C:\Users\cenqian\.dsh\profiles\web\node_modules\billion-context\dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
     - **源码级事实（键存在，且语义就是"只留手动"）**：`@deepseek-ai/dsh-compaction-basic` 的 `lib/index.js:62` `if (config.auto !== void 0 && typeof config.auto !== "boolean") throw new Error("BasicCompactionConfig: auto must be a boolean")`；`:85` `auto: config.auto ?? true`；`:817` zod `auto: z.boolean()`；`:827` `if (this.config.auto) this._registerAutomaticCompaction()`；该包 `README.md:76` 表格 `| auto | true | Enable automatic condensation and overflow recovery; set false for manual-only operation. |` ⇒ `auto: false` = 关自动折叠与溢出恢复，**手动 `/compact` 仍可用**（`command-compact` 那行不动）。
     - **设计依据（为什么写在 preset 自己的组里，而不是依赖 profile 层那份）**：本 preset 的 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是**另一份实例**；bili 的补丁打在 **profile 层**，"同 id 能不能命中 realm 那行"从未被观测（原 §17.2 ③）⇒ 生成物直接往 preset 的 `compaction` 组里写**同键同值**：两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套折叠各自抢阈值、压同一段历史。
     - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 9 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 9 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **10** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 \`config:\` —— \`auto: false\` 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
-    - **踩过的坑（登记，防重踩）**：`auto` 本来就在该插件的 `spec.allowedKeys` 里 ⇒ "未知键"那条检查**拦不住手写**，必须单加一条"这个键只许出现在产物里"的规则，否则有人手写 `false` 就会让没挂 bili 的 profile 静默失去唯一的压缩手段（那才是真正的洞）。零回归仍以第 5 条的 SHA256 为准。
+    - **踩过的坑（登记，防重踩）**：`auto` 本来就在该插件的 `spec.allowedKeys` 里 ⇒ "未知键"那条检查**拦不住手写**，必须单加一条"这个键只允许出现在产物里"的规则，否则有人手写 `false` 就会让没挂 bili 的 profile 静默失去唯一的压缩手段（那才是真正的洞）。零回归仍以第 5 条的 SHA256 为准。
+11. **第三处交界（2026-10 按用户要求推翻第 9 条）：挂着 bili 的 profile 也一律启用 `dsh-adg-token-budget`。** 依据分三层：
+    - **用户意图（m00515 原话）**：「把安装时如果已安装billion-context的话就禁用掉dsh-adg-token-budget的逻辑改为仍然启用dsh-adg-token-budget」。推翻的理由是"重复"这一侧的代价可以接受、而插件做的事 bili 不做：它只按**步数**问一句"要不要收尾"，不碰上下文本身；两套提示同处的残留问题已由 2026-09-30 加进提醒正文的"压缩时把本段整条删除"（§8 / 插件 `design.md` I14）压掉。第 9 条写的"不要塞 `enabled: false` 覆盖行"这个**实现约束不变**，变的只是"要不要让位"。
+    - **实现（源码级事实：改的是两份安装脚本的 4c-1 块）**：`install.ps1` / `install.sh` 里那条"该 profile 挂着 bili ⇒ 把 `dsh-adg-token-budget` 从 `dsh.profile.bundles` 移除并备份 `.bak-adg-token-budget`"的分叉整段删除，改成**所有 profile 走同一条路径**：确保包名在该 profile 的 `dsh.profile.bundles` 里（原先被旧版脚本移出过的，重跑脚本会加回去）。`tools/has-billion-context.mjs` 的判据因此变成**单向**的（只决定 plain / bili 味道），脚本仍保留 `biliMounts` 的读取，但**只用于提示语**（打印"挂着 bili 也照样启用"）。
+    - **检验（临时 `DSH_HOME` 端到端，不动真机）**：见本节末"2026-10 复核"一段（四轮读数）。
+    - **未观测**：这条新口径在**真机** `web` 上的效果（§18 未观测 ③ 同一类：只在临时根里量过）；以及"两套提示真的同处一个 profile 时会不会互相干扰"—— 这是**行为层**问题，本轮只改了启停逻辑，不构成对它的观测。
+
+**§17.1 第 11 条的检验（2026-10，临时 `DSH_HOME` 端到端三轮，不动真机）**：临时根 `D:\dsh\.adg-scratch\home` 重建出与真机同形的混装 —— `web` 的 `dsh.profile.bundles` = `['@deepseek-ai/dsh-web-app', 'billion-context']`（**故意不含 `dsh-adg-token-budget`**，模拟"旧版脚本按 bili 把它移除过"），`desktop` = `['@deepseek-ai/dsh-web-app', 'dsh-adg-preset', 'dsh-adg-token-budget']`；`web` 的 `node_modules/billion-context/dsh.bundle.patch.yml` 在位（探测 `web=1` / `desktop=0`）；两个 profile 的 `node_modules` 用 junction 指向稳定目录（`web`→`dsh-adg-preset-bili`、`desktop`→`dsh-adg-preset`），跑 `install.ps1 -SkipPackages`：
+- 第一轮（链接尚未就位）：exit **2**（4b 的 `continue`），两份味道照常生成并落到两个稳定目录 —— 本次读数 `dsh-adg-preset/cordis.patch.yml` **97377** 字节、`dsh-adg-preset-bili/cordis.patch.yml` **99401** 字节（生成器同时打印 `billion-context 已注入：9 个专家行 + 4 个工具名 …并把 compaction-basic 的 auto 设为 false`）。这一步只为把两个稳定目录造出来，与第 11 条无关。
+- 第二轮（junction 就位）：exit **0**。逐字两行 —— `patch -> desktop : dsh-adg-token-budget 已在 dsh.profile.bundles 里（挂载行来自 ./cordis.patch.yml）`；`patch -> web : 已把 dsh-adg-token-budget 加进 dsh.profile.bundles —— 这个 profile 挂着 billion-context：2026-10 起挂 bili 也启用它（旧版安装曾按 bili 把它移除过就由此加回）（原文件备份 …\web\package.json.bak-adg-token-budget）`。备份文件逐字保留了移除前的状态（`bundles` 里只有 `@deepseek-ai/dsh-web-app` / `billion-context` / `dsh-adg-preset`）⇒ **"加回"这一步真的发生在本轮**，不是被别的步骤顺手带上的。同时 `味道 -> desktop : plain` / `味道 -> web : bili`、两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）` 与 §18 的 2026-09-28 读数同形（第 11 条没有动味道那半）。
+- 第三轮（幂等）：同 exit **0**，两行变成 `patch -> web : 这个 profile 挂着 billion-context，dsh-adg-token-budget 保持启用（挂载行来自 ./cordis.patch.yml；2026-10 起挂 bili 也不停用）` / `patch -> desktop : … 已在 dsh.profile.bundles 里 …`，`web` 的清单稳定为 4 项（`@deepseek-ai/dsh-web-app, billion-context, dsh-adg-preset, dsh-adg-token-budget`）。
+- **关键负向断言**：三轮里**没有任何一轮**把 `dsh-adg-token-budget` 从 `web` 移出（旧脚本在第二轮就会移除并留下 `.bak-adg-token-budget`；现在那个文件只在"加回"时被写出来）。
+- **诚实边界**：上面三轮只跑 Windows 的 `install.ps1`；本机没有 `bash`，`install.sh` 的 4c-1 只是**同步改写**、**未执行**（两份脚本的这段逻辑逐行对应，但"对应"不等于"跑过"）。另外临时根里的 profile 是手工造的壳，**不是** dsh 真的启动过它 —— 与 §18 未观测 ③ 同一层面。
 
 ### 17.2 未观测（已照 §8 登记，引用本节时不许抹平）
 
-① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② 从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**；③ **profile 层的 `- id: compaction-basic` / `config: {auto: false}` 到底有没有落到 realm 里那份实例**（第 10 条已不再依赖它 —— 生成物把同键同值写进 preset 组，但"官方那份能不能跨 lane 命中"仍未量，所以"两处都生效"这件事本身也未被观测）；④ **注入进产物的 `auto: false` 在真实 Adg 会话里确实关掉了原生自动折叠**（产物断言只证明键写对了，不证明运行期行为；第 10 条的量法：转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐）。四条的量法都写在 §8 对应行里。
+① 重启后**真实 `adg` 专家行**看得见、调得通那四个工具（第 1 条只覆盖通用委派路径）；② ~~从清单移除 `dsh-adg-token-budget` 后**冷启动无副作用**~~ → **该项随第 11 条作废**（2026-10 起不再移除），取而代之的未观测是"**从旧版的'已移除'状态加回清单后，冷启动无副作用**"（量法同 §8 对应行：重启 dsh → `list_bundles` 里有这条 + 日志新出现一行 `activation: …`）；③ **profile 层的 `- id: compaction-basic` / `config: {auto: false}` 到底有没有落到 realm 里那份实例**（第 10 条已不再依赖它 —— 生成物把同键同值写进 preset 组，但"官方那份能不能跨 lane 命中"仍未量，所以"两处都生效"这件事本身也未被观测）；④ **注入进产物的 `auto: false` 在真实 Adg 会话里确实关掉了原生自动折叠**（产物断言只证明键写对了，不证明运行期行为；第 10 条的量法：转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐）。四条的量法都写在 §8 对应行里。
 
 **§17.2 ① 的负向观测（2026-09-28 补）**：真机 `web`（当时链接的是 plain 落点）里，**真实 `adg` 专家子代理**调用 `compress` 得到 `unknown tool compress` ⇒"可见性由 `allow` 决定"这一半在真实专家行上被观测到；正向（换成注入版后专家看得见、调得通）仍**未观测**，见 §18。
 
@@ -955,7 +967,7 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 
 **检验（临时 `DSH_HOME` 端到端四轮，不动真机）**：临时根 `D:\dsh\.adg-scratch\home` 造出与真机同形的混装（`web` 的 `dsh.profile.bundles` 含 `billion-context` 且装了 `dsh.bundle.patch.yml` ⇒ 探测 `web=1` / `desktop=0`；两个 profile 的 `node_modules` 用 junction 指向稳定目录），跑 `install.ps1 -SkipPackages`：
 - 无 `node_modules` 时：exit 2，两份味道都生成并落到两个稳定目录（plain **85794** 字节 / bili **87818** 字节，各 18 个顶层条目）—— 4b 的 `continue`（包不在 `node_modules`）在 4b-1 之前，那一轮没跑味道断言。
-- junction 就位（`desktop`→plain、`web`→bili）：exit **0**，输出 `已挂载 [web] / 未挂载 [desktop]`、`味道 -> desktop : plain`、`味道 -> web : bili`、两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）`；4c 把 `dsh-adg-token-budget` 从 `web` 的 `dsh.profile.bundles` 移除（备份 `package.json.bak-adg-token-budget`）、`desktop` 保留。
+- junction 就位（`desktop`→plain、`web`→bili）：exit **0**，输出 `已挂载 [web] / 未挂载 [desktop]`、`味道 -> desktop : plain`、`味道 -> web : bili`、两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）`；4c 把 `dsh-adg-token-budget` 从 `web` 的 `dsh.profile.bundles` 移除（备份 `package.json.bak-adg-token-budget`）、`desktop` 保留。**（这一行是 2026-09-28 的历史读数：4c 当时按 bili 移除；2026-10 起该分叉已删，4c 对所有 profile 都改成"确保选中"，新读数见 §17.1 第 11 条的检验段。）**
 - 再跑一次：同结果 exit 0（幂等）。
 - **故意把 `web` 的 junction 改指 plain**（模拟"换味道那一步没成功"）：exit **2**，note `落点味道 ≠ bili —— 链接到的还是另一种味道…`，并原样打印报告（`agent_file[10]=NONE` … `compaction-basic[auto=未写]` + 10 个 `ERROR …bili 模式期望四个名字全有，实际 一个都没有` + `不通过：10 个错误（bili 模式 / 10 个专家行）`）⇒ 这个断言**不会假绿**。
 

@@ -716,12 +716,15 @@ plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不
 listener），**不是**把这一行 `disabled` 掉。plain 味道里绝不能出现这个键 —— 没挂 bili 的 profile 里，
 dsh 自带的自动压缩是**唯一**的压缩手段，关掉等于让上下文无限增长。
 
-**同一份判据的另一半：挂着 bili 的 profile 不启用 `dsh-adg-token-budget`。** 那个插件按步数档位给子代理下
-收敛提醒，bili 的压缩/nudge 是同类指令，两套同时给同一批子代理会互相抢阈值、模型会收到"既该收敛又该折叠"
-的矛盾信号。实现方式是把这个 bundle 从该 profile 的 `dsh.profile.bundles` 里**移除**（脚本会备份成
-`package.json.bak-adg-token-budget`），**不是**塞一条 `enabled: false` 覆盖行 —— 按 id 覆盖是整块替换 `config`，
-为关一个键重写整份 config 太容易丢别的键。注意这条按 profile 的**实际挂载状态**决定，不受 `--billion-context`
-旗标影响（旗标只管工具注入）。想两套并存：把 `dsh-adg-token-budget` 加回那个 profile 的 `dsh.profile.bundles` 即可。
+**第三处交界：`dsh-adg-token-budget` 在挂着 bili 的 profile 上照样启用。**（2026-10 按用户要求推翻旧口径 ——
+此前是"挂着 bili 就不启用这个 bundle"，理由是那个插件按步数档位给子代理下收敛提醒，bili 的压缩/nudge
+是同类指令，两套同时给同一批子代理会互相抢阈值、模型会收到"既该收敛又该折叠"的矛盾信号。）用户判断
+重复的代价可以接受：插件做的事 bili 不做 —— 它只按**步数**问一句"要不要收尾"，不碰上下文本身；而 2026-09-30
+起提醒正文自带"压缩时把本段整条删除"，跨套提示的残留也已被压掉。所以现在 `install.*` 对所有 profile
+走同一条路径：把 `dsh-adg-token-budget` 写进该 profile 的 `dsh.profile.bundles`（旧版曾按 bili 把它移出的，
+重跑脚本会加回去，并留一份清单备份 `package.json.bak-adg-token-budget`）。实现方式仍然是"在不在 bundle 清单里"，
+**不是**塞一条 `enabled: true|false` 覆盖行 —— 按 id 覆盖是整块替换 `config`，为一个键重写整份 config
+太容易丢别的键。这条按 profile 的**实际挂载状态**独立决定，不受 `--billion-context` 旗标影响（旗标只管工具注入）。
 
 自检：先看这个 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份，再断言**那一份** ——
 `node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml bili`（挂 bili 的 profile）
@@ -1281,8 +1284,9 @@ tools/
   check-bundle-flavor.mjs # 产物自检：按 plain|bili 断言两件事 —— 9 个专家行的 allow 里有没有那四个
                           # 名字，compaction-basic 的 config.auto 是否为 false（plain 则断言都不存在）
                           # （check-preset.mjs 只看源文件，产物是它的盲区）
-  has-billion-context.mjs # 判据：某 profile 到底挂没挂 billion-context。install.* 用它同时决定两件
-                          # 相反的事 —— 注入那四个工具 / 不启用 dsh-adg-token-budget
+  has-billion-context.mjs # 判据：某 profile 到底挂没挂 billion-context。install.* 用它决定该 profile
+                          # 拿哪份味道（plain / bili，判据单向）；与 dsh-adg-token-budget 启不启用无关
+                          # （2026-10 起挂着 bili 也一律启用，见 AGENTS.md 红线 11）
 browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
   cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
   lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策

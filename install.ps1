@@ -30,7 +30,8 @@ param(
   #   on  = 给**所有目标 profile** 都装注入版（自己保证它们都挂上了 billion-context，
   #         否则每次委派都抛 `names unknown global tool "compress"`）
   #   off = 给所有目标 profile 都装 plain
-  # 注意：dsh-adg-token-budget 的"挂了就别启用"始终按**每个 profile 自己**是否挂 bili 决定，不看这个开关。
+  # 注意：dsh-adg-token-budget **不再**按"这个 profile 挂没挂 bili"分叉 —— 2026-10 用户决定，
+  # 挂着 bili 的 profile 也照样启用它（此前的"挂了就别启用"已推翻，见 4c）。$BillionContext 只管味道。
   [ValidateSet('auto', 'on', 'off')] [string]$BillionContext = 'auto'
 )
 $ErrorActionPreference = 'Stop'
@@ -84,10 +85,10 @@ if ($Profiles.Count -eq 0) { throw "在 $profilesDir 下没找到可装 preset �
 #      （restrict() 的真行为，AGENTS.md 红线 7）；反过来给挂了 bili 的装 plain，专家就收到 bili 的压缩
 #      指令却没有工具可调 —— 两头都是缺陷，所以不能再用"宁可少给"一刀切。
 #      `-BillionContext on|off` 是**整体覆盖**（所有目标 profile 同一味道），auto 才是按 profile 选。
-#   2. 挂了 bili 的 profile 不再启用 dsh-adg-token-budget（同一批子代理不同时吃两套收敛/压缩提醒）。
-#      这一半本来就按 profile 决定，见 4c。
-# 两条判据都要成立才算"挂着"，判据本身在 tools\has-billion-context.mjs —— 它同时决定"要不要注入工具"
-# 和"要不要启用 token-budget 插件"这两件方向相反的事，所以两处安装脚本共用一份实现，不要在这里重写。
+#   2. （2026-10 起**不再**有这一半）早先挂 bili 的 profile 不启用 dsh-adg-token-budget，理由是两套收敛
+#      提醒重复；用户决定推翻它 —— 挂着 bili 也一律启用（见 4c）。所以探测现在只决定"给专家注入哪一份
+#      味道"，插件那一侧对所有 profile 走同一条路径。
+# 判据在 tools\has-billion-context.mjs：两条判据都要成立才算"挂着"，两处安装脚本共用一份实现，不要在这里重写。
 # 探测结果不能靠 `@(& node ...)` 收（见下面 4b-1 里同一条实测）：把原生命令的 stdout 收进变量时，
 # 拿不到输出、$LASTEXITCODE 还是上一条命令留下的值 —— 判据会静默变成"全都没挂 bili"，于是挂了 bili 的
 # profile 也被当成没挂。走 cmd 重定向写文件再读（与 4a 的 pnpm 同一套做法），并且**显式检查探测自己的
@@ -331,31 +332,29 @@ foreach ($name in $Profiles) {
       $patchNotes += "$name : $patchFile 里还有旧机制手贴的挂载行（$($handRows.Count) 处）—— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
     }
   }
-  # 挂了 billion-context 的 profile **不启用**这个插件（用户 2026-10 的决定）：它给 adg 的每个
-  # 子代理注入步数收敛检查点，而 bili 自己已经在这个 profile 上给同一批子代理注入压缩/收敛指令，
-  # 两套提醒互相重复还都算进每一次请求的前缀。这一半是**按 profile** 决定的：
-  # dsh.profile.bundles 本来就是 per-profile 的（preset 生成物自 2026-09-28 起也按 profile 选味道，
-  # 见文件头与第 3 节的两种落点），所以混装（一个 profile 挂 bili、另一个没挂）时两边都能各拿对的形状。
-  # 摘掉的做法是不选中，而不是给包塞 enabled:false —— profile 层按 id 覆盖是整块替换 config，
-  # 要重写阶梯里每一个键；不选中则连挂载行都不读（AGENTS.md 红线 3 同一个理由）。
+  # 4c-1. 挂着 billion-context 的 profile **同样启用**这个插件（2026-10 用户决定，推翻此前的"挂了 bili
+  # 就不启用"）。早先的理由是：它按步数档位给子代理注入收敛提醒，而 bili 在同一个 profile 上也有自己的
+  # 压缩 / nudge 指令（`billion-context/src/server.ts` 的系统段与 nudge），两套提醒重复还都进前缀。
+  # 用户判定"步数检查点保留"（bili 不做按步数问一句"要不要收尾"这件事），重复的代价由用户接受；
+  # 2026-09-30 给提醒正文加的"压缩时把本段整条删除"也正好压掉了跨套提示的残留。
+  # 所以这一块不再按 profile 分叉：所有目标 profile 都走同一条"确保已选进 dsh.profile.bundles"的路径。
+  # 选中的做法不变、也不改塞一条 enabled:false/true 覆盖行 —— profile 层按 id 覆盖是**整块替换 config**，
+  # 要重写阶梯里每一个键（AGENTS.md 红线 3 同一个理由）。旧版安装按 bili 移除过的 profile，这里会把它加回去。
   $json = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
   $bundles = @($json.dsh.profile.bundles)
-  if ($biliMounts[[string]$name]) {
-    if ($bundles -contains $pluginName) {
-      Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force
-      $json.dsh.profile.bundles = @($bundles | Where-Object { $_ -ne $pluginName })
-      [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
-      $patchNotes += "$name : 这个 profile 挂着 billion-context → 已从 dsh.profile.bundles 移除 $pluginName（原文件备份 $manifest.bak-adg-token-budget；包还留在 node_modules 里，想恢复就把它加回列表）"
+  $mountsBili = [bool]$biliMounts[[string]$name]
+  if ($bundles -contains $pluginName) {
+    if ($mountsBili) {
+      $patchNotes += "$name : 这个 profile 挂着 billion-context，$pluginName 保持启用（挂载行来自 $pluginLayer；2026-10 起挂 bili 也不停用）"
     } else {
-      $patchNotes += "$name : 这个 profile 挂着 billion-context → 不启用 $pluginName（步数检查点与 bili 的收敛/压缩提醒重复）"
+      $patchNotes += "$name : $pluginName 已在 dsh.profile.bundles 里（挂载行来自 $pluginLayer）"
     }
-  } elseif ($bundles -contains $pluginName) {
-    $patchNotes += "$name : $pluginName 已在 dsh.profile.bundles 里（挂载行来自 $pluginLayer）"
   } else {
     Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force
     $json.dsh.profile.bundles = @($bundles + $pluginName)
     [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
-    $patchNotes += "$name : 已把 $pluginName 加进 dsh.profile.bundles（原文件备份 $manifest.bak-adg-token-budget）"
+    $suffix = $(if ($mountsBili) { '这个 profile 挂着 billion-context：2026-10 起挂 bili 也启用它（旧版安装曾按 bili 把它移除过就由此加回）' } else { '' })
+    $patchNotes += "$name : 已把 $pluginName 加进 dsh.profile.bundles$(if ($suffix) { " —— $suffix" })（原文件备份 $manifest.bak-adg-token-budget）"
   }
 }
 

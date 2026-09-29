@@ -9,7 +9,17 @@ last_reviewed: 2026-09-30
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 步数阶梯改为**第 10 步起、每 10 步一次、共 30 次**；提醒正文加一句**压缩期处置声明**
+## 2026-09-30（最新）— 安装逻辑：挂着 billion-context 的 profile **也一律启用** `dsh-adg-token-budget`（推翻 2026-09-28 的"让位"口径）
+
+- 依据（用户要求，原话）：「把安装时如果已安装billion-context的话就禁用掉dsh-adg-token-budget的逻辑改为仍然启用dsh-adg-token-budget」。推翻的是 §17.1 第 9 条那条政策 —— 当时"挂着 bili 的 profile 不启用这个 plugin"，理由是它按步数档位给同一批子代理下收敛提醒、与 bili 的压缩/nudge 是同类指令，两套会互相抢阈值。用户判断"重复"这一侧的代价可以接受：插件做的事 bili 不做（只按**步数**问一句"要不要收尾"，不碰上下文本身），而 2026-09-30 给提醒正文加的"**压缩（compaction）时把本段整条删除**"已经压掉了跨套提示的残留。**被推翻的只是"该不该让位"**，第 9 条写的"不要塞 `enabled: false` 覆盖行、要改就改 `dsh.profile.bundles`"这个**实现约束不变**。
+- `install.ps1` / `install.sh` 的 4c-1 分叉整段删除：所有 profile 从此走同一条路径 —— "确保 `dsh-adg-token-budget` 写在该 profile 的 `dsh.profile.bundles` 里"。旧版按 bili 把它移除过的（脚本当时留了清单备份 `package.json.bak-adg-token-budget`），重跑脚本会**把它加回去**；已选中且挂 bili 的只打一句"保持启用"。两份脚本都新增一条 `mountsBili`（`install.sh` 是 `mounts_bili="$(has_bili "$name")"`），**现在只用来选提示语**，不再进任何判断分支。
+- `tools/has-billion-context.mjs` 头注释与 `tools/AGENTS.md` 第 8 行改成同口径：这份判据是**单向**的，只决定该 profile 拿哪份味道（plain / bili），**不再**决定 `dsh-adg-token-budget` 启不启用。根 `AGENTS.md` 红线 11 尾段（"同一份判据的另一半"）整段改写为本轮口径，命令块与安装段注释同步。
+- 文档同步：根 `README.md`「与 billion-context 协同」节把"同一份判据的另一半：挂着 bili 的 profile 不启用…"整段换成「**第三处交界：`dsh-adg-token-budget` 在挂着 bili 的 profile 上照样启用**」（含推翻理由、加回机制、以及"实现仍然是'在不在 bundle 清单里'，**不是**塞 `enabled: true|false` 覆盖行"），tools 清单那行注释同步；`docs/evidence.md` 判据表行（第 39 行）改成"判据单向"、§17 节首问题陈述点名这条沿革、§17.1 第 9 条改标为历史口径（保留"为什么不用覆盖行"的理由并注明仍然成立）、**新增 §17.1 第 11 条**（三层：用户意图原话 / 实现 / 检验与未观测）、§17.2 ② 标 ~~作废~~ 换成"从旧版'已移除'状态加回清单后冷启动无副作用"、§18 的 2026-09-28 读数行加时效标注（该行记的是"4c 当时按 bili 移除"）。
+- **检验（临时 `DSH_HOME` 端到端三轮，不动真机；读数与逐字输出见 §17.1 第 11 条末段）**：临时根 `D:\dsh\.adg-scratch\home` 造出混装 —— `web` 的 `dsh.profile.bundles` 故意不含 `dsh-adg-token-budget`（模拟旧版按 bili 移除过）、`desktop` 含；`web/node_modules/billion-context/dsh.bundle.patch.yml` 在位（探测 `web=1` / `desktop=0`）。跑 `install.ps1 -SkipPackages`：第二轮（链接就位）exit **0**，逐字打出 `已把 dsh-adg-token-budget 加进 dsh.profile.bundles —— 这个 profile 挂着 billion-context：…（旧版安装曾按 bili 把它移除过就由此加回）`，备份文件逐字保留了移除前的清单 ⇒ **加回真的发生了**；第三轮（幂等）exit **0**，消息变成"保持启用"，`web` 清单稳定为 4 项。**关键负向断言：三轮里没有任何一轮把它从 `web` 移出**（旧脚本第二轮就会移除）。同时两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）` 说明味道那半没被动到。
+- 诚实边界：只跑了 Windows 的 `install.ps1`；**本机没有 `bash`**（`Get-Command bash` 为空）⇒ `install.sh` 的 4c-1 只是同步改写、**未执行**；临时根的 profile 是手工壳，**dsh 从未真的启动过它**。另外第一次跑临时根时 `install.ps1` 直接解析失败（`Unexpected token ')' …`、`The string is missing the terminator: '.`、满屏 mojibake）—— 根因是编辑工具**悄悄删掉了 UTF-8 BOM**（前三个字节变成 `23 20 E5`），补回 `EF BB BF` 后正常（红线 8 的现场复现）。
+- 未观测：**真机 `web` 上重跑 `install.*` 之后的效果**（要重跑脚本 + **重启 dsh**，然后 `list_bundles` 里有这条、日志新出一行 `activation: …`）；**两套提示同处一个 profile 会不会互相干扰**（属行为层，本轮没量）；**从旧版"已移除"状态加回清单后冷启动无副作用**（量法同 §8 对应行）。
+
+## 2026-09-30 — 步数阶梯改为**第 10 步起、每 10 步一次、共 30 次**；提醒正文加一句**压缩期处置声明**
 
 - 依据（用户要求）：① 插件默认阶梯从"每 5 步一档、5→280、共 56 档"改成**从第 10 步开始、每 10 步提示一次、共提示 30 次**（= `[10, 20, 30, …, 300]`）；② **在提醒正文里写明"压缩时忽略这条提醒"**。**同日按用户澄清改过口径**：用户的意思是"上下文到一定程度会触发压缩，压缩之后的文本里把这段提示词**整条删掉、不见踪影**，免得影响压缩后的上下文"—— 所以那句话不是"你自己忽略一份过期副本"，而是**在压缩发生时就要求把本段整条删除**（不写进摘要、不复述），并要求"若仍残留，那份副本已过期、直接忽略"兜底。先写成"残留副本已过期、直接忽略"，同一次改动内改成现在的措辞。
 - `plugin/dsh-adg-token-budget/src/config.js`：默认 `stepTiers` 换成 `[10, 20, …, 290, 300]`（30 档，仍是**一个间隔、不设变化**，I18 不变）；`MAX_STEP_TIERS` **保持 56**（它只是上限，不再等于默认阶梯长度：30 < 56 ⇒ 默认仍永不被自己的上限截断，而自定义列表的能力没有缩水；改小它等于顺手削掉一个能力，与本次要求无关）。对应的注释一并改写成"上限有余量"。
