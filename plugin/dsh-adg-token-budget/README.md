@@ -101,8 +101,9 @@ a tier fires at most once per residency epoch, and a checkpoint that could not b
 step was not entered, or the message could not be built) stays owed to the child on a later step.
 
 The default ladder is
-**5 / 10 / 15 / … / 280** — every 5 steps, 56 tiers, one interval and no widening. The
-cadence is flat by operator decision (2026-09-29): the checkpoint exists to keep the
+**10 / 20 / 30 / … / 300** — every 10 steps, 30 tiers, one interval and no widening. The
+cadence is flat by operator decision (2026-09-29: no widening at all; 2026-09-30: start at
+step 10, interval 10, 30 checkpoints): the checkpoint exists to keep the
 child on the shortest path to its goal, and a widening interval is exactly a licence to
 drift once a child is long. It is calibrated against the
 measured *distribution* of delegated children rather than their average, because the
@@ -117,22 +118,25 @@ average was the wrong anchor. Re-running `audit-steps.mjs` over the live session
 
 So a ladder anchored on the mean asks its first question after a quarter of the
 population has already finished, and 6 of 37 children are done inside 6 steps — which is
-why the flat ladder starts at step **5**, where the measured mass begins, and runs to
-step 280, past p90, because the tail is where a child walks longest unchecked (a
-329-step child passes all 56 tiers). **Coverage under the new ladder is not measured
-yet.** The rows below were measured under the two EARLIER ladders and are kept as the
-comparison that produced this one (the second row is the 14-tier ladder the flat one
-replaces):
+why the ladder has to start early, and the previous 56-tier ladder started at step 5. The
+current ladder starts at step **10** and runs to step 300 (past p90 and past the measured
+max): one ask per 10 steps, because the tail is where a child walks longest unchecked (a
+329-step child passes all 30 tiers before it is out of rungs). **Coverage under either
+flat ladder is not measured yet.** The rows below were measured under the two EARLIER
+ladders and are kept as the comparison that produced this one (the second row is the
+14-tier ladder the flat ones replace):
 
 | ladder | children reached | messages injected | child steps after the 1st checkpoint | steps after the last tier |
 | --- | --- | --- | --- | --- |
 | `[12, 24, 40]` | 30/37 | 71 | 79.5% | 872 |
 | `[4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]` | 34/37 | 214 | 92.6% | 49 |
 
-The literal reminder cost is what makes a dense ladder affordable: each message is
-~180 characters and is re-sent once per later step. Under the 14-tier ladder all 214
+The literal reminder cost is what makes a flat ladder affordable: each message was
+~180 characters **in the wording measured then** and is re-sent once per later step. (The
+built-in body is ~320 characters today — the shortest-path half and the 2026-09-30 expiry
+sentence are both new, and the full message is ~350 characters.) Under the 14-tier ladder all 214
 messages across the whole corpus added up to roughly **0.5M token-equivalents** of input
-against ~205M spent by those same children — about 0.25%. A flat 5-step ladder injects
+against ~205M spent by those same children — about 0.25%. A flat ladder injects
 more messages than that, and the figure has **not** been re-measured. The lever is the
 share of steps that run *after* a child has been asked whether it is done (92.6% under
 the 14-tier ladder).
@@ -145,7 +149,7 @@ intended rather than a leak: the resumed child has a new plan and a new chance t
 it inherits no state from the earlier epoch. The bounded-state guarantee is unaffected — the
 entry is created for the new epoch and released again on the next `subagent/end`.
 
-Five details exist specifically so that the checkpoints do not make answers
+five details exist specifically so that the checkpoints do not make answers
 worse:
 
 - **Every reminder is a choice, not an order.** The body says outright that it is
@@ -154,7 +158,7 @@ worse:
   decision to the task. The only thing it requires is that the child say which branch
   it picked. The suite pins each of those clauses, plus the negative: the body must not
   contain an order to stop exploring.
-  This is the property that makes a dense ladder safe. A checkpoint that said
+  This is the property that makes a flat ladder safe. A checkpoint that said
   "stop now" would trade tokens for a worse answer, which is the one trade this feature
   is not allowed to make.
 - **It does not prescribe what to report.** The converging branch only asks whether the
@@ -171,9 +175,19 @@ worse:
   long child on the fastest path instead of drifting. It constrains the **order** of the
   remaining work, never its scope — the same clause still forbids shrinking or rewriting
   the plan in response to the reminder, and the suite pins both halves together.
+- **A copy that survives compaction is stale.** Since 2026-09-30 the body ends by saying
+  that it is valid only for the step it was injected on: after the context is compacted
+  (compaction), if the reminder is still sitting in a summary or in a restatement of the
+  transcript, *that copy* has expired and must be **直接忽略** — while the sentence also
+  states that the reminder does apply on the step it was injected on, so the note cannot be
+  misread as "discard this whole message". This is an *expiry*, not a second
+  order — it takes neither branch away, and it is pinned by its own clauses. The reason is
+  mechanical: compaction folds this text into a summary (or repeats it verbatim), and a copy
+  that has lost the "that was step N" coordinate would otherwise be obeyed a second
+  time, at a moment nobody asked the question.
 - **The bodies do not escalate.** Only the last tier adds a sentence, and that
   sentence is information (the reminders stop here; if you continue, say how many
-  steps and what "done" means), not mounting pressure. A dense ladder whose messages
+  steps and what "done" means), not mounting pressure. A flat ladder whose messages
   got firmer every few steps would be a coercion engine; the unit test compares the
   body across tiers to keep it flat.
 - **`stepNudge: false` turns the whole feature off**: nothing is counted, no per-session
@@ -236,7 +250,7 @@ loading.
 | `enabled` | `true` | Master switch. `false` registers nothing at all (the activation line is still written). |
 | `presets` | `['adg']` | Preset names to govern. A bare string (`presets: adg`) reads as a one-name list. |
 | `stepNudge` | `true` | Whether the step checkpoints run. `false` turns the whole feature off: nothing is counted, no per-session state is allocated, and the step passes straight through without an injection. |
-| `stepTiers` | `[5, 10, 15, …, 275, 280]` (56 entries) | The step numbers a checkpoint fires on, ascending and de-duplicated. A bare number reads as a one-tier list. At most 56 tiers are honoured (`MAX_STEP_TIERS`, exactly this ladder's length, so the default is never truncated). An unusable value (`[]`, `'x'`, `[0]`) falls back to this default rather than silently switching the checkpoints off; use `stepNudge: false` for that. **Flat on purpose**: every 5 steps from step 5 through step 280, one interval, no widening (operator decision, 2026-09-29). See [The step checkpoints](#the-step-checkpoints) for the distribution this ladder is fitted to and why neither the average nor a widening tail was the right anchor. |
+| `stepTiers` | `[10, 20, 30, …, 290, 300]` (30 entries) | The step numbers a checkpoint fires on, ascending and de-duplicated. A bare number reads as a one-tier list. At most 56 tiers are honoured (`MAX_STEP_TIERS` — a cap, not this ladder's length: 30 < 56, so the default is never truncated). An unusable value (`[]`, `'x'`, `[0]`) falls back to this default rather than silently switching the checkpoints off; use `stepNudge: false` for that. **Flat on purpose**: every 10 steps from step 10 through step 300, one interval, no widening (operator decision: no widening 2026-09-29, start/interval/count 2026-09-30). See [The step checkpoints](#the-step-checkpoints) for the distribution this ladder is fitted to and why neither the average nor a widening tail was the right anchor. |
 | `stepText` | `null` | Optional wording for a step checkpoint, replacing the built-in body entirely — including the sentence the built-in adds on the last tier. Blank or unusable values fall back to the built-in body rather than leaving the checkpoint wordless; anything over 4000 characters is truncated. This key exists so that tuning the wording is a `config:` edit (hot-reloaded) instead of a new package plus a dsh restart. The activation line reports `stepText=builtin` or `stepText=custom`, which is how a mistyped key becomes visible. |
 | `dryRun` | `false` | Calibration switch for the checkpoints. Every due checkpoint logs exactly one line and injects nothing, and the step is delegated through `next()` as usual. Steps **are still counted** — that is the calibration — and **no tier is consumed**, so arming the plugin afterwards still delivers that checkpoint. |
 | `logFile` | `null` | Absolute path; when set, the activation line plus one line per decision *event* is appended (see below). A relative path disables file logging with a warning. |
@@ -252,7 +266,7 @@ stays small even for a child that runs hundreds of steps. The complete list is:
 
 | Event | Line |
 | --- | --- |
-| load | `activation: active createUserMessage=<strategy> presets=[adg] stepNudge=true stepTiers=[5, 10, 15, …, 280] stepText=builtin\|custom dryRun=false logFile='…'` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible. **A stale line** — one carrying `budgetTokens=`, `softThreshold=`, `softRatio=`, `cacheReadWeight=`, `softNudge=` or `hardDryRun=`, or missing `stepText=` — was written by an older build still resident in the process, i.e. the restart has not happened yet |
+| load | `activation: active createUserMessage=<strategy> presets=[adg] stepNudge=true stepTiers=[10, 20, 30, …, 300] stepText=builtin\|custom dryRun=false logFile='…'` — written on **every** `apply`, including `activation: inactive (enabled: false)`, so "the host loaded this plugin" is never invisible. **A stale line** — one carrying `budgetTokens=`, `softThreshold=`, `softRatio=`, `cacheReadWeight=`, `softNudge=` or `hardDryRun=`, or missing `stepText=` — was written by an older build still resident in the process, i.e. the restart has not happened yet |
 | load | a registration note (`registration skipped: this context already applied the plugin`, `warning: N registration(s) are already active …`) |
 | step | `step stage: nudged tier=<n>/<N> step=<S> label=…` — at most once per tier per residency epoch |
 | step | `step stage (no nudge injected: decision kind=…) …` or `step stage (no nudge injected: nudge construction failed) …` — the tier stays unconsumed, so a later step may still deliver it |
@@ -302,7 +316,7 @@ Concretely:
   child allocates its counter, because a step cannot be counted without somewhere to count
   it; with `stepNudge: false` no entry is ever allocated, and a passing step allocates
   nothing. `firedTiers` holds one index per tier already fired, so it is bounded by
-  `stepTiers` (at most `MAX_STEP_TIERS` = 56 entries — the default ladder's own length). The whole entry is released on
+  `stepTiers` (at most `MAX_STEP_TIERS` = 56 entries; the default ladder uses 30 of them). The whole entry is released on
   `subagent/end` and cleared wholesale by a `ctx.effect` disposer, so a long-lived host
   cannot accumulate children — only one small object per *concurrently running* child.
 
@@ -1022,8 +1036,10 @@ exactly once per tier on the tier step, per child, counting only entered steps, 
 body flat across tiers, adding its closing sentence only on the last tier, and logging every
 branch; the choice wording itself (optional, may be disregarded, both branches named,
 decision requested, the shortest-path next step plus its one-sentence justification on the
-continue branch, no prescription of what to report, no order to stop exploring); the flat
-ladder itself (first tier = 5, last tier = 280, **every** gap = 5, tier count = the cap);
+continue branch, the expiry note for a copy that survives compaction, no prescription of what
+to report, no order to stop exploring); the flat
+ladder itself (first tier = 10, last tier = 300, **every** gap = 10, 30 tiers, within the cap
+untruncated);
 a configured `stepText` reaching the
 child and replacing the built-in body entirely; the activation line reporting
 `stepText=builtin|custom`; `dryRun` logging every due checkpoint while consuming no tier and
