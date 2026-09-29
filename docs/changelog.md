@@ -9,10 +9,20 @@ last_reviewed: 2026-09-30
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 权限闸门补上**捕获时刻**：新权限只对"切换之后新开的子代理"生效
+## 2026-09-30（最新）— 用户复核：今天两处新增提示词按"只留判据"再精简（−121 字符）
+
+- 依据（用户复核，原话）：「你前面那个子代理到输出上限的，以及这个新权限对新子代理生效的提示词，有必要这么长吗？」
+- 规则 7 的识别信号片段 **218 → 143 字符（−75）**：删掉 `Background subagent <id>` 这截样板前缀（只留唯一的判据 `ran out of room before it finished.`）、子代理侧视角那句「已达到输出 token 上限，回答被截断，已有输出保留在对话中」（调度者看不到、也不需要），"被截断不等于被终止"→"被截断≠被终止"；**负面清单保留**（`finished…`／`failed…`／`declined…`／`was stopped…` 都不是截断），否则正常收尾会被误判成截断。现逐字：「你那边的信号是结算通知里的 `ran out of room before it finished.`（只有这一句是截断：`finished…`／`failed…`／`declined…`／`was stopped…` 都不是）—— 被截断≠被终止，**回一条继续消息它就能接着做**：」
+- 规则 11 的捕获时刻片段 **154 → 108 字符（−46）**：删掉与括号里重复的"权限在委派那一刻就被钉进子代理自己的会话"，以及同一事实的第二遍复述"它自己也升不了权，你事后也改不了它"；判据、结论（必须新建委派）与顶注出处指针都留着。现逐字：「**新权限只对"切换之后新开的子代理"生效**（委派那一刻就定死了）：切换前已派出的那个**拿不到**，所以用户切完必须**新建委派** —— 把原先那个停掉、重派一个，别等原地那个突然能用（依据见顶注第 5 条）。」
+- 口径：`#` 顶注与文档层放源码出处和逐字引用（顶注是 YAML 注释、**永不进入模型上下文**），persona 正文只留可执行判据 —— 本条的改动依据就是这条口径。
+- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **8126 → 8005**（**−121 / −1.5%**，按 ~4 字符/token ≈ **−30 token/步**）；九个专家 persona 与插件正文**未动**。今天两轮对 persona 的净增因此回到 **7972 → 8005（+33）**。
+- 检验：`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，仍在第 524 行 `agent-file` 与第 738 行 `agent-general`，即条件性注册的 `read_image`）；`bundle/adg-plain/cordis.patch.yml` **99463 → 99192 字节** + `check-bundle-flavor` plain exit 0；`bundle/adg-preset/cordis.patch.yml` **101487 → 101216 字节** + flavor bili exit 0；插件 `node --test --test-isolation=none test` **54/54/0**；`browser` **36/36/0**；`install.ps1` 前三个字节 `EF BB BF`（30698 字节）；精简后的措辞两份产物各命中一次（plain 316/320 行、bili 323/327 行）。
+- 未观测：精简后的措辞是否仍然让调度者稳定认出这句开场白（行为层；与上一轮同一项，本机 6 条 `max-tokens` 截断至今 **0 次**续写）。
+
+## 2026-09-30 — 权限闸门补上**捕获时刻**：新权限只对"切换之后新开的子代理"生效
 
 - 依据（用户要求，原话）：「在调度代理中，目前已有提示如果需要完全权限需要让用户切过去的提问，但还要明确提示新权限只能在新开的子代理中生效。」
-- `preset/agent.cordis.yml` 规则 11 末尾追加一句（既有判定、三选项、分支与 `ask_user_question` 动作**一字未动**）：「**新权限只对"切换之后新开的子代理"生效**：权限在**委派那一刻**就被钉进子代理自己的会话 —— 切换前已派出的那个**拿不到**新权限，它自己也升不了权，你事后也改不了它。所以用户切完之后必须**新建委派**：浏览器任务就是把原先那个停掉、重派一个，别等原地那个突然能用（源码依据见顶注第 5 条）。」顶注第 5 条同步补 4 行出处（2026-09-30 补记）。
+- `preset/agent.cordis.yml` 规则 11 末尾追加一句（既有判定、三选项、分支与 `ask_user_question` 动作**一字未动**）：「**新权限只对"切换之后新开的子代理"生效**：权限在**委派那一刻**就被钉进子代理自己的会话 —— 切换前已派出的那个**拿不到**新权限，它自己也升不了权，你事后也改不了它。所以用户切完之后必须**新建委派**：浏览器任务就是把原先那个停掉、重派一个，别等原地那个突然能用（源码依据见顶注第 5 条）。」顶注第 5 条同步补 4 行出处（2026-09-30 补记）。（这一句的逐字措辞已在同日"用户复核"条里按"只留判据"再精简，**以该条为准**。）
 - 机制（源码级事实；`docs/evidence.md` §11 的「与本节相关的源码级事实」块新增**第四问**）：`captureDelegatedPolicyOverrides()`（`@deepseek-ai/dsh-subagent/lib/index.js:524-541`）在子代理**首次 await 之前**同步取当时的父会话状态，并在子会话尚未发布的窗口里把它写成 `source: 'delegation'` 的三条子会话事件（`:552-562` 的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；该函数注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 父级之后切换权限**改变不了已经在跑的子代理**，要让它用上新权限只能**新建委派**。README 那节的"三问三答"因此扩成**四问四答**（标题、表格新增一行、唯一路径那段末句、处置第 1 条各补一句）。
 - 文档同步：`preset/design.md` I11（末尾标 **2026-09-30 扩（用户要求）**：调度 persona 那半还必须写明这条，缺这句＝I11 的那半不完整）与非功能红线段的"源码级事实三问"→**四问**；`preset/testing-guide.md` I11 L1 行（闸门两半的描述、辅助检索模式加第四关键字 `\|新开的子代理`、"缺任一组即违例"改成点名"应在**规则 11 与顶注第 5 条各命中一次**"）；根 `README.md`。
 - 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7972 → 8126**（**+154 / +1.9%**，按 ~4 字符/token ≈ **+38 token/步**）；九个专家 persona 与插件正文**未动**。首稿把源码路径与英文注释原文也塞进 persona（**+316 字符**），复核后按"顶注放出处、persona 只留判据"的口径精简到 +154。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与前一轮同一批）。
@@ -22,7 +32,7 @@ last_reviewed: 2026-09-30
 ## 2026-09-30 — 截断接续补上**父级侧的触发信号**：规则 7 加一句"结算通知的开场白就是被截断的判据"
 
 - 依据（用户要求，原话）：「如果子代理因为达到输出token上限被截断，向其发继续消息可以让其接着工作。例：当收到这样的系统提示时代表子代理因为输出token上限被截断了：Background subagent 926daaa2-… ran out of room before it finished.It left no closing message.」并明确要求"用**最简语言**写入调度代理的提示词"。
-- `preset/agent.cordis.yml` 规则 7 既有的那半条（"被输出上限截断时不要换人、要就地接着写"）只补**一句识别信号**：新增片段逐字为「你那边的信号是结算通知的开头那句 `Background subagent <id> ran out of room before it finished.`（它自己看到的是「已达到输出 token 上限，回答被截断，已有输出保留在对话中」；开场是 `finished…` / `failed…` / `declined…` / `was stopped…` 的都不是截断）—— 被截断不等于被终止，**回一条继续消息它就能接着做**」。`send_message` 的既定动作、"不要重派新专家"、"整段驻留期已厚则写完这一截再换人"**都不动**；顶注第 15 条同步记下这句开场白的源码出处。
+- `preset/agent.cordis.yml` 规则 7 既有的那半条（"被输出上限截断时不要换人、要就地接着写"）只补**一句识别信号**：新增片段逐字为「你那边的信号是结算通知的开头那句 `Background subagent <id> ran out of room before it finished.`（它自己看到的是「已达到输出 token 上限，回答被截断，已有输出保留在对话中」；开场是 `finished…` / `failed…` / `declined…` / `was stopped…` 的都不是截断）—— 被截断不等于被终止，**回一条继续消息它就能接着做**」。`send_message` 的既定动作、"不要重派新专家"、"整段驻留期已厚则写完这一截再换人"**都不动**；顶注第 15 条同步记下这句开场白的源码出处。（这一段的逐字措辞已在同日"用户复核"条里按"只留判据"再精简，**以该条为准**。）
 - 机制（源码级事实；`docs/evidence.md` 新增 §21.1）：后台子代理结算时运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，开场白由 `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支 —— `completed` / `aborted` / **`max-tokens`** / `refusal` / `error` 各一句，**只有 `max-tokens` 是 `ran out of room before it finished.`**；`:85-105` 的 `createSettlementMessage()` 在没有非空收尾文本时补一句 `It left no closing message.`（`@deepseek-ai/dsh-subagent/README.md:150` 逐字记载；运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ 用户给的例子正是"被截断且没留下收尾文本"这一态。**被截断 ≠ 被终止**，`resume({ resumeSessionId: childId })` 那条路照旧可用。
 - 文档同步：`preset/design.md` I15 ②（恢复那半）、`preset/testing-guide.md` N12（② 里写明父级侧信号 + 辅助检索模式加 `ran out of room before it finished`、判违例加"缺这半"）、根 `README.md` 手段表"交付形态 + 截断接续"行（标题与三处说明）与 persona 体积账。
 - 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7814 → 7972**（**+158 / +2.0%**，按 ~4 字符/token ≈ **+40 token/步**）；九个专家 persona 与插件正文**未动**。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与改动前同一批）。
