@@ -62,12 +62,13 @@ cd plugin/dsh-adg-token-budget && node --test test
 | **I9** 禁止未知名让整行挂载失败 | `normalizeConfig ignores the retired token-budget keys`；`normalizeConfig fills exactly the surviving keys from defaults for unusable input`；`the token-budget helpers are gone from budget.js`；`the module exposes the loader-facing shape, and no retired export` | 单测 |
 | **I10** 禁止提醒变成没有正文的空话 | `normalizeConfig reads a custom step body and refuses to be left wordless`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total` | 单测 |
 | **I11** 禁止 `stepTiers` 被清空后静默关掉功能 | `unusable step tiers fall back to the defaults, not to "off"` | 单测；变异 **M12** |
-| **I12** 阶数上限 16、`stepText` 上限 4000 字符（截断非拒绝） | `normalizeConfig bounds how many tiers it will honour`；`normalizeConfig reads a custom step body and refuses to be left wordless`；`the default ladder is early and dense, and within the tier cap` | 单测；变异 **M16**（不再截断超长 `stepText`） |
+| **I12** 阶数上限 56、`stepText` 上限 4000 字符（截断非拒绝） | `normalizeConfig bounds how many tiers it will honour`；`normalizeConfig reads a custom step body and refuses to be left wordless`；`the default ladder is a flat 5-step cadence through step 280, and within the tier cap`（同时断言档数 = 56 = 上限，所以默认阶梯**永远**不会被自己的上限截断） | 单测；变异 **M16**（不再截断超长 `stepText`） |
 | **I13** 禁止相对路径 `logFile` 静默写文件 | **无单测断言**：`a throwing logger or an unwritable logFile cannot break apply` 只覆盖"日志不可写"（目录当文件），不覆盖"相对路径被关闭"；`normalizeConfig keeps an unusable logFile out of the way` 只覆盖空白/非字符串回落 | 人工 review（见第 5 节）；变异表中亦无对应项。真机实测（2026-09-25 复核，见 `docs/evidence.md` §9）：**矩阵里没有"相对路径被写入"的痕迹** —— 属于"负面证据"，只说明没发生过，不构成覆盖 |
-| **I14** 禁止正文被读成停止指令 | `the built-in checkpoint wording is unchanged`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total`（含 `doesNotMatch(/立即停止/)`） | 单测；变异 **M13**（把那句"可以直接无视"反过来写） |
+| **I14** 禁止正文被读成停止指令 | `the built-in checkpoint wording is pinned literally`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total`（含 `doesNotMatch(/立即停止/)`）。**2026-09-29 追加**：同一用例还钉住"继续"分支必须含 `通往目标的最短路径上的那一步` 与 `为什么最短`，且必须**同时**保留 `不要为了回应它而缩减或改写计划`（最短路径不得被读成"少做几项验证"） | 单测；变异 **M13**（把那句"可以直接无视"反过来写） |
 | **I15** 禁止各档正文递进 | `stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total`；`a checkpoint injects its reminder on the tier step, once per tier`（只有最后一档带尾句） | 单测；变异 **M11**（去掉最后一档的尾句） |
 | **I16** 禁止自定义 `stepText` 再被追加内置尾句 | `a configured stepText is what actually reaches the child`；`stepNudgeText offers a choice, marks the last tier, takes a custom body, and is total` | 单测；变异 **M15** |
 | **I17** 禁止把注入消息的来源写回已废弃的 `{kind:'plugin', plugin}`（v4 在持久化写入路径上拒它，整轮失败） | `the reminder source passes the session format v4 admission rule`（两条构造路径 + 规则本身 + 旧包装的 `plugin` 属性必须消失）；`localCreateUserMessage matches createUserMessage output shape`；`the running profile from ctx.baseUrl is the first createUserMessage anchor`；`createNudgeFactory always yields a usable factory`；`a checkpoint injects its reminder on the tier step, once per tier` | 单测；变异 **M18**（被 4 条断言抓住）；**真机实测**（2026-09-28 事故 + 用装好的宿主 `assertV4RowAdmission` 复测，见 `docs/evidence.md` §15） |
+| **I18** 阶梯不设间隔变化（每 5 步一档、第 5 步起、第 280 步止、56 档） | `the default ladder is a flat 5-step cadence through step 280, and within the tier cap`（首档 = 5、末档 = 280、**每个**相邻间隔恒 = 5、档数 = 56） | 单测。**注意变异的形状**：改成"首档 5 + 间隔恒 5"之外的任何阶梯（含恢复几何拉开）都会被这条抓住 |
 
 补充（I1–I17 之外、但属于本模块对外契约的检查）：
 
@@ -287,11 +288,11 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 
 | 条目 | 原依据的记载 | 本次复核后的状态 |
 |---|---|---|
-| 第一档之外的档位是否真的注入过 | 本目录 `README.md` 与仓库根 `README.md` 都记载"从未观测"（真实注入只发生在旧阶梯） | **真机实测（2026-09-25 复核，见 `docs/evidence.md` §9）**：新阶梯下第一档之外的多个档位各自触发过，且档位越靠后触发次数越少 |
-| 现默认阶梯下是否有真实注入 | 同上，记为"新阶梯下的注入还没观测过" | **真机实测（同上）**：现默认阶梯下已有大量真实注入，分布在多个不同子代理上；**人向手册与插件 README 仍记未观测，两处冲突已登记待人类裁决** |
+| 第一档之外的档位是否真的注入过 | 本目录 `README.md` 与仓库根 `README.md` 都记载"从未观测"（真实注入只发生在旧阶梯） | **真机实测（2026-09-25 复核，见 `docs/evidence.md` §9）**：**当时的 14 档阶梯**（`[4, 8, …, 280]`）下第一档之外的多个档位各自触发过，且档位越靠后触发次数越少。**注意时效**：2026-09-29 起默认阶梯换成 **56 档平坦阶梯**（每 5 步一档、5→280），这条观测**不覆盖**新阶梯 |
+| 现默认阶梯下是否有真实注入 | 同上，记为"新阶梯下的注入还没观测过" | **§9 那次复核时成立（真机实测）**：当时**默认的 14 档**阶梯下已有大量真实注入，分布在多个不同子代理上。**2026-09-29 换阶梯之后重新变成未观测** —— 56 档平坦阶梯下一条注入记录都还没有（阶梯是 bundle 行里的 `config:`，改动要重启 dsh 才生效） |
 | 恢复的子代理被再次提醒 | 同上，记为"仍未观测" | **仍未观测，原记载成立**：§9 的活日志显示同一 label 先 `settled:`、后从第一档重新计数（=驻留期重置机制在真机上执行），但"该子代理是被恢复的"无从判定（`subagent/end` 对两种情形发同一事件）。**机制已观测、事实未观测**，不要合并成一句 |
 | `dry-run step stage: …` 这类校准行是否在本机出现过 | 记为"从来没出现过" | **仍未观测，原记载成立**（§9 复核该前缀行数为 0：本机从未停留在校准态）。真机实测形态是**计数与判定枚举**，不是同一条 dry-run 行 |
-| **更早更密的阶梯是否让子代理更快收敛** | 记为"完全未观测" | **仍未观测**（不许升级）。量法见 `INSTALL.md` 第 4 节末 |
+| **现行"每 5 步一档、不设间隔变化"的平坦阶梯是否让子代理更快收敛，以及"通向目标的最短路径"那句自述是否真的把它留在最快路径上** | 记为"完全未观测" | **仍未观测**（不许升级）。量法见 `INSTALL.md` 第 4 节末；**2026-09-29 追加两个观测量**：① 子代理在选"继续"之后的下一条消息里是否真的写出了"为什么这一步最短"（没有 = 提示没被当成决策输入）② 换阶梯前后的步数分布（p50/p75/p90，比分位数不比均值）与中途改道次数 |
 | 阶梯之外的步数是否触发/消费档位 | 记为"任意一档之外的 tier 从未观测" | **真机实测（同上）**：§9 的注入分布只落在配置的档位上；配合**源码级事实**（不命中档位的步不写任何决策行，见 `a step below the first tier passes through and is counted`） |
 | 改目录名能否强制重新 `import`（绕过热重载缓存） | 未观测 | **仍未观测**（不许升级） |
 
@@ -299,7 +300,7 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
 
 以下事实**没有任何观测记录**，属于"禁止的假设"：
 
-- **更早更密的阶梯是否让子代理更快收敛**（量法见 `INSTALL.md` 第 4 节末；比 p50/p75/p90，不比均值）；
+- **现行平坦阶梯（每 5 步一档、5→280）是否让子代理更快收敛、以及"最短路径"自述是否真的把它留在最快路径上**（量法见 `INSTALL.md` 第 4 节末；比 p50/p75/p90，不比均值）。**同一条也覆盖"新阶梯下有没有注入过"**：56 档是 2026-09-29 才写进 bundle 行的，重启前不会生效，生效后也需要真实 Adg 会话才有记录；
 - `dry-run step stage: …` 这类校准行是否在本机出现过（本机从未停留在校准态）；
 - **改目录名能否强制重新 `import`**（热重载不重新 import 已加载模块这条机制本身有真机实测支持，
   但"改名目录可以绕过"这一对策从未验证过。现在的落点是 `$DSH_HOME/bundles/dsh-adg-token-budget/`

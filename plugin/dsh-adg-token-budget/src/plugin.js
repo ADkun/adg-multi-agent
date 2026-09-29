@@ -153,7 +153,7 @@ export function resetRegistrationStateForTests() {
  * at 14 or fewer) says most children are shorter than the average — which is
  * exactly the case for asking the question early. But an early checkpoint can
  * only be safe if it cannot push a child into under-delivering, so the body
- * does three things and no more:
+ * does four things and no more:
  *
  * 1. says outright that it is optional and may be ignored, so continuing costs
  *    the child nothing;
@@ -162,19 +162,29 @@ export function resetRegistrationStateForTests() {
  *    choice to the task;
  * 3. asks for one sentence naming the choice, which is the only reason the
  *    message can change anything at all: it forces a decision the child would
- *    otherwise not stop to make.
+ *    otherwise not stop to make;
+ * 4. on the continue branch, asks for the *next* step to be the one on the
+ *    shortest path to the goal, plus one sentence saying why it is the
+ *    shortest. This is the keep-it-on-the-fast-path half (operator request,
+ *    2026-09-29): the child still decides what to do, but it has to pick the
+ *    step that makes the goal deliverable soonest rather than the handy,
+ *    cheapest-looking or busiest-looking one — and say which it picked.
  *
  * What it must never do is trade the result for tokens, so the body does not
  * prescribe *what* to report: the first branch only asks whether the goal can
  * already be answered and, if so, to wrap up. Which parts were delivered and
  * which were left unverified is the child's call — it is the only one that
- * knows. The suite pins all three properties, and the wording is overridable
- * through `stepText` for operators who want to tune it without a new package.
+ * knows. Item 4 constrains the *order* of the remaining work, never its scope:
+ * the same line still says not to shrink or rewrite the plan in response to the
+ * reminder, and "shortest path to the goal" is defined as what makes the goal
+ * deliverable soonest, not as what is easiest. The suite pins all four
+ * properties, and the wording is overridable through `stepText` for operators
+ * who want to tune it without a new package.
  */
 export const STEP_CHOICE_BODY = [
   '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
   '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
-  '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
+  '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。继续时把下一步选成**通往目标的最短路径上的那一步**（哪一步最快让目标可交付；不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
   '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
 ].join('\n')
 

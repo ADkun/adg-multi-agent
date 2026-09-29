@@ -235,7 +235,7 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
    （第 3 节），**不是** bundle 层自己被 watch。
 2. `01:57:12` / `01:58:46` —— 临时在 profile 层**加**、再**删**一条 `- id: adg-token-budget`
    覆盖行（`stepTiers: [1, 2]`）之后各写的一行 ⇒ **实测：profile 覆盖行热重载、不用重启**；
-   `01:58:46` 那行已回到 14 档出厂形状。（`01:59:20` 还有一行：同一层把 `presets` 临时写成
+   `01:58:46` 那行已回到**当时的**出厂形状（14 档；2026-09-29 起出厂是 56 档平坦阶梯）。（`01:59:20` 还有一行：同一层把 `presets` 临时写成
    `[cordis]`、`stepTiers` 仍是 `[1, 2]`，为的是走一条真实注入路径 —— 原因见上面"行为"那行。）
 3. `01:59:25` + `01:59:31` + `01:59:43` —— 一次真实委派 ⇒ **实测：迁移后的行确实计数并注入了
    检查点**（`tier=1/2 step=1`、`tier=2/2 step=2`），收尾 `settled: released session state`。
@@ -265,7 +265,7 @@ Get-ChildItem src\*.js | ForEach-Object { Get-Content -LiteralPath $_.FullName }
    （第 5 节第 2 步把它与 `enabled: false` 的区别写清）。
 6. `02:31:45` + `02:32:13`（同日更晚，**残留手贴行的实测**）—— 在 `C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml`
    末尾追加一条同 id 的 `- insert:` 手贴行（`config:` 只写 `enabled: true` / `presets: ['adg']` /
-   `stepNudge: true` / **`dryRun: true`** / 出厂 14 档 `stepTiers` / `logFile: !!js dshHomePath('adg-token-budget.log')`），
+   `stepNudge: true` / **`dryRun: true`** / 出厂 `stepTiers`（那次是 14 档） / `logFile: !!js dshHomePath('adg-token-budget.log')`），
    等热重载，再删掉。**三件事都要按真机实测档引用**（第二行是节引，`…` 处与上一行同段，只有时间戳与
    `dryRun` 不同）：
 
@@ -309,9 +309,12 @@ token 两档的旧构建，插件再也不会写出这类行；保留它们是�
 
 **哪些还没观测过 —— 说清楚：**
 
-- **默认 14 档阶梯下的注入还没观测过。** 三次真实注入都是旧的三档阶梯下的 `tier=1/3 step=12`；
-  迁移后那两条是 `[1, 2]` 临时覆盖行下的 `tier=n/2`（上面第 3 条），不是这 14 档；
-  `[4, 8, …, 280]` 这 14 档下还没有一次注入记录，`dry-run step stage: would nudge` 这类行
+- **现行 56 档平坦阶梯（每 5 步一档、第 5 步到第 280 步）下的注入还没观测过。** 三次真实注入都是旧的三档
+  阶梯下的 `tier=1/3 step=12`；迁移后那两条是 `[1, 2]` 临时覆盖行下的 `tier=n/2`（上面第 3 条）。
+  **那之后的 14 档阶梯（`[4, 8, …, 280]`）确实注入过**（2026-09-25 复核：覆盖 tier 1/14–11/14，见
+  `testing-guide.md` 的「观测状态对照表」与 `docs/evidence.md` §9）；2026-09-29 换成的 **56 档平坦阶梯
+  一条注入记录都还没有** —— 它写在 bundle 行的 `config:` 里，要重启 dsh 才生效。
+  `dry-run step stage: would nudge` 这类行
   在本机也**从来没出现过**（这台机器从"没有这个 stage"直接到"已武装"，中间没停过）。
   （旧版"步数检查点与 token 软档同一步的折叠路径"已经随软档一起删除，不再是待观测项。）
 - **迁移后 `presets: ['adg']` 对真实 Adg 专家子代理的注入：未观测。** 上面第 3 条走的是

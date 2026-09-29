@@ -22,9 +22,12 @@
  *
  * A tier list is operator-authored, so its length is a bound on per-session
  * memory (`firedTiers` holds one index per tier) and on the work done per step.
- * Sixteen checkpoints in one child session is already far past useful.
+ * The value now tracks the default ladder exactly: 56 tiers, because the
+ * operator asked for a flat every-5-steps cadence from step 5 through step 280
+ * (2026-09-29) instead of the old early-and-geometric one. A longer custom list
+ * is truncated rather than rejected; a shorter one is the operator's own call.
  */
-export const MAX_STEP_TIERS = 16
+export const MAX_STEP_TIERS = 56
 
 /**
  * The longest custom `stepText` the plugin will inject.
@@ -55,15 +58,25 @@ export const DEFAULT_CONFIG = Object.freeze({
    * The step numbers a checkpoint fires on, ascending. An entered step is
    * counted as the child's Nth step, and a tier of N fires on that step.
    *
-   * Early and dense on purpose. The measured child distribution (37 delegated
-   * sessions) is min=1 p10=6 p25=14 median=39 p75=61 p90=103 max=329: most
-   * delegations are far shorter than the mean, so a ladder anchored on the
-   * average asks the question too late. These fire every 4–6 steps through step
-   * 24, then widen geometrically so a runaway keeps getting checked without
-   * every long child being interrupted on every step. A reminder costs a few
-   * dozen tokens per later step, which is why frequency is affordable here.
+   * Flat on purpose since 2026-09-29: every 5 steps, from step 5 through step
+   * 280 -- one interval, no widening. The earlier ladder was early-and-dense then
+   * geometric (every 4-6 steps through step 24, then about x1.3), and the
+   * operator replaced it because widening is exactly a licence to drift once a
+   * child is long: the measured distribution (37 delegated sessions) is min=1
+   * p10=6 p25=14 median=39 p75=61 p90=103 max=329, and the far tail is where a
+   * child walks longest without being asked whether it is still on the shortest
+   * path to the goal. A reminder costs a few dozen tokens per later step, which
+   * is why a constant interval is affordable; 56 identical checkpoints for one
+   * runaway is the operator's explicit trade, not a derived optimum.
    */
-  stepTiers: Object.freeze([4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]),
+  stepTiers: Object.freeze([
+    5, 10, 15, 20, 25, 30, 35, 40, 45, 50,
+    55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
+    105, 110, 115, 120, 125, 130, 135, 140, 145, 150,
+    155, 160, 165, 170, 175, 180, 185, 190, 195, 200,
+    205, 210, 215, 220, 225, 230, 235, 240, 245, 250,
+    255, 260, 265, 270, 275, 280,
+  ]),
   /**
    * The wording of a step checkpoint, overriding the built-in body.
    *

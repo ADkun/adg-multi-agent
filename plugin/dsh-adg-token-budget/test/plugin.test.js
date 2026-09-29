@@ -381,19 +381,23 @@ test('normalizeConfig reads the step switches and only booleans count', () => {
   assert.equal(normalizeConfig({ enabled: 'yes' }).enabled, true)
 })
 
-test('the default ladder is early and dense, and within the tier cap', () => {
+test('the default ladder is a flat 5-step cadence through step 280, and within the tier cap', () => {
   const tiers = [...DEFAULT_CONFIG.stepTiers]
-  assert.deepEqual(tiers, [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280])
+  const expected = Array.from({ length: 56 }, (_, index) => (index + 1) * 5)
+  assert.deepEqual(tiers, expected)
   assert.ok(tiers.length <= MAX_STEP_TIERS)
+  assert.equal(MAX_STEP_TIERS, tiers.length, 'the cap is exactly the default ladder length')
   assert.deepEqual([...tiers].sort((left, right) => left - right), tiers, 'ascending')
   assert.equal(new Set(tiers).size, tiers.length, 'no duplicates')
-  // Early gaps stay small through step 24, which is where the measured mass is;
-  // the tail widens so a runaway keeps getting checked without a reminder every
-  // single step.
-  for (let index = 1; index < 5; index += 1) {
-    assert.ok(tiers[index] - tiers[index - 1] <= 6, `gap ${index} is ${tiers[index] - tiers[index - 1]}`)
+  // Operator decision (2026-09-29): one interval, no widening. The checkpoint
+  // asks about the shortest path for the whole life of a long child (measured
+  // p90 = 103 steps, max = 329) instead of widening its way to near-silence
+  // exactly when a child has been walking longest.
+  assert.equal(tiers[0], 5, 'the first checkpoint is step 5')
+  assert.equal(tiers[tiers.length - 1], 280, 'the last checkpoint is step 280')
+  for (let index = 1; index < tiers.length; index += 1) {
+    assert.equal(tiers[index] - tiers[index - 1], 5, `gap ${index} is ${tiers[index] - tiers[index - 1]}`)
   }
-  assert.ok(tiers[tiers.length - 1] - tiers[tiers.length - 2] > 6)
 })
 
 test('normalizeConfig reads a custom step body and refuses to be left wordless', () => {
@@ -1056,14 +1060,15 @@ test('the listeners are registered globally and exactly once', () => {
 // src/plugin.js — the checkpoint wording is part of the behaviour
 // ---------------------------------------------------------------------------
 
-test('the built-in checkpoint wording is unchanged', () => {
-  // The wording is what makes an early, dense ladder safe: an optional,
-  // symmetric choice the child may disregard. It is pinned literally so a
-  // refactor cannot quietly turn it into an order.
+test('the built-in checkpoint wording is pinned literally', () => {
+  // The wording is what makes a dense ladder safe: an optional, symmetric
+  // choice the child may disregard, plus the shortest-path question the operator
+  // asked for on the continue branch. It is pinned literally so a refactor
+  // cannot quietly turn it into an order or drop that question.
   assert.equal(STEP_CHOICE_BODY, [
     '这是一条**可选**提醒，不是停止指令。请你自己判断，二选一：',
     '- **如果现有产出已经能回答委派目标，就收尾汇报。**',
-    '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。',
+    '- **继续**：如果确实还有必须做完的工作，就继续做，**直接无视这条提醒**，不要为了回应它而缩减或改写计划。继续时把下一步选成**通往目标的最短路径上的那一步**（哪一步最快让目标可交付；不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短。',
     '选哪个由任务本身决定，不是由这条提醒决定。请在下一条消息开头用一句话说明你的选择，然后按你的选择继续。',
   ].join('\n'))
   assert.equal(STEP_LAST_TAIL, [
@@ -1112,6 +1117,15 @@ test('stepNudgeText offers a choice, marks the last tier, takes a custom body, a
   // which were left unverified is the child's call, not the checkpoint's.
   assert.doesNotMatch(STEP_CHOICE_BODY, /没有验证|交付了什么|哪些部分/)
   assert.match(STEP_CHOICE_BODY, /用一句话说明你的选择/)
+  // The continue branch must ask for the shortest-path next step *and* for the
+  // one sentence saying why it is the shortest — that sentence is the whole
+  // mechanism: it forces the child to compare candidate steps once, which is
+  // what keeps it on the fastest path to the goal.
+  assert.match(STEP_CHOICE_BODY, /通往目标的最短路径上的那一步/)
+  assert.match(STEP_CHOICE_BODY, /为什么最短/)
+  // ...and it must not become a licence to cut the goal short: the same line
+  // still forbids shrinking or rewriting the plan in response to the reminder.
+  assert.match(STEP_CHOICE_BODY, /不要为了回应它而缩减或改写计划/)
   // It must not read as an order to stop exploring: "继续" has to be a real
   // option a child can take without penalty.
   assert.doesNotMatch(STEP_CHOICE_BODY, /立即停止/)
