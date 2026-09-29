@@ -168,11 +168,29 @@
 #      执行完这一截之后换人"**管的是*上下文量*（会话虽被持久化、恢复时从头重建，但每个字都会在
 #      余下每一步重新计费，长驻留期已经变成账单）；**"被截断时就地续写、不换人"**管的是*单轮的
 #      截断事件*（换人等于丢掉前半段）。二者看的是不同的量，不是互相推翻。代价 **+1266 字符**：
-#      `prefix` 正文（`|-` 之后的正文行、不含换行）实测 7736 → **9002**（≈316 token/步）—— 本仓库
+#      `prefix` 正文（`|-` 之后的正文行、不含换行）7736 → **9002**（≈316 token/步）—— 本仓库
 #      历次规则改动里最大的一笔，换来的是"一次被截断的委派不必从头重做"。**未观测**：本机真实会话里的
 #      截断频次**还没有统计**（283 个会话都是 zstd 压缩的 `session.v4.jsonl.zstd`，本轮没有跑通统计），
 #      所以只有**机制**是实测的（用户实测的中断文案 + 客户端合成提示 + 本轮源码复核），**收益规模没有数字**。
 #      量法见 `preset/testing-guide.md` I13 N12 / I15 N13。
+#      **2026-09-29 19:1x 的复核修正（本条已按复核改写，下面四条是本轮的事实口径）**：① **截断频次已经量到** ——
+#      只读扫描本机 285 个会话档案（`session.v*.jsonl.zstd` 是多帧 zstd 拼接，必须先按 magic `28 b5 2f fd`
+#      切帧；Node v26 的 `node:zlib` 自带 `zstdDecompressSync`，不需要外部 zstd），全库 `turn/end` 的
+#      `reason.kind` 分布是 `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2；
+#      6 条全部落在 `agentPreset:"adg"` + `origin:"subagent"` + `delegationDepth:1` 的**被委派子代理**会话里
+#      （4 条 v4 / 2 条 v3，cwd 分别是 `D:\dsh` ×4 与 `D:\yxgit` ×2），其中 3 条是长产出（51233 字符的
+#      长文断在半句上 / 一份"1000+ 行设计文档" / 逐字抄录 14 项），另外 3 条是长链路读取 + 紧凑思考。
+#      ② **这 6 个会话在 max-tokens 之后记录数为 0**（`assistant/message` 0、`user/message` 0、
+#      `agent/inbox/spliced` 0）⇒ "截断后就地接续"在本机**完全没有先例**，所以它只能写成**调度者的动作**
+#      （规则 7 那半条），不能指望运行时会接。③ **本机上限是 pi-ai 适配器的 `DEFAULT_MAX_TOKENS = 32768`**
+#      （`@deepseek-ai/dsh-llm-pi-ai/lib/index.js:925`；`profiles/web/cordis.patch.yml` 的 `llm-pi-ai` provider
+#      `ali` 没有写 `maxTokens` / `defaultMaxTokens`），与上下文窗口 262144 是**两件事**；撞上限时
+#      `@deepseek-ai/dsh-llm/lib/index.js:1053` 会把**未完成的 tool-call 块整体丢弃**（丢的是工具调用意图，
+#      不是已写出的文本），且工具返回会把保留的部分答案附在错误里
+#      （`@deepseek-ai/dsh-tool-subagent/lib/index.js:292` / `:297-305`）⇒ 正确口径是"**先消费部分产出、
+#      再决定续跑还是换人**"。④ **代价按复核重测**：`prefix` 正文（`|-` 之后的正文行、不含换行）现测
+#      **9082**（本轮新增第 15 条文字后再量；此前记的 9002 是复核前的值），与 7736 相比 **+1346**；
+#      顶注本体的体量另计。机制与量法见 `docs/evidence.md` §21，本机 6 条截断清单同节。
 #
 # 刻意**没有**做的事：不设 `maxTokens` / `reasoningEffort`（实测输出只占账单 1%，
 # 压它只损伤质量），也不在本 preset 里再加一行 `spill-policy`（宿主plane 已有一行
