@@ -2,14 +2,27 @@
 title: 变更记录
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 ---
 
 # 变更记录
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-28（追加，本文件最新的一条）— 生成物分**两种味道两个稳定目录**，`install.*` 逐 profile 选味道（修"挂了 bili 的 profile 也拿到 plain"）
+## 2026-09-29（本文件最新的一条）— 交付形态与**截断接续**：规则 5 / 7 / 10 各改一处（被输出上限截断的委派要就地接上，不是重派）
+
+- 依据（用户报告）：单条回复撞 `maxTokens` 时 **DSH 中断那一轮**并把已写出的部分留在对话里 —— 用户实测的报错文案是「已达到输出 token 上限回答被截断，已有输出保留在对话中。发送"继续"可让模型接着输出。」。**续写入口只有人工"继续"，被委派的子代理自己发不了**，所以"谁去接"只能落在调度者身上。
+- **新增的日志证据（只读扫描，本机 285 个会话档案）**：`turn/end` 的 `reason.kind` 分布为 `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2；6 条 max-tokens 全部落在 `agentPreset:"adg"` + `origin:"subagent"` + `delegationDepth:1` 的被委派子代理会话里（4 条 v4、2 条 v3），而**这 6 个会话在截断之后都没有任何后续记录**（`assistant/message` 0 条、`user/message` 0 条）⇒ "截断后就地接续"在本机属于**未观测**，正因如此才要把它写成调度者的动作。读档案的坑：`session.v*.jsonl.zstd` 是**多帧 zstd 拼接**（例：某 v4 档案 574248 字节含 155 帧，`zstdDecompressSync(整文件)` 只解出 259 字节的头部），必须先按 magic `28 b5 2f fd` 切帧；本机不需要外部 zstd（Node v26 的 `node:zlib` 自带 `zstdDecompressSync`）。
+- `preset/agent.cordis.yml` 规则 5：**期望产出**里补"产出大时（整份报告 / 长表 / 逐条清单 / 全文对比）分**段交付**"——先给结论 / 证据位置 / 未验证的梗概，再分段给大正文；并写明这是**交付形态**要求、**不是产出量上限**。
+- `preset/agent.cordis.yml` 规则 7：补**接续**半条并钉死与"换人"的先后 —— 被截断时**立刻** `send_message` 接给**同一个它**（"上一条在输出上限处断了，请从断点继续写，直到交付块完整"），理由是"人只能从界面上发继续、子代理发不了"；"换人"只留给"它已无法接续"或"这一截写完后整段驻留期已厚、按规则 5 另开并带交接摘要"，**一被截断就重派新专家等于丢掉前半段**。
+- `preset/agent.cordis.yml` 规则 10：去冗余纪律从四条扩成五条，⑤ = "撞上输出上限不是删内容、是从断点接着写完"（④ 的"未验证 / 未纳入"仍是必填块）。
+- `preset/agent.cordis.yml` 顶注：删去"实质改动有十四处"里的旧数、改为**十五处**，新增第 15 条（机制、三处改动、代价、未观测项）。代价 **+1266 字符**（`prefix` 正文按不含换行实测 7736 → **9002**，≈316 token/步）—— 本仓库历次规则改动里最大的一笔。
+- `preset/design.md`：I13 补"同一实体的续做形态 + 预防 / 恢复两半各钉一处"（含"是否要重复读同一批材料"是该判据的直接推论）；I17 补"**被截断的子代理发不出结算通知** —— 那一轮是 DSH 强制中断而非它的收尾，所以别等通知、要主动接"。
+- `preset/testing-guide.md`：新增 **N12**（规则 7 的两种相反处置都在、且判据不互相覆盖；`不要换人、要就地接着写` / `交接摘要` 各应命中 1 行）与 **N13**（规则 5 的分段交付 + 规则 10 ⑤ 都在位、且两处都没被写成字数 / 产出量上限）；N1 的那行补了指向 N12 / N13 的指针。
+- `README.md`：「多智能体的 token 消耗」表新增"**交付形态 + 截断接续**"一行（状态 = 机制实测 / 收益未量），「persona 的体积账」改写为 9002 字符并写明**两套口径不可混用**（4584 / 4820 是旧口径"整个 `prefix: |-` 块"，7219 / 7736 / 9002 是顶注第 13 条起改用的"正文行、不含换行"口径），「未观测」段补上截断接续与截断频次。
+- 未观测：真实会话里调度者会不会真的去接（量法 = 转录里截断后**有没有**指向同一个子代理的 `send_message`）；本机截断频次虽已扫出 6 条，但那是历史档案、且**没有一条续写过**，所以"接住之后产出是否完整"仍无证据。
+
+## 2026-09-28（追加，生成物分两种味道两个稳定目录）— `install.*` 逐 profile 选味道（修"挂了 bili 的 profile 也拿到 plain"）
 
 - 症状与根因：`install.ps1:88` 的 `$useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0)` 配上"生成物全机共用一份" ⇒ 混装机器（本机 `desktop` 没挂 bili、`web` 挂）**给所有 profile 都装 plain**，`web` 的专家 `allow` 里一个 bili 工具都没有，子代理一调就报 `unknown tool compress`（真机实测：两个 profile 的 `node_modules/dsh-adg-preset` 都指向 `bundles/dsh-adg-preset`，那份产物里 `- name: compress` 出现 **0** 次）。源文件 9 个专家行的 `allow` 齐全，"缺 allow"的假设不成立。
 - `install.ps1` / `install.sh`：生成物改为**两份**（plain → `$DSH_HOME/bundles/dsh-adg-preset`，注入版 → `$DSH_HOME/bundles/dsh-adg-preset-bili`，包名都叫 `dsh-adg-preset`，两份味道无条件都生成），`auto` 下**逐个 profile** 用它自己的探测结果决定 `link:` 哪一份，`on` / `off` 只做整体覆盖（覆盖与探测不一致时打黄字警告）。
