@@ -9,7 +9,17 @@ last_reviewed: 2026-09-30
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 安装逻辑：挂着 billion-context 的 profile **也一律启用** `dsh-adg-token-budget`（推翻 2026-09-28 的"让位"口径）
+## 2026-09-30（最新）— 截断接续补上**父级侧的触发信号**：规则 7 加一句"结算通知的开场白就是被截断的判据"
+
+- 依据（用户要求，原话）：「如果子代理因为达到输出token上限被截断，向其发继续消息可以让其接着工作。例：当收到这样的系统提示时代表子代理因为输出token上限被截断了：Background subagent 926daaa2-… ran out of room before it finished.It left no closing message.」并明确要求"用**最简语言**写入调度代理的提示词"。
+- `preset/agent.cordis.yml` 规则 7 既有的那半条（"被输出上限截断时不要换人、要就地接着写"）只补**一句识别信号**：新增片段逐字为「你那边的信号是结算通知的开头那句 `Background subagent <id> ran out of room before it finished.`（它自己看到的是「已达到输出 token 上限，回答被截断，已有输出保留在对话中」；开场是 `finished…` / `failed…` / `declined…` / `was stopped…` 的都不是截断）—— 被截断不等于被终止，**回一条继续消息它就能接着做**」。`send_message` 的既定动作、"不要重派新专家"、"整段驻留期已厚则写完这一截再换人"**都不动**；顶注第 15 条同步记下这句开场白的源码出处。
+- 机制（源码级事实；`docs/evidence.md` 新增 §21.1）：后台子代理结算时运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，开场白由 `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支 —— `completed` / `aborted` / **`max-tokens`** / `refusal` / `error` 各一句，**只有 `max-tokens` 是 `ran out of room before it finished.`**；`:85-105` 的 `createSettlementMessage()` 在没有非空收尾文本时补一句 `It left no closing message.`（`@deepseek-ai/dsh-subagent/README.md:150` 逐字记载；运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ 用户给的例子正是"被截断且没留下收尾文本"这一态。**被截断 ≠ 被终止**，`resume({ resumeSessionId: childId })` 那条路照旧可用。
+- 文档同步：`preset/design.md` I15 ②（恢复那半）、`preset/testing-guide.md` N12（② 里写明父级侧信号 + 辅助检索模式加 `ran out of room before it finished`、判违例加"缺这半"）、根 `README.md` 手段表"交付形态 + 截断接续"行（标题与三处说明）与 persona 体积账。
+- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7814 → 7972**（**+158 / +2.0%**，按 ~4 字符/token ≈ **+40 token/步**）；九个专家 persona 与插件正文**未动**。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与改动前同一批）。
+- 生效：`preset/` 改动 = 重生成 bundle + 重装 + **重启 dsh**（bundle 层的挂载行以重启为准，没有东西 watch `bundles/`），新会话才带得动新 persona。
+- 未观测：真实会话里调度者见到这句开场白之后**会不会真的发出继续消息**（§21.1 末与 §8 同一行行为观测；本机 6 条 `max-tokens` 截断至今 **0 次续写**）。
+
+## 2026-09-30 — 安装逻辑：挂着 billion-context 的 profile **也一律启用** `dsh-adg-token-budget`（推翻 2026-09-28 的"让位"口径）
 
 - 依据（用户要求，原话）：「把安装时如果已安装billion-context的话就禁用掉dsh-adg-token-budget的逻辑改为仍然启用dsh-adg-token-budget」。推翻的是 §17.1 第 9 条那条政策 —— 当时"挂着 bili 的 profile 不启用这个 plugin"，理由是它按步数档位给同一批子代理下收敛提醒、与 bili 的压缩/nudge 是同类指令，两套会互相抢阈值。用户判断"重复"这一侧的代价可以接受：插件做的事 bili 不做（只按**步数**问一句"要不要收尾"，不碰上下文本身），而 2026-09-30 给提醒正文加的"**压缩（compaction）时把本段整条删除**"已经压掉了跨套提示的残留。**被推翻的只是"该不该让位"**，第 9 条写的"不要塞 `enabled: false` 覆盖行、要改就改 `dsh.profile.bundles`"这个**实现约束不变**。
 - `install.ps1` / `install.sh` 的 4c-1 分叉整段删除：所有 profile 从此走同一条路径 —— "确保 `dsh-adg-token-budget` 写在该 profile 的 `dsh.profile.bundles` 里"。旧版按 bili 把它移除过的（脚本当时留了清单备份 `package.json.bak-adg-token-budget`），重跑脚本会**把它加回去**；已选中且挂 bili 的只打一句"保持启用"。两份脚本都新增一条 `mountsBili`（`install.sh` 是 `mounts_bili="$(has_bili "$name")"`），**现在只用来选提示语**，不再进任何判断分支。
