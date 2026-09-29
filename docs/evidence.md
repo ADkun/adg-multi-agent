@@ -285,13 +285,21 @@ chromium 系之外的浏览器是否同样受限于有名管道，本台账不�
 **驱动深度**：B 列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回页面文本」；
 Edge 在全访问下只做到 `--dump-dom` 退出码 0，**没有再往深做**。
 
-**与本节相关的源码级事实**（不是实测，逐条都能读代码确认；`README.md` 那节把它们列成三问三答）：
+**与本节相关的源码级事实**（不是实测，逐条都能读代码确认；`README.md` 那节把它们列成四问四答）：
 父智能体不能给子智能体指定权限（`dsh-tool-subagent` 的 `lib/index.js` 里 `sandbox` 零命中）；
 沙箱模式解析是 `request.mode ?? 会话的 sandbox/mode 事件 ?? 部署默认`
 （`dsh-sandbox-policy/lib/index.js` 的 `resolve()` / `overrideOf()`），而 `sandbox-policy` / `permission` /
 `approval` 三行都在 host-plane 的 `dsh-base/cordis.patch.yml`；子会话的审批策略被钉成 `never`
 （`dsh-subagent/lib/index.js` 的 `captureDelegatedPolicyOverrides()`），而 `dsh-user-approval` 对该策略
 直接返回 `rejected`、不弹窗 —— 所以子代理**不能**用 `sandbox_permissions` 升权。
+第四问：**父级切换权限后，已经在跑的子代理会跟着变吗？** —— **不会**。
+`captureDelegatedPolicyOverrides()`（`dsh-subagent/lib/index.js:524-541`）在子代理**首次 await 之前**就同步取当时的
+父会话状态，并在子会话尚未发布的窗口里把它写成 `source: 'delegation'` 的三条子会话事件
+（`:552-562` 的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；
+同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child`。
+⇒ **新权限只对"切换之后新开的子代理"生效**，已经在跑的子代理拿不到；要让它用上只能**新建委派**（或停掉旧的再重派）。
+**未观测（行为）**：真机上调度者在用户切权后是否真的会新建委派，而不是干等旧子代理变得可用 —— 已写进
+`preset/agent.cordis.yml` 规则 11，但没有真机日志证明它照做。
 
 **怎么重测**（第 1 条是 A 列第一行的最小复现，已逐字跑过；浏览器那两列跑 `probe1.js` / `probe2.js` 即可）：
 

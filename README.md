@@ -196,24 +196,25 @@ libuv 的管道 stdio 用有名管道，其 client 端打开所请求的写访�
 **其它浏览器未测试**；全访问那一列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回文本」，
 Edge 只做到 `--dump-dom` 退出码 0。
 
-### 为什么不能从 preset 侧修（三个问题的答案）
+### 为什么不能从 preset 侧修（四个问题的答案）
 
 | 问题 | 结论 | 源码依据（**源码级事实**） |
 |---|---|---|
 | 父智能体能否给子智能体指定权限范围？ | **不能** | `dsh-tool-subagent` 的实例配置只有 `provider` / `toolName` / `modelSelectionSettings` / `enableRunInBackground` / `backgroundMode` / `agentOptions` / `persona` / `toolFilter` / `maxDepth`；它的 `lib/index.js` 里 **`sandbox` 零命中**，模型可见 schema 也只多 `provider` / `model` / `reasoning_effort` / `run_in_background` |
 | 能否用 preset 文件改默认权限范围？ | **不能** | `sandbox-policy`（部署默认 `mode`）、`permission`（预设表）、`approval` 三行都在 **host-plane** 的 `@deepseek-ai/dsh-base/cordis.patch.yml` 里；模式解析是 `request.mode ?? 会话的 sandbox/mode 事件 ?? 部署默认`（`dsh-sandbox-policy/lib/index.js` 的 `resolve()` / `overrideOf()`），**没有 preset 侧入口**能改一个会话的模式。`dsh-permission-presets` 自己的「已知限制」第一条就写着：预设只组合沙箱模式与审批策略这两个机制级旋钮，agent / profile 选择尚未纳入 |
 | 子代理能否自己升权（`sandbox_permissions` + 用户批准）？ | **不能** | 委派时子会话的审批策略被**钉成 `never`**（`dsh-subagent/lib/index.js` 的 `captureDelegatedPolicyOverrides()`，注释原话 "the approval policy is pinned to `'never'` regardless of the parent's own policy"）；`dsh-user-approval` 对 `never` 直接 `return "rejected"`、**不弹窗**。所以专家侧的升权重试是失败关闭，不是弹出审批 |
+| 父级切换权限后，已经在跑的子代理会跟着变吗？ | **不会 —— 新权限只对"切换之后新开的子代理"生效**（2026-09-30 补，用户要求写进调度 persona 规则 11） | 权限在**委派那一刻**就被捕获：`captureDelegatedPolicyOverrides()`（`dsh-subagent/lib/index.js:524-541`）在子代理"首次 await 之前"**同步**取当时的父会话状态，并在子会话尚未发布的窗口里写成 `source: 'delegation'` 的 `sandbox/mode` / `approval/policy` / `permission/preset` 事件（`:552-562` 的 `appendDelegatedPolicyOverrides()`）；同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 用户切到 `danger-full-access` 之后要**新建委派**，等旧子代理是等不到的 |
 
 **唯一能把子代理送进完全权限的路径是：用户在会话里把权限切到 `danger-full-access`。**
 子会话只继承父会话的**显式**覆盖值 —— `captureDelegatedPolicyOverrides()` 取的是
 `parent.ctx.get('sandboxPolicy')?.overrideOf(parent.session)`，也就是那条 `sandbox/mode` 事件，
-而切换权限正是写入这条事件的动作（**部署默认值不会被继承**）。
+而切换权限正是写入这条事件的动作（**部署默认值不会被继承**）。**捕获发生在委派那一刻**（同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child`）⇒ **父级之后切换权限，不会改变已经开始跑的子代理**；**新权限只对切换之后新开的子代理生效**。
 
 ### 现在的处置：调度侧两道闸门（提示级，不是权限强制）
 
 1. **派发前**（调度 persona 规则 11）：不是 `danger-full-access` 就先 `ask_user_question`，
    选项是「已切到完全权限，继续派发」／「改用降级方案：只做 `web_fetch` 静态抓取（不能交互）」／
-   「暂不做这项网页操作」。用户答已切换后，**先确认上下文那行真的变了**再派发；没变就如实说没切成功。
+   「暂不做这项网页操作」。用户答已切换后，**先确认上下文那行真的变了**再派发；没变就如实说没切成功。**同时要记住新权限只对新开的子代理生效**：权限在委派那一刻就写进子会话，切换前已派出的子代理拿不到 —— 切完之后要**新建委派**（旧的先停掉再重派），不要等它原地变得能用。
 2. **失败时**（`agent_browser` persona）：命中上面那张表的任一签名就**立刻停手**，如实报
    「本会话不是完全权限，浏览器自动化不可用」+ 报错原文，不许反复换参数重试、不许假装完成。
 
@@ -590,7 +591,10 @@ persona；它写的是**自己该怎么应对**，与注入方同一套措辞，
 | 9 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 9 行 | 调度者系统提示里约 330 字符 × 9 ≈ 2.9 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.7k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
 | 压三组体积旋钮 / 设 `maxTokens` / 写"结论 N 字符内" | **不建议（已撤销的口径）** | 截断会把工具**已经取到**的事实切掉；输出只占账单 1%，压它只损伤质量并招来返工 | 见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门) |
 
-**persona 的体积账**：prefix 正文（`|-` 之后的正文行、**不含换行**）现在 **7972 字符**。最新一轮
+**persona 的体积账**：prefix 正文（`|-` 之后的正文行、**不含换行**）现在 **8126 字符**。最新一轮
+（2026-09-30 权限闸门补**捕获时刻**，用户要求）在规则 11 末尾补了"新权限只对切换之后新开的子代理生效、
+切换后必须新建委派"，**7972 → 8126（+154 字符 / +1.9%，≈+38 token/步）**；同一轮的顶注第 5 条另加 4 行
+源码补记（顶注不在这个口径里，故不计入）。再往前一轮
 （2026-09-30 截断接续的**父级侧信号**，用户要求）在规则 7 里补了一句"结算通知的开场白就是被截断的触发信号"，
 **7814 → 7972（+158 字符 / +2.0%，≈40 token/步）**，专家 persona 与插件正文都没动（口径：正文行、含行首缩进、不含换行）。
 再往前一轮（2026-09-30 全字段提示词压缩，按用户要求"从语言上缩减字数、降低 token 消耗、语义不能有任何损耗"）
@@ -606,7 +610,7 @@ persona 合计 8940 → **8140**（−800 / −9.0%）、插件内置提醒正�
 规则 10 四条禁止）加了 236 字符（4584 → 4820）；再上一轮（规则 5 五项必填 + 规则 6 实体锚点 +
 规则 15 必要性闸门）加了 534 字符（4050 → 4584）；加规则 13 / 14 时 +868、压缩规则 11 / 12
 减 469，净 +399（3598 → 4050）。**注意两套口径不可混用**：上面 4584 / 4820 是早先按"整个
-`prefix: |-` 块"量的旧口径，7219 / 7736 / 9082 / 7814 / 7972 是顶注第 13 条起改用的"正文行、不含换行"口径
+`prefix: |-` 块"量的旧口径，7219 / 7736 / 9082 / 7814 / 7972 / 8126 是顶注第 13 条起改用的"正文行、不含换行"口径
 （同一份文件，旧口径比新口径大约多出正文行的换行数）——**跨口径不能相减**。压缩是**为语义腾
 位置**：不先把与专家重复的机制复述删掉，再加规则就会把调度者的每步系统提示推向 10k。也正因为
 persona 每加一条都在加固定成本，新规则只写**判据与动作**，机制细节一律指向专家 persona 与本文。
