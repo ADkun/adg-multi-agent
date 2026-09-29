@@ -131,6 +131,7 @@ last_reviewed: 2026-09-28
 | **关掉浏览器之后再靠 profile 复用登录态** | **未观测**：§12 的 `probe4-cookie.js` 往 profile 写了 cookie，live store 立即可见，但 30 秒内磁盘上没有 cookie 库（Chrome 惰性刷盘）。量法：同一 profile 优雅关掉浏览器后再启动，看 `Network.getCookies` 还在不在 |
 | **调度者是否真的每次都转达人工介入**（收到「需要用户介入」报告后是否真的先问用户） | **未观测**：与上面那条闸门同源 —— 提示级协议，没有真实 Adg 会话走过它。量法：Adg 转写里 `agent_browser` 返回「需要用户介入」之后，紧跟的应当是一次 `ask_user_question`，而不是第二次同路径派发 |
 | **五条编排层规则是否真的被遵守**（同实体合并 / 优先恢复既有专家 / 先定位再改 / digest 中转 / 必要性闸门） | **未观测**：五条规则于 2026-09-26 落地，尚无真实 Adg 会话带着它们跑过（`preset/testing-guide.md` 的 N3 / N5 / N7 同此结论）。四个观测量：① **子代理个数**（主指标 —— "同一份材料买 N 次"的乘数就是它）② 子代理步数 **p50 / p90**（**比分位数不比均值**：已实测中位数 39 步、p10 仅 6、四分之一 ≤14 步，分布很偏）③ 审计脚本按 preset 分组的 `requests`（同口径重跑同一批会话，不许拿单次绝对值比）④ **挂号抽查**（人工，见下一行） |
+| **子代理还在 `running` 时调度者是否**不再**把它 steer 进去**（2026-09-29 追加的规则 7 `status` 判据） | **未观测**：该半条于 2026-09-29 按用户报告追加，尚无真实 Adg 会话走过（`preset/testing-guide.md` 的 N10 / N11 同此结论）。**机制**是源码级事实（`send_message` 恒为 steer、落点是 `inbox.nextStep` —— §19），**行为**没有真机证据。量法：造一个长任务派给某个专家，在它 `running` 时对调度者提一个**同实体但不同交付物**的问题 —— 判据是①转录里**没有**指向该 `running` 子代理的 `send_message` ②调度者要么自己答、要么结束本轮等结算通知 ③结算后那件新事确实被接给**同一个**子代理（`list_agents` + `send_message`） |
 | **旁路是否被"记录而非被做"**（必要性闸门 + 强制挂号） | **未观测**。**来源（这是这条规则的依据，不是结论）**：一次真实任务的旁路委派 —— 用户要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理，而那次调研只服务同一条选购需求（同实体同性质）、且不在验收标准里。判据：抽 3–5 个含旁路诱因的任务，最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」且转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被**静默丢掉**（省了 token 却让用户不知道有东西没查，比不做这条规则更糟）；出现委派 = 闸门未生效 |
 | **浏览器任务是否真的"同一份信息只在一个站点取"**（I13 ① 的浏览器那半） | **未观测**：该半条于 2026-09-27 按用户要求追加，尚无真实 Adg 会话走过（`preset/testing-guide.md` 的 N8 / N9 同此结论）。**来源是用户报告**（"浏览器操作是非常耗时的"）＋本机实测的成本下限（一次性读页 **0.8–2.0 秒**、工具侧且不含每个模型步，见 §13）。量法：给一个**单站点即可答完**的信息需求（例如某酒店某晚房价），数 `agent_browser` 委派里点名的站点数（同一份信息应为 **1 个**；三个例外都不成立却出现 ≥2 个 = 违例），并对照同任务 `TABS` 的净增长 |
 | **迁移成 bundle 后，`presets: ['adg']` 对真实 `adg` 专家子代理的注入** | **未观测**（§16.5）：迁移后那次真实委派走的是临时覆盖行 `presets: ['cordis']` 的**通用委派**路径（§16.4 第 3 条），不是 `adg` 专家行。**机制前提（本机实测，§16.4 第二条技术事实，不许丢）**：通用 `subagent` / `subagent_fork` 委派出去的子代理，session 头记的是 `agentPreset: "cordis"`、`delegationDepth: 1`，**不是 `adg`**（`adg` 专家行委派出来的记 `adg/<uuid>`）⇒ `presets: ['adg']` 按设计**不治理**通用委派（fail open）。量法：新对话里走一次 Adg 专家委派（或临时在 profile 层加覆盖行 `presets: ['adg']` + `stepTiers: [1, 2]`），看 `step stage: nudged … label=adg/…` |
@@ -951,3 +952,22 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 **踩过的坑（登记，防重踩）**：安装脚本里**不能**用 `@(& node ...)` 捕获原生命令的 stdout —— 在 DSH 沙箱（workspace-write）的 pwsh 里它拿回**空串**、`$LASTEXITCODE` 还停在上一条命令的值（管道形式直接 `Program 'node.exe' failed to run: Access is denied` + `NativeCommandFailed`）。后果是探测静默变成"全都没挂 bili"、味道断言**假装通过**。两处（第 0 节探测、4b-1）都改成 `cmd /c "node ... > <log> 2>&1"` + 读文件 + **显式检查退出码与结果文件存在**。
 
 **未观测**：① 真机 `web` 换到注入版、重启后**真实 `adg` 专家**看得见并调通 `compress` / `acp_status`（§17.2 ① 仍未闭合；本次只多了"plain 落点下专家确实报 `unknown tool`"这一负向观测）；② 同一个 dsh 进程里两个 profile 各拿各的味道（不同 profile 的会话并存）**冷启动无副作用**；③ `install.ps1` 的 4b-1 在**真机**上换味道成功那一次是否也通过（本次只在临时根里量过）。
+
+## 19. 子代理还在跑时，"复用"会变成插话：`send_message` 恒为 steer（源码级事实，2026-09-29）
+
+**用户报告（本次改动的来源，m00002）**：Adg 多智能体模式下子代理默认后台非阻塞、调度者随时可能收到用户的**新提问**；而 persona 规则 7 要求"同一实体的后续任务优先接给已经读过它的那个专家"⇒ 调度者会向**正在工作**的子代理再发一条消息，把新输入**插进它当前的任务**。用户的问题是：怎么让调度者知道**何时该插话、何时该新开一个**，或者论证该不该保留原规则。
+
+**机制（源码级事实，逐条带出处；本次**没有**真机 A/B）**：
+1. 模型侧 `send_message` 的能力只有一条通路：`@deepseek-ai/dsh-tool-subagent-control` 的 execute 调 `ctx.subagents.sendMessage(...)`（`lib/index.js:51-59`），**没有 delivery / queue 参数**。
+2. 被调方固定用 steer：`@deepseek-ai/dsh-subagent` 的 `sendMessage()` 走 `deliverToChild(..., { delivery: "steer" })`（`lib/index.js:1762-1775`）。queue 只在宿主级 `queuePrompt`（同包 `lib/index.js:1785-1791`），模型侧拿不到。
+3. 两种投递落点不同：steer → `agent.steer()` → `inbox.nextStep`（插进**当前轮的下一步**）；queue → `agent.followup()` → `inbox.nextTurn`（同包 `lib/types/inbox.js:37-45`）。对 `inactive` 的子代理，因为没有当前轮，steer 退化为开新轮（idleSteer）—— 这正是规则 7 想复用的那条路。
+4. `list_agents` 只有两态、**不含进度**：渲染 `${id} [${status}] — ${label}`（`@deepseek-ai/dsh-tool-subagent-control\lib\types\list-agents.js:18-20, 102-104`）；工具 description 明写子代理结束时会**通知**你、不必轮询。
+5. 结算通知是**唤醒型**投递：`@deepseek-ai/dsh-subagent\lib\index.js:1264` 的 `notifySettlement` → `sendWaking(parent, message, parent.status === "idle" ? "queue" : "steer")`。
+6. `interrupt_agent` 只停当前轮，已排队的消息保持暂停直到之后再 `send_message`（同包 README `:53`）。
+
+**为什么原规则会滑到这里**：规则 7 的复用前提是**隐式**的（原文只说"（空闲的、以及已结束但可恢复的都能接）"），**没有一句"正在工作的别用它"**；而 `send_message` 的工具描述（"A working agent receives it at its next step"）读起来无害，所以模型把"复用同一位专家"执行成了"向运行中的它发消息"。后果不只是多一条消息：新问题与原任务的收尾会合并进**同一条 closing message**，而结算通知带的正是这段合并文本，事后分不清哪半句答的是哪件事；正在做验证的那一轮还可能被带偏原验收标准。
+
+**修法（已进仓库，**提示级**）**：`preset/agent.cordis.yml` 规则 7 补 `status` 判据 + `running` 三分支 —— `inactive` 照旧 `send_message`（steer 退化为开新轮，沿用已持久化会话）；`running` 时按**语义关系**三选一：①修正／补充**同一件事**（同一验收标准、同一交付物）→ **现在就发**（steer 的本用）；②同一实体上的**另一件事**（另一条验收标准／另一个交付物）→ **不要插进去**，结束本轮、等**结算通知**把你唤起重接给**同一个它**；③**取代在飞任务** → 先 `interrupt_agent` 再发。判据只能是语义关系，**不能**是"它快做完了"（`list_agents` 无进度）。同步位置：`preset/design.md` I13 ②、`preset/testing-guide.md` I13 N1 / N3 / **N10 / N11**、根 `README.md`（兼容段 + 手段表新增一行 + 未观测段 + "实质改动十四处" + persona 清单），以及 `agent.cordis.yml` 顶注**新增第 14 条**。代价：`prefix` 正文（不含换行）**7219 → 7736**（+517 字符）。
+**不做硬拦**（理由记在 `agent.cordis.yml` 顶注「刻意**没有**做的事」）：框架没有"只允许后台"那种开关，硬拦只能加 preset 侧 `tools/pre-execute` 拦截器，而它**分不清"修正"与"另一件事"**——分支 ① 的 steer 是正当且更省的；还会引入"模型撞硬错误后重试或放弃"的新失败模式。升级方向是**只提醒、不阻断**（对齐红线 9）。
+
+**未观测（已照 §8 登记）**：真实 Adg 会话里调度者是否照做 —— 即子代理 `running` 期间用户提出"同一实体上的另一件事"时，它会不会仍 steer 进去。量法见 `preset/testing-guide.md` I13 N11（N10 是人工 review 那半）。本节全部结论都是**源码级事实 + 用户报告**，**没有**真机 A/B，引用时不许写成"已验证行为"。
