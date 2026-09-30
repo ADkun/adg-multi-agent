@@ -16,7 +16,7 @@ cd browser && node --test test                       # 36 个用例
 cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-write）里必须加这个 flag
 ```
 
-`node --test` 默认给每个测试文件起一个 pipe-stdio 子进程，沙箱拒绝 pipe（失败形态是测试文件本身报 `Error: spawn EPERM`，不是断言失败）——加 `--test-isolation=none` 即走同一条路径且不需要子进程（口径与 `plugin/dsh-adg-token-budget` 一致，见根 `AGENTS.md`「Quality Gates」第 2 条）。
+`node --test` 默认给每个测试文件起一个 pipe-stdio 子进程，沙箱拒绝 pipe（失败形态是测试文件本身报 `Error: spawn EPERM`，不是断言失败）——加 `--test-isolation=none` 即走同一条路径且不需要子进程。
 
 ## 1. 不变量 → 用例 → 类型（全表）
 
@@ -85,7 +85,7 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 
 ## 4. 未观测清单（不许写成实测）
 
-- **真实站点的登录墙端到端没有跑过**：本模块实测的是**机制**（有头启动 / 实例复用 / 优雅关闭后 cookie 落盘并跨重启存活，见 `docs/evidence.md` §13），**不是**「用户在某个真实网站上登录、专家接着抓到了登录后的内容」。量法：让一次真实 Adg 会话在需要登录的站点上走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
+- **真实站点的登录墙端到端没有跑过**：本模块实测的是**机制**（有头启动 / 实例复用 / 优雅关闭后 cookie 落盘并跨重启存活，见 `docs/evidence.md` §8），**不是**「用户在某个真实网站上登录、专家接着抓到了登录后的内容」。量法：让一次真实 Adg 会话在需要登录的站点上走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 的调用；出现「现场手写 CDP 脚本」即 persona 未被遵守。
 - **macOS / Linux 上的 Chrome 探测与有头启动**：候选路径写进了代码（A20 只测了 win32 的候选形状），**没有**在那两个平台上跑过。
 - **多实例并发**：两个 Adg 会话同时 `launch` 同一端口的行为没有观测（矩阵里按「第二次 launch 撞端口 → 超时分支报错」登记为**推断**，不是实测）。
@@ -106,4 +106,4 @@ node cli.mjs close-tab --match example.com               # 须 CLOSED_TABS= 且�
 node cli.mjs close                                       # 须 ALIVE=false + CLOSED=true
 ```
 
-N>1 时 `close-tab --match` 一次命中全部「会剩 0 个页面」的情形必须被拒（I9）；要在**一次性实例**上验这条，别在用户正在用的窗口上试。以上真机口径在 2026-09-27 本机实测跑通（原始输出见 `docs/evidence.md` §13）。
+N>1 时 `close-tab --match` 一次命中全部「会剩 0 个页面」的情形必须被拒（I9）；要在**一次性实例**上验这条，别在用户正在用的窗口上试。以上真机口径在 2026-09-27 本机实测跑通（原始输出见 `docs/evidence.md` §8）。

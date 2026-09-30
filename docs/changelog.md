@@ -9,7 +9,20 @@ last_reviewed: 2026-09-30
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 构建期注入组扩成两组、四种味道：安装时先探测、装着才注入
+## 2026-09-30（最新）— 移除 host-plane 的会话提醒插件：仓库、环境、文档、证据一并清除
+
+- 依据（用户要求，原话）：「根据你提供的信息，我判断这个插件其实作用不大，把该插件从当前DSH环境中移除，并且从adg-multi-agent仓库里移除，提交推送。」；清理口径（用户选择）：**彻底清除所有提及** —— 连 `docs/changelog.md` 里记过它的历史条目、`docs/evidence.md` 里量过它的实测读数一并删除（**本行是该组件唯一的残留记录**，且只用通用描述、不写它的包名与代码字面量）。
+- 仓库：`plugin/` 下的插件模块（13 个文件）与产物 `bundle/dist/*.tgz` 整体删除，`plugin/` 目录随之消失 —— 仓库里不再有任何插件模块。
+- `install.ps1` / `install.sh`：删掉插件拷贝段、插件落点变量、插件注册行与残留挂载行检测（原第 4c 节）、旧落点清理（原第 5 节）及其输出行；preset bundle 链路（四种味道探测 → 生成 → 稳定落点 → 写进该 profile 的 `dsh.profile.bundles` → 技能安装）与步骤顺序未变。
+- `preset/agent.cordis.yml`：九个专家 persona 里的提醒纪律行、顶注与中段的相关注释一并删；顶注实质改动计数 **16 → 15 处**、文件 **849 → 820 行**（`git diff --numstat` = +26 / −55）。体量（正文行、含行首缩进、不含换行）：九个专家 persona 合计 **8140 → 7510 字符**（−630，即九行提醒纪律，每行 70 字符），调度 persona `prefix` 正文 **8005 未动**，两处合计 **16145 → 15515 字符**；顶注里压缩条目的"两处合计"从混入被删组件的旧账 `18396 → 16309` 重算为 **18022 → 15954**（与 `README.md` 和上一条条目一致）。
+- `docs/evidence.md`：**22 节 → 15 节**（删掉"步数分布与阶梯校准""已移除的 token 两档""两个容易误判的观测口径""本机的惰性旧键""活证据复核快照""会话格式事故""插件挂载行手贴→bundle"七节），节号整体前移（**2→1、3→2、5→3、8→4、10→5、11→6、12→7、13→8、14→9、17→10、18→11、19→12、20→13、21→14、22→15**，子节跟随）；文件 **1096 行 / 148121 B → 636 行 / 96086 B**；全仓 **11 个文件共 112 处** § 引用按该映射同步重编号。
+- 生成物与文档里的字节数：四份 `cordis.patch.yml` 随源文件变小（`plain` 99623 → **95631**、`bili` 101632 → **97640**、`save-token` 101104 → **97112**、`bili+save-token` 103113 → **99121** B；专家 `allow` 计数与报告行不变）⇒ 同步刷新 `docs/evidence.md` §15 的四行读数（旧值留在同节作对照）与 `tools/testing-guide.md` 的用例判据行。
+- 其它文档：根 `AGENTS.md`（模块地图、生效方式表、质量门、红线）、`README.md`（"第二层"整节 19 个 h3 删除；「给 AI 的安装指令」删掉插件两步后**步骤重编号 7→5 / 8→6 / 9→7 / 10→8** ⇒ 真实挂载校验现在是**第 6 步**）、`browser/*`、`skills/adg-add-agent/SKILL.md`、`tools/*`、`preset/*`、`docs/registry.md`、`docs/docs-guide.md` 同步去引用；关键红线由 11 条变 **10 条**。
+- 本机环境：`${DSH_HOME}/bundles/` 下的组件目录、`profiles/*/node_modules` 下的残留（含两个断链）与旧日志文件删除；`profiles/desktop|web/package.json` 删掉依赖行与 `dsh.profile.bundles` 条目（`headless` 本来就没有）⇒ **需重启 dsh 才生效**。
+- 检验：`node tools/check-preset.mjs` **exit 0**（0 错误 / 2 警告，仍是 `agent-file` 与 `agent-general` 的条件性 `read_image`）；四味道 `node tools/gen-preset-bundle.mjs` + `node tools/check-bundle-flavor.mjs` **全 exit 0**；`cd browser && node --test --test-isolation=none test` **36/36**；按被删组件的整名与代码字面量全仓扫描 **0 命中**（本行除外）；被改文件的 BOM / 行尾与改动前逐一致（`install.ps1` 仍带 BOM）。
+- 未观测：重启 dsh 后两个 profile 的真实挂载（`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()`）本轮没做。
+
+## 2026-09-30 — 构建期注入组扩成两组、四种味道：安装时先探测、装着才注入
 
 - 依据（用户要求，原话）：「更正一下语言，安装时要先检查当前环境有没有安装对应插件，有的话才把对应的工具添加进去。」⇒ 口径定为**安装时逐个注入组探测该 profile 装了没有；装了才把那一组注册在全局层的工具名注进专家 `allow`，没装就不注入**。
 - `tools/flavors.mjs`（新增）：构建期注入组的**单一事实来源** —— `INJECTION_GROUPS`（旗标 / 包名 / 注入的工具名 / `notInjected` / 是否关自动压缩）、`GROUP_ORDER`、味道键与稳定目录名的拼法、探测判据 `probeBundle`。两个组：`billion-context`（`compress` / `decompress` / `search_context` / `acp_status`，故意不注入 `acp_cache`，并给 `compaction-basic` 注入 `config.auto: false`）与 `save-token`（只有 `save_token_expand`，不碰任何旋钮）。其余脚本与文档一律从它推导。
@@ -20,8 +33,8 @@ last_reviewed: 2026-09-30
 - `tools/check-preset.mjs`：`BUILD_TIME_INJECTED_TOOLS` 改为从 `tools/flavors.mjs` **推导**（不再另抄一份名字清单）⇒ 手写 `save_token_expand` 也会被拦，报错直接指回对应旗标。
 - 味道键 → 稳定目录：`plain` = `dsh-adg-preset`、`bili` = `dsh-adg-preset-bili`、`save-token` = `dsh-adg-preset-save-token`、`bili+save-token` = `dsh-adg-preset-bili-save-token`（四份 `package.json` 逐字节相同、包名都是 `dsh-adg-preset`）；目录名不写死，以 `flavors.mjs` 的 `dirNameFor(key)` 为准。
 - 安装脚本按每个 profile 的探测结果选择味道（**只记口径，不记 `install.ps1` / `install.sh` 的实现细节** —— 那一层尚未定稿）。
-- 文档同步：`docs/evidence.md` 新增 §22（机制表、四味道实测、两个方向的负例、源文件侧探针、"产物体积不是稳定判据"与本机 profile/链接现状），并改「证据来源」表两行（生成物自检扩成四味道；挂载判据改指 `tools/flavors.mjs` 的 `probeBundle` 与 `tools/has-bundle.mjs`）、§17 第 7 条补一句"该脚本已由 `has-bundle.mjs` 取代"的括注（原读数保留为历史）；`tools/testing-guide.md`（四味道生成 + 断言 + 三条负例 + 探针做法）；`preset/testing-guide.md`（I3c 与状态机表扩成四个稳定落点 + 构建期注入名怎么验证）；`docs/registry.md`。
-- 检验：四份生成物 **99623 / 101632 / 101104 / 103113 B**（各 18 个顶层子插件条目、9 个专家行），四条 `node tools/check-bundle-flavor.mjs <那份文件> <味道键>` **全 exit 0**；负例两个方向 exit 1（10 个错误 / 9 个错误）、未知味道键 exit 2；`node tools/check-preset.mjs` **0 错误 / 2 警告**（第 528 / 742 行的条件性 `read_image`）；源文件侧探针手写 `save_token_expand` / `acp_cache` / `compress` 各 exit 1（报错逐字见 `docs/evidence.md` §22）；回归对照：旧 `bundle/adg-preset/cordis.patch.yml` 与新 `bundle/adg-bili/cordis.patch.yml` 的差异行**全是注释行**、正文行相同。
+- 文档同步：`docs/evidence.md` 新增 §15（机制表、四味道实测、两个方向的负例、源文件侧探针、"产物体积不是稳定判据"与本机 profile/链接现状），并改「证据来源」表两行（生成物自检扩成四味道；挂载判据改指 `tools/flavors.mjs` 的 `probeBundle` 与 `tools/has-bundle.mjs`）、§10 第 7 条补一句"该脚本已由 `has-bundle.mjs` 取代"的括注（原读数保留为历史）；`tools/testing-guide.md`（四味道生成 + 断言 + 三条负例 + 探针做法）；`preset/testing-guide.md`（I3c 与状态机表扩成四个稳定落点 + 构建期注入名怎么验证）；`docs/registry.md`。
+- 检验：四份生成物 **99623 / 101632 / 101104 / 103113 B**（各 18 个顶层子插件条目、9 个专家行），四条 `node tools/check-bundle-flavor.mjs <那份文件> <味道键>` **全 exit 0**；负例两个方向 exit 1（10 个错误 / 9 个错误）、未知味道键 exit 2；`node tools/check-preset.mjs` **0 错误 / 2 警告**（第 528 / 742 行的条件性 `read_image`）；源文件侧探针手写 `save_token_expand` / `acp_cache` / `compress` 各 exit 1（报错逐字见 `docs/evidence.md` §15）；回归对照：旧 `bundle/adg-preset/cordis.patch.yml` 与新 `bundle/adg-bili/cordis.patch.yml` 的差异行**全是注释行**、正文行相同。
 - 未观测：四种味道产物的**真实挂载**（重启 dsh + 新会话）本轮没做；专家收到 `[save-token #id]` 通知后是否真的去调 `save_token_expand` 未观测；`install.*` 的逐组探测与选味道实现未复核。
 
 ## 2026-09-30 — 用户复核：今天两处新增提示词按"只留判据"再精简（−121 字符）
@@ -30,74 +43,40 @@ last_reviewed: 2026-09-30
 - 规则 7 的识别信号片段 **218 → 143 字符（−75）**：删掉 `Background subagent <id>` 这截样板前缀（只留唯一的判据 `ran out of room before it finished.`）、子代理侧视角那句「已达到输出 token 上限，回答被截断，已有输出保留在对话中」（调度者看不到、也不需要），"被截断不等于被终止"→"被截断≠被终止"；**负面清单保留**（`finished…`／`failed…`／`declined…`／`was stopped…` 都不是截断），否则正常收尾会被误判成截断。现逐字：「你那边的信号是结算通知里的 `ran out of room before it finished.`（只有这一句是截断：`finished…`／`failed…`／`declined…`／`was stopped…` 都不是）—— 被截断≠被终止，**回一条继续消息它就能接着做**：」
 - 规则 11 的捕获时刻片段 **154 → 108 字符（−46）**：删掉与括号里重复的"权限在委派那一刻就被钉进子代理自己的会话"，以及同一事实的第二遍复述"它自己也升不了权，你事后也改不了它"；判据、结论（必须新建委派）与顶注出处指针都留着。现逐字：「**新权限只对"切换之后新开的子代理"生效**（委派那一刻就定死了）：切换前已派出的那个**拿不到**，所以用户切完必须**新建委派** —— 把原先那个停掉、重派一个，别等原地那个突然能用（依据见顶注第 5 条）。」
 - 口径：`#` 顶注与文档层放源码出处和逐字引用（顶注是 YAML 注释、**永不进入模型上下文**），persona 正文只留可执行判据 —— 本条的改动依据就是这条口径。
-- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **8126 → 8005**（**−121 / −1.5%**，按 ~4 字符/token ≈ **−30 token/步**）；九个专家 persona 与插件正文**未动**。今天两轮对 persona 的净增因此回到 **7972 → 8005（+33）**。
-- 检验：`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，仍在第 524 行 `agent-file` 与第 738 行 `agent-general`，即条件性注册的 `read_image`）；`bundle/adg-plain/cordis.patch.yml` **99463 → 99192 字节** + `check-bundle-flavor` plain exit 0；`bundle/adg-preset/cordis.patch.yml` **101487 → 101216 字节** + flavor bili exit 0；插件 `node --test --test-isolation=none test` **54/54/0**；`browser` **36/36/0**；`install.ps1` 前三个字节 `EF BB BF`（30698 字节）；精简后的措辞两份产物各命中一次（plain 316/320 行、bili 323/327 行）。
+- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **8126 → 8005**（**−121 / −1.5%**，按 ~4 字符/token ≈ **−30 token/步**）；九个专家 persona **未动**。今天两轮对 persona 的净增因此回到 **7972 → 8005（+33）**。
+- 检验：`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，仍在第 524 行 `agent-file` 与第 738 行 `agent-general`，即条件性注册的 `read_image`）；`bundle/adg-plain/cordis.patch.yml` **99463 → 99192 字节** + `check-bundle-flavor` plain exit 0；`bundle/adg-preset/cordis.patch.yml` **101487 → 101216 字节** + flavor bili exit 0；`browser` **36/36/0**；`install.ps1` 前三个字节 `EF BB BF`（30698 字节）；精简后的措辞两份产物各命中一次（plain 316/320 行、bili 323/327 行）。
 - 未观测：精简后的措辞是否仍然让调度者稳定认出这句开场白（行为层；与上一轮同一项，本机 6 条 `max-tokens` 截断至今 **0 次**续写）。
 
 ## 2026-09-30 — 权限闸门补上**捕获时刻**：新权限只对"切换之后新开的子代理"生效
 
 - 依据（用户要求，原话）：「在调度代理中，目前已有提示如果需要完全权限需要让用户切过去的提问，但还要明确提示新权限只能在新开的子代理中生效。」
 - `preset/agent.cordis.yml` 规则 11 末尾追加一句（既有判定、三选项、分支与 `ask_user_question` 动作**一字未动**）：「**新权限只对"切换之后新开的子代理"生效**：权限在**委派那一刻**就被钉进子代理自己的会话 —— 切换前已派出的那个**拿不到**新权限，它自己也升不了权，你事后也改不了它。所以用户切完之后必须**新建委派**：浏览器任务就是把原先那个停掉、重派一个，别等原地那个突然能用（源码依据见顶注第 5 条）。」顶注第 5 条同步补 4 行出处（2026-09-30 补记）。（这一句的逐字措辞已在同日"用户复核"条里按"只留判据"再精简，**以该条为准**。）
-- 机制（源码级事实；`docs/evidence.md` §11 的「与本节相关的源码级事实」块新增**第四问**）：`captureDelegatedPolicyOverrides()`（`@deepseek-ai/dsh-subagent/lib/index.js:524-541`）在子代理**首次 await 之前**同步取当时的父会话状态，并在子会话尚未发布的窗口里把它写成 `source: 'delegation'` 的三条子会话事件（`:552-562` 的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；该函数注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 父级之后切换权限**改变不了已经在跑的子代理**，要让它用上新权限只能**新建委派**。README 那节的"三问三答"因此扩成**四问四答**（标题、表格新增一行、唯一路径那段末句、处置第 1 条各补一句）。
+- 机制（源码级事实；`docs/evidence.md` §6 的「与本节相关的源码级事实」块新增**第四问**）：`captureDelegatedPolicyOverrides()`（`@deepseek-ai/dsh-subagent/lib/index.js:524-541`）在子代理**首次 await 之前**同步取当时的父会话状态，并在子会话尚未发布的窗口里把它写成 `source: 'delegation'` 的三条子会话事件（`:552-562` 的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；该函数注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 父级之后切换权限**改变不了已经在跑的子代理**，要让它用上新权限只能**新建委派**。README 那节的"三问三答"因此扩成**四问四答**（标题、表格新增一行、唯一路径那段末句、处置第 1 条各补一句）。
 - 文档同步：`preset/design.md` I11（末尾标 **2026-09-30 扩（用户要求）**：调度 persona 那半还必须写明这条，缺这句＝I11 的那半不完整）与非功能红线段的"源码级事实三问"→**四问**；`preset/testing-guide.md` I11 L1 行（闸门两半的描述、辅助检索模式加第四关键字 `\|新开的子代理`、"缺任一组即违例"改成点名"应在**规则 11 与顶注第 5 条各命中一次**"）；根 `README.md`。
-- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7972 → 8126**（**+154 / +1.9%**，按 ~4 字符/token ≈ **+38 token/步**）；九个专家 persona 与插件正文**未动**。首稿把源码路径与英文注释原文也塞进 persona（**+316 字符**），复核后按"顶注放出处、persona 只留判据"的口径精简到 +154。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与前一轮同一批）。
+- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7972 → 8126**（**+154 / +1.9%**，按 ~4 字符/token ≈ **+38 token/步**）；九个专家 persona **未动**。首稿把源码路径与英文注释原文也塞进 persona（**+316 字符**），复核后按"顶注放出处、persona 只留判据"的口径精简到 +154。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与前一轮同一批）。
 - 生效：`preset/` 改动 = 重生成 bundle + 重装 + **重启 dsh** + 新会话；**既有会话与它们已派出的子代理保留启动时那一份 preset**，所以这条只在新会话的新委派上可验（技能 `editing-cordis-compositions` 的既有结论）。
-- 未观测：真机上调度者在用户切权后是否真的**新建委派**（行为层；§11 第四问末已标未观测 —— 本轮只把判据写进 persona，没有真机日志证明它照做）。
+- 未观测：真机上调度者在用户切权后是否真的**新建委派**（行为层；§6 第四问末已标未观测 —— 本轮只把判据写进 persona，没有真机日志证明它照做）。
 
 ## 2026-09-30 — 截断接续补上**父级侧的触发信号**：规则 7 加一句"结算通知的开场白就是被截断的判据"
 
 - 依据（用户要求，原话）：「如果子代理因为达到输出token上限被截断，向其发继续消息可以让其接着工作。例：当收到这样的系统提示时代表子代理因为输出token上限被截断了：Background subagent 926daaa2-… ran out of room before it finished.It left no closing message.」并明确要求"用**最简语言**写入调度代理的提示词"。
 - `preset/agent.cordis.yml` 规则 7 既有的那半条（"被输出上限截断时不要换人、要就地接着写"）只补**一句识别信号**：新增片段逐字为「你那边的信号是结算通知的开头那句 `Background subagent <id> ran out of room before it finished.`（它自己看到的是「已达到输出 token 上限，回答被截断，已有输出保留在对话中」；开场是 `finished…` / `failed…` / `declined…` / `was stopped…` 的都不是截断）—— 被截断不等于被终止，**回一条继续消息它就能接着做**」。`send_message` 的既定动作、"不要重派新专家"、"整段驻留期已厚则写完这一截再换人"**都不动**；顶注第 15 条同步记下这句开场白的源码出处。（这一段的逐字措辞已在同日"用户复核"条里按"只留判据"再精简，**以该条为准**。）
-- 机制（源码级事实；`docs/evidence.md` 新增 §21.1）：后台子代理结算时运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，开场白由 `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支 —— `completed` / `aborted` / **`max-tokens`** / `refusal` / `error` 各一句，**只有 `max-tokens` 是 `ran out of room before it finished.`**；`:85-105` 的 `createSettlementMessage()` 在没有非空收尾文本时补一句 `It left no closing message.`（`@deepseek-ai/dsh-subagent/README.md:150` 逐字记载；运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ 用户给的例子正是"被截断且没留下收尾文本"这一态。**被截断 ≠ 被终止**，`resume({ resumeSessionId: childId })` 那条路照旧可用。
+- 机制（源码级事实；`docs/evidence.md` 新增 §14.1）：后台子代理结算时运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，开场白由 `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支 —— `completed` / `aborted` / **`max-tokens`** / `refusal` / `error` 各一句，**只有 `max-tokens` 是 `ran out of room before it finished.`**；`:85-105` 的 `createSettlementMessage()` 在没有非空收尾文本时补一句 `It left no closing message.`（`@deepseek-ai/dsh-subagent/README.md:150` 逐字记载；运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ 用户给的例子正是"被截断且没留下收尾文本"这一态。**被截断 ≠ 被终止**，`resume({ resumeSessionId: childId })` 那条路照旧可用。
 - 文档同步：`preset/design.md` I15 ②（恢复那半）、`preset/testing-guide.md` N12（② 里写明父级侧信号 + 辅助检索模式加 `ran out of room before it finished`、判违例加"缺这半"）、根 `README.md` 手段表"交付形态 + 截断接续"行（标题与三处说明）与 persona 体积账。
-- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7814 → 7972**（**+158 / +2.0%**，按 ~4 字符/token ≈ **+40 token/步**）；九个专家 persona 与插件正文**未动**。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与改动前同一批）。
+- 体量（正文行、含行首缩进、不含换行）：调度 persona `prefix` 正文 **7814 → 7972**（**+158 / +2.0%**，按 ~4 字符/token ≈ **+40 token/步**）；九个专家 persona **未动**。`node tools/check-preset.mjs` exit 0（0 错误 / 2 警告，与改动前同一批）。
 - 生效：`preset/` 改动 = 重生成 bundle + 重装 + **重启 dsh**（bundle 层的挂载行以重启为准，没有东西 watch `bundles/`），新会话才带得动新 persona。
-- 未观测：真实会话里调度者见到这句开场白之后**会不会真的发出继续消息**（§21.1 末与 §8 同一行行为观测；本机 6 条 `max-tokens` 截断至今 **0 次续写**）。
+- 未观测：真实会话里调度者见到这句开场白之后**会不会真的发出继续消息**（§14.1 末与 §4 同一行行为观测；本机 6 条 `max-tokens` 截断至今 **0 次续写**）。
 
-## 2026-09-30 — 安装逻辑：挂着 billion-context 的 profile **也一律启用** `dsh-adg-token-budget`（推翻 2026-09-28 的"让位"口径）
-
-- 依据（用户要求，原话）：「把安装时如果已安装billion-context的话就禁用掉dsh-adg-token-budget的逻辑改为仍然启用dsh-adg-token-budget」。推翻的是 §17.1 第 9 条那条政策 —— 当时"挂着 bili 的 profile 不启用这个 plugin"，理由是它按步数档位给同一批子代理下收敛提醒、与 bili 的压缩/nudge 是同类指令，两套会互相抢阈值。用户判断"重复"这一侧的代价可以接受：插件做的事 bili 不做（只按**步数**问一句"要不要收尾"，不碰上下文本身），而 2026-09-30 给提醒正文加的"**压缩（compaction）时把本段整条删除**"已经压掉了跨套提示的残留。**被推翻的只是"该不该让位"**，第 9 条写的"不要塞 `enabled: false` 覆盖行、要改就改 `dsh.profile.bundles`"这个**实现约束不变**。
-- `install.ps1` / `install.sh` 的 4c-1 分叉整段删除：所有 profile 从此走同一条路径 —— "确保 `dsh-adg-token-budget` 写在该 profile 的 `dsh.profile.bundles` 里"。旧版按 bili 把它移除过的（脚本当时留了清单备份 `package.json.bak-adg-token-budget`），重跑脚本会**把它加回去**；已选中且挂 bili 的只打一句"保持启用"。两份脚本都新增一条 `mountsBili`（`install.sh` 是 `mounts_bili="$(has_bili "$name")"`），**现在只用来选提示语**，不再进任何判断分支。
-- `tools/has-billion-context.mjs` 头注释与 `tools/AGENTS.md` 第 8 行改成同口径：这份判据是**单向**的，只决定该 profile 拿哪份味道（plain / bili），**不再**决定 `dsh-adg-token-budget` 启不启用。根 `AGENTS.md` 红线 11 尾段（"同一份判据的另一半"）整段改写为本轮口径，命令块与安装段注释同步。
-- 文档同步：根 `README.md`「与 billion-context 协同」节把"同一份判据的另一半：挂着 bili 的 profile 不启用…"整段换成「**第三处交界：`dsh-adg-token-budget` 在挂着 bili 的 profile 上照样启用**」（含推翻理由、加回机制、以及"实现仍然是'在不在 bundle 清单里'，**不是**塞 `enabled: true|false` 覆盖行"），tools 清单那行注释同步；`docs/evidence.md` 判据表行（第 39 行）改成"判据单向"、§17 节首问题陈述点名这条沿革、§17.1 第 9 条改标为历史口径（保留"为什么不用覆盖行"的理由并注明仍然成立）、**新增 §17.1 第 11 条**（三层：用户意图原话 / 实现 / 检验与未观测）、§17.2 ② 标 ~~作废~~ 换成"从旧版'已移除'状态加回清单后冷启动无副作用"、§18 的 2026-09-28 读数行加时效标注（该行记的是"4c 当时按 bili 移除"）。
-- **检验（临时 `DSH_HOME` 端到端三轮，不动真机；读数与逐字输出见 §17.1 第 11 条末段）**：临时根 `D:\dsh\.adg-scratch\home` 造出混装 —— `web` 的 `dsh.profile.bundles` 故意不含 `dsh-adg-token-budget`（模拟旧版按 bili 移除过）、`desktop` 含；`web/node_modules/billion-context/dsh.bundle.patch.yml` 在位（探测 `web=1` / `desktop=0`）。跑 `install.ps1 -SkipPackages`：第二轮（链接就位）exit **0**，逐字打出 `已把 dsh-adg-token-budget 加进 dsh.profile.bundles —— 这个 profile 挂着 billion-context：…（旧版安装曾按 bili 把它移除过就由此加回）`，备份文件逐字保留了移除前的清单 ⇒ **加回真的发生了**；第三轮（幂等）exit **0**，消息变成"保持启用"，`web` 清单稳定为 4 项。**关键负向断言：三轮里没有任何一轮把它从 `web` 移出**（旧脚本第二轮就会移除）。同时两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）` 说明味道那半没被动到。
-- 诚实边界：只跑了 Windows 的 `install.ps1`；**本机没有 `bash`**（`Get-Command bash` 为空）⇒ `install.sh` 的 4c-1 只是同步改写、**未执行**；临时根的 profile 是手工壳，**dsh 从未真的启动过它**。另外第一次跑临时根时 `install.ps1` 直接解析失败（`Unexpected token ')' …`、`The string is missing the terminator: '.`、满屏 mojibake）—— 根因是编辑工具**悄悄删掉了 UTF-8 BOM**（前三个字节变成 `23 20 E5`），补回 `EF BB BF` 后正常（红线 8 的现场复现）。
-- 未观测：**真机 `web` 上重跑 `install.*` 之后的效果**（要重跑脚本 + **重启 dsh**，然后 `list_bundles` 里有这条、日志新出一行 `activation: …`）；**两套提示同处一个 profile 会不会互相干扰**（属行为层，本轮没量）；**从旧版"已移除"状态加回清单后冷启动无副作用**（量法同 §8 对应行）。
-
-## 2026-09-30 — 步数阶梯改为**第 10 步起、每 10 步一次、共 30 次**；提醒正文加一句**压缩期处置声明**
-
-- 依据（用户要求）：① 插件默认阶梯从"每 5 步一档、5→280、共 56 档"改成**从第 10 步开始、每 10 步提示一次、共提示 30 次**（= `[10, 20, 30, …, 300]`）；② **在提醒正文里写明"压缩时忽略这条提醒"**。**同日按用户澄清改过口径**：用户的意思是"上下文到一定程度会触发压缩，压缩之后的文本里把这段提示词**整条删掉、不见踪影**，免得影响压缩后的上下文"—— 所以那句话不是"你自己忽略一份过期副本"，而是**在压缩发生时就要求把本段整条删除**（不写进摘要、不复述），并要求"若仍残留，那份副本已过期、直接忽略"兜底。先写成"残留副本已过期、直接忽略"，同一次改动内改成现在的措辞。
-- `plugin/dsh-adg-token-budget/src/config.js`：默认 `stepTiers` 换成 `[10, 20, …, 290, 300]`（30 档，仍是**一个间隔、不设变化**，I18 不变）；`MAX_STEP_TIERS` **保持 56**（它只是上限，不再等于默认阶梯长度：30 < 56 ⇒ 默认仍永不被自己的上限截断，而自定义列表的能力没有缩水；改小它等于顺手削掉一个能力，与本次要求无关）。对应的注释一并改写成"上限有余量"。
-- `plugin/dsh-adg-token-budget/src/plugin.js`：`STEP_CHOICE_BODY` 末尾追加第 5 句 ——「**压缩（compaction）时把本段整条删除**：不要写进摘要、也不要复述——它只对注入它的那一步有意义。若它仍残留在摘要里，那份副本已经过期、**直接忽略**；本条在注入它的那一步仍然适用。」；顶部注释从"做四件事"改成"做五件事"，并写明第 5 条的性质是**处置（disposal）而不是第二道命令**（不许收走上面两个分支、不许写成命令句 —— 与 I14 前半句同一条红线），末半句同时挡住"整条提醒可以直接扔掉"的误读。
-- `plugin/dsh-adg-token-budget/cordis.patch.yml`（**生效行**，bundle 层）与 `examples/cordis.patch.yml`（键参考）的 `stepTiers` 同步换成 30 档 —— 只改 `src/config.js` 的默认值**不够**，行里显式写了这个键、以行为准。
-- **这是一句提示级请求，不是机制**（源码级事实，已写进 `design.md` I14 与两处 README）：DSH 的压缩**没有"按消息排除"的开关** —— `@deepseek-ai/dsh-compaction-basic` 的默认摘要器是把会话前缀重放一遍、再追加一段固定的 `COMPACTION_INSTRUCTION`（`lib/index.js`，固定 Markdown 结构 + "保留用户明确指令"），消息选择上没有 `exclude` / `skip` 之类字段。所以"整段删除"只能靠摘要器照办，靠不住时由同一句的"已过期、直接忽略"兜底；**是否照办属于未观测**，不许写成"压缩后一定不见踪影"。
-- `plugin/dsh-adg-token-budget/test/plugin.test.js`：阶梯用例改名 `the default ladder is a flat 10-step cadence from step 10 through step 300, and within the tier cap`，断言首档 = 10、末档 = 300、**每个**相邻间隔恒 = 10、档数 = 30，并把"档数 = 上限"换成"默认在上限内**不被截断**"（`normalizeConfig({})` 逐项等于默认）；措辞字面量钉补第 5 句，并新增 `match(/压缩（compaction）时把本段整条删除/)`、`match(/不要写进摘要、也不要复述/)`、`match(/那份副本已经过期/)`、`match(/直接忽略/)`、`match(/本条在注入它的那一步仍然适用/)` 五条断言。未变异套件 `tests 54 / pass 54 / fail 0`。
-- 文档同步：`plugin/dsh-adg-token-budget/README.md`（阶梯段与覆盖/成本表、配置表、激活行形状、新增第五条性质"压缩时整段删除 + 残留副本忽略"与机制边界）、`design.md`（**I12** 改成"上限 56 ≠ 默认长度、默认 30 档留余量"、**I18** 改写为新起点/间隔/档数、**I14** 追加压缩期处置声明半条 + 它的边界 + 上面那条机制前提）、`testing-guide.md`（I12 / I18 / I14 三行改写、观测状态表与未观测清单加第三个观测量"处置声明有没有真的生效"）、`INSTALL.md`（"现行阶梯下未观测"那条改写成 30 档、两条历史读数加时效）、`docs/evidence.md`（§1 阶梯沿革与"两个平坦阶梯都没重跑"、未观测表、§9 时效段、§16 出厂 config 行）、根 `README.md`（顶部插件摘要、步数收敛检查点节的阶梯/覆盖/成本表、**示例消息改成 `1／30 · 第 10 步` 并补上第 5 句**、"为什么必须写成可选"改成五道性质、触发与动作表、配置表、出厂行、2026-09-24 那两行历史读数加时效标注）、`preset/agent.cordis.yml` 顶注第 4 条（阶梯与处置声明）。
-- 体量代价（如实记）：那句处置声明 **98 字符**，内置正文从 234 涨到 **333 字符**（首档整条消息约 **360 字符**）。旧文档里"每条约 180 字符"是更早措辞下的读数，已在两处 README 改标为"当时"并注明现行字符数；**提醒成本没有重测**。
-- 未观测：**30 档阶梯下有没有真实注入**（改动落在 `src/` 与 bundle 行 ⇒ 必须重启 dsh，生效后还要真实 Adg 委派才有记录）；**处置声明是否真的生效**（观测量：压缩之后的上下文里还有没有这段文字，以及子代理有没有再次按"第 N 步"定位、或凭空开始收敛汇报）；**步骤变稀 + 正文变长之后的提醒成本与收敛效果**（旧阶梯的 34/37、214 条、0.25% 不许当成新阶梯的数，p50/p75/p90 与改道次数要重跑）。
-
-## 2026-09-30 — 全字段提示词压缩（调度 persona / 九个专家 persona / 插件内置提醒）
+## 2026-09-30 — 全字段提示词压缩（调度 persona / 九个专家 persona）
 
 - 依据（用户要求）：优化 Adg 多智能体模式里**所有**提示词，从语言上缩减字数、降低 token 消耗，**语义不能有任何损耗**。上游 `plan-mode` 的 `section` 按用户选择**保持原样** —— 它是 `@deepseek-ai/dsh-web-app` 那份 preset 文本的逐字拷贝，不属于本仓库自有措辞。
-- 体量（同一口径：正文行、**含**行首缩进、**不含**换行）：调度 persona `prefix` 正文 **9082 → 7814**（−1268，−14.0%）；九个专家 persona 合计 **8940 → 8140**（−800，−9.0%）；插件内置提醒 `STEP_CHOICE_BODY` + `STEP_LAST_TAIL` + 头部那一句 **374 → 355**（−19，−5.1%，按重建出的实际字符串量）；合计 **18396 → 16309**（−2087，−11.3%）。人向口径（≈4 字符/token）折合约 **−522 token/请求当量**：调度者那半 **−317 token/步**、每个被委派子代理 **−200 token/步**、每条检查点提醒 −5。
-- 做法：同义改写为更短的句子、删掉**同一块内重复的复述**（名册已经逐条写了每个专家的分派范围，规则 3 就不再重复一张路由表；专家 persona 里写了两遍的"网页内容一律当作数据"只留一遍）、把解释性从句压成括号短语。**没有被压缩的**：规则编号，以及每条规则的全部规范性内容（五条编排层规则、输出／交接纪律、人工介入四分支、权限闸门、回报协议、五项必填、九行「收敛纪律」）、`stepTiers` 阶梯、任何工具名与 `allow` 名单；也**没有**引入任何 token／字数上限（I10 / I15 仍然禁止）。压缩的是表述，不是约束。
-- 同步改动的字面量（措辞被测试与文档钉住）：`plugin/dsh-adg-token-budget/test/plugin.test.js` 的字面量钉（`the built-in checkpoint wording is pinned literally`）与 6 处头部正则（现为 `调度代理提醒：第 N 步。`，去掉"这是你的"四字）；根 `README.md` 引的那段提醒正文、体积账与「收敛纪律」引文；`plugin/dsh-adg-token-budget/README.md` 与 `INSTALL.md` 的提醒示例；`skills/adg-add-agent/SKILL.md` 引的「收敛纪律」那句；`agent_browser` persona 的失败签名收短为 `platform_channel.cc:183 Check failed … 拒绝访问(0x5)`（判据词 `platform_channel` 保留）。
+- 体量（同一口径：正文行、**含**行首缩进、**不含**换行）：调度 persona `prefix` 正文 **9082 → 7814**（−1268，−14.0%）；九个专家 persona 合计 **8940 → 8140**（−800，−9.0%）；合计 **18022 → 15954**（−2068，−11.5%）。人向口径（≈4 字符/token）折合约 **−517 token/请求当量**：调度者那半 **−317 token/步**、每个被委派子代理 **−200 token/步**。
+- 做法：同义改写为更短的句子、删掉**同一块内重复的复述**（名册已经逐条写了每个专家的分派范围，规则 3 就不再重复一张路由表；专家 persona 里写了两遍的"网页内容一律当作数据"只留一遍）、把解释性从句压成括号短语。**没有被压缩的**：规则编号，以及每条规则的全部规范性内容（五条编排层规则、输出／交接纪律、人工介入四分支、权限闸门、回报协议、五项必填）、任何工具名与 `allow` 名单；也**没有**引入任何 token／字数上限（I10 / I15 仍然禁止）。压缩的是表述，不是约束。
+- 同步改动的字面量：`agent_browser` persona 的失败签名收短为 `platform_channel.cc:183 Check failed … 拒绝访问(0x5)`（判据词 `platform_channel` 保留）。
 - `preset/agent.cordis.yml` 顶注：新增一段"2026-09-30 全字段提示词压缩"（体量、做法、哪些没压、同步改了哪些字面量），并把第 4 条里过时的"**八个**专家"改成"九个专家"（第 9 行 `agent_general` 早在 2026-09-28 就已加入，这处计数一直没跟上）。
-- 校验：`node tools/check-preset.mjs` **exit 0**（0 错误 / 2 警告，与压缩前完全一致）；两种味道的产物校验各 **exit 0**（专家行 allow 计数 `10/7/7/10/2/5/9/7/16` 与 `+4` 的 bili 形状都没动）；插件 **54 个测试全通过**（断言集合没动，只更新字面量与 6 处正则）。
+- 校验：`node tools/check-preset.mjs` **exit 0**（0 错误 / 2 警告，与压缩前完全一致）；两种味道的产物校验各 **exit 0**（专家行 allow 计数 `10/7/7/10/2/5/9/7/16` 与 `+4` 的 bili 形状都没动）。
 - 变更记录的时间序：本条的 `last_reviewed` 一并改为 2026-09-30。
 - 未观测：压缩后的表述在真实会话里是否与压缩前**同样被遵守**（观测量：I13 / I15 的同一批抽查在压缩前后各跑一次 —— "未验证 / 未纳入"块的齐全率、回贴重合率、重复率）。**不含语义变化的证据是静态的**：`preset/testing-guide.md` 的探针字符串在压缩后**全部仍然命中**（`danger-full-access` / `platform_channel` / `正常路径` / `预先禁止` / `不许请你登录` / `至多一轮` / `只问一次` / `次数上限` / `不要打扰` / `同一实体` / `path:line` / `digest` / `验收标准` / `必要性闸门` / `未纳入本次` / `只在一个站点` / `steer` / `interrupt_agent` / `结算通知` / `不要换人、要就地接着写` / `交接摘要` / `adg-digest` / `临时根` / `绝不` / `去冗余` / `回贴` / `未验证 / 未纳入` / `分字段` / `agent_general` / `显式要求`），而"表述是否等价"这件事只有人能判 —— 逐条对照见提交说明。
-
-## 2026-09-29 — 插件提示词加"最短路径"半步 + 阶梯改为**每 5 步一档**（5→280，56 档；档数上限 16→56）
-
-- 依据（用户要求）：① 在检查点提醒的"继续"分支里，要求子代理**把下一步选成通往目标的最短路径上的那一步**、并用一句话说明为什么最短 —— 目的是让它**保持在最快达到目标的路径上**；② 阶梯改为**从第 5 步开始、每 5 步一次、不设间隔变化**（覆盖档数经用户确认取 5..280，共 **56** 档）。
-- `plugin/dsh-adg-token-budget/src/plugin.js`：`STEP_CHOICE_BODY` 的"继续"分支尾部加"继续时把下一步选成**通往目标的最短路径上的那一步**（哪一步最快让目标可交付；不是顺手、最省事或看起来最忙的那一步），并用一句话说明它为什么最短"；原来的"不要为了回应它而缩减或改写计划"**原位保留** —— 这条约束的是剩余工作的**顺序**、不是**范围**，两半必须同时在场；顶注从"做三件事"改为"做四件事"并写明这个边界。
-- `plugin/dsh-adg-token-budget/src/config.js`：默认 `stepTiers` 从 14 档（`[4, 8, …, 280]`，早期密集 + 之后约 ×1.3 拉开）换成 **56 档平坦阶梯**（`[5, 10, 15, …, 275, 280]`）；`MAX_STEP_TIERS` 16 → **56**（等于默认阶梯长度 ⇒ 默认永不被自己的上限截断）。理由不是成本而是语义：拉开的间隔恰好是"走得越久越少被问一次"的许可，与"保持在最快路径上"相反，而长尾（p90 = 103、max = 329）正是最该被问的地方。
-- `plugin/dsh-adg-token-budget/cordis.patch.yml`：**生效行**（bundle 层）的 `stepTiers` 同步换成 56 档 —— 只改 `src/config.js` 的默认值**不够**，行里显式写了这个键、以行为准。
-- `plugin/dsh-adg-token-budget/examples/cordis.patch.yml`：键参考同步（并注明"34/37、214 条"等覆盖数字是**旧 14 档**的读数、不覆盖新阶梯）。
-- `plugin/dsh-adg-token-budget/test/plugin.test.js`：阶梯用例改名 `the default ladder is a flat 5-step cadence through step 280, and within the tier cap`，断言首档 = 5、末档 = 280、**每个**相邻间隔恒 = 5、档数 = 56 = 上限；措辞用例改名 `the built-in checkpoint wording is pinned literally`（字面量更新），新增 `match(/通往目标的最短路径上的那一步/)`、`match(/为什么最短/)`、`match(/不要为了回应它而缩减或改写计划/)` 三条断言，原有反向断言（不许出现"立即停止"、不许规定汇报内容）全部保留。
-- 变异验证（副本在 `$TEMP`，不碰工作区）：新增 **M19**（把尾巴重新几何拉开 ⇒ `exit 1`）、**M20**（删掉"最短路径"那句 ⇒ `exit 1`，同时被字面量与专门的正则断言抓住）；未变异套件 `tests 54 / pass 54 / fail 0`。
-- 文档同步：根 `README.md`（顶部摘要、步数收敛检查点节的阶梯/覆盖/成本表、手段表、配置表、出厂行、示例消息改成 `1／56 · 第 5 步`、persona 政策那段的"从第 5 步"）、`plugin/dsh-adg-token-budget/README.md`（阶梯与覆盖表、配置表、激活行形状、新增第五条"继续分支被要求给出最短下一步"，并**修掉一处陈旧描述**：旧文写"收尾分支还要求说明交付了什么、哪些没验证"，而现行正文明确**不**规定汇报内容）、`design.md`（I12 上限 56、**新增 I18「阶梯不设间隔变化」**、I14 追加最短路径半条）、`testing-guide.md`（I12 / I14 行改写、新增 I18 行、两条观测状态行与未观测清单加时效与两个新观测量）、`INSTALL.md`（"默认 14 档下未观测"那条改写为"现行 56 档下未观测 + 14 档确实注入过"、两条历史读数加时效标注）、`docs/evidence.md`（§1 阶梯表与成本标注为旧阶梯读数、§8 两行、§9 开头加时效段、§16 出厂 config 行）、`preset/agent.cordis.yml` 顶注第 4 条（阶梯与"早期、密集"措辞）。
-- 未观测：**56 档平坦阶梯下有没有真实注入**（改动落在 `src/` 与 bundle 层 ⇒ **必须重启 dsh**，生效后还要真实 Adg 委派才有记录）；**"最短路径"那句有没有真的把子代理留在最快路径上**（观测量：被提醒的子代理选"继续"之后的下一条消息里有没有写出"为什么这一步最短"，以及换阶梯前后的步数分位数 p50/p75/p90 与中途改道次数）；**平坦阶梯的覆盖面与提醒成本没有重测**（旧阶梯的 34/37、214 条、0.25% 不许当成新阶梯的数）。
 
 ## 2026-09-29（同日更早，本机部署）— 卸载 billion-context、恢复 DSH 原生压缩；`adg` 因此重新部署为 plain
 
@@ -112,9 +91,9 @@ last_reviewed: 2026-09-30
 - `preset/agent.cordis.yml` 规则 6：补**异实体按实体拆**（每个实体一条委派、**边界写死三件套**：目标点名唯一一个实体 / 验收标准写成"只就它作答" / 本次不做列出相邻实体并加「若必须拿到别的实体的数据才能作答就停手、把它作为未决问题报回来，不要自行扩面」）；补**共同结论层工件**（同一批结论要被多条委派共读时，先由**一个**专家把它做成可复用工件或接进委派 prompt，源材料变了先刷新）。+447 字符。
 - `preset/agent.cordis.yml` 规则 7：补"**是否要重复读同一批材料**"这条转向理由（要 → 接给已读过它的那个它；不要 → 另开新专家、委派里带**交接摘要**：一条结论 + 证据位置 + 未决项），并补"**该停的时候**"（在飞任务已在同一件材料上走了很多步、或它这一轮被截断且整体上下文已厚 ⇒ 停掉它、按规则 5 另开并带交接摘要；会话虽被持久化、恢复会重建计数，但既有上下文会在余下每一步作为 cache-read 重新计费）。+283 字符（另一改动的 +275 见上一条）。
 - `preset/agent.cordis.yml` 规则 10 ⑤：改写成**预防式** —— "输出上限**不可预测**，所以大产出按规则 5 分段交付、不要憋到单条回答里；截断后的续写入口只有'由你用 `send_message` 接给**同一个**被委派的子代理'那一条路，**你不是那个能续写的人**"。上一轮记的"⑤ = 撞上输出上限不是删内容、是从断点接着写完"**已被本次复核推翻**：⑤ 写恢复动作是错的（截断在 agent 循环里正常 `return`，恢复动作归规则 7）。
-- `preset/agent.cordis.yml` 顶注：第 3 行"十五处"改**十六处**；第 15 条整段按复核改写 —— ① 截断**已量到频次**（不只机制）② 6 条截断**之后记录数为 0** ⇒ "就地接续"在本机**没有先例**，只能写成调度者动作 ③ 本机上限是 pi-ai 的 `DEFAULT_MAX_TOKENS = 32768`、撞上限时 `tool-call` 块被整体丢弃、工具返回会把保留的部分答案附在错误里 ⇒ 正确口径是"先消费部分产出、再决定续跑还是换人" ④ 代价按重测改为 **+1346**（正文 7736 → **9082**，≈320 token/步），并指向新增的 `docs/evidence.md` §21。
+- `preset/agent.cordis.yml` 顶注：第 3 行"十五处"改**十六处**；第 15 条整段按复核改写 —— ① 截断**已量到频次**（不只机制）② 6 条截断**之后记录数为 0** ⇒ "就地接续"在本机**没有先例**，只能写成调度者动作 ③ 本机上限是 pi-ai 的 `DEFAULT_MAX_TOKENS = 32768`、撞上限时 `tool-call` 块被整体丢弃、工具返回会把保留的部分答案附在错误里 ⇒ 正确口径是"先消费部分产出、再决定续跑还是换人" ④ 代价按重测改为 **+1346**（正文 7736 → **9082**，≈320 token/步），并指向新增的 `docs/evidence.md` §14。
 - `preset/design.md`：I13 ① 补**异实体按实体拆 + 边界写死 + 共同结论层工件 + 源材料变了先刷新**；I13 ② 补**规则 7 的两种相反处置必须一起在位、判据不得互相覆盖**（换人管*上下文量*、就地接续管*单轮的截断事件*）；I14 补**同一类工件的第二形态**（共同结论层工件 / 索引 / 跨委派共享 `path:line` 清单受同一条约束）；I15 补**"预防（规则 5 / 规则 10 ⑤）/ 恢复（规则 7，不属本条）"两半**与"分段交付是交付形态要求、不是产出量上限"；front matter `last_reviewed: 2026-09-28 → 2026-09-29`。
-- `docs/evidence.md`：§19 之后新增 **§20（派发拓扑：实体 × 性质、"是否要重复读同一批材料"的直接推论、边界写死三件套、共同结论层工件与 I14）** 与 **§21（输出上限截断：`{kind:"max-tokens"}` 的规范结局与源码行号、`tool-call` 块被丢弃、本机上限 32768、只读扫描 285 个档案量到 6 条截断的逐条清单与"截断后 0 记录"、多帧 zstd 的读法）**；§8 未观测清单登记"截断后就地接续（行为）""异实体拆分与共同结论层的真实效果"两行。
+- `docs/evidence.md`：§12 之后新增 **§13（派发拓扑：实体 × 性质、"是否要重复读同一批材料"的直接推论、边界写死三件套、共同结论层工件与 I14）** 与 **§14（输出上限截断：`{kind:"max-tokens"}` 的规范结局与源码行号、`tool-call` 块被丢弃、本机上限 32768、只读扫描 285 个档案量到 6 条截断的逐条清单与"截断后 0 记录"、多帧 zstd 的读法）**；§4 未观测清单登记"截断后就地接续（行为）""异实体拆分与共同结论层的真实效果"两行。
 - `preset/testing-guide.md`：N13 的 ② 按现行规则 10 ⑤ 改为预防式、辅助检索换掉失效的 `接着说` 判据（改查 `输出上限不可预测`）；N1 末句把"三处"逐条点名（规则 5 交付形态 / 规则 7 恢复 / 规则 10 ⑤ 预防）。
 - `README.md`：手段表的"交付形态 + 截断接续"行改为正确机制（`max-tokens` 是正常结局、不走 `agent/request-error`、无内建重试、只有调度者能接）+ **已量到的 6 条截断**；体积账 9002 → **9082 / +1346**；"未观测"段把"截断频次没有证据"改成"频次已量到、行为仍未观测"。
 - 未观测：**"调度者会不会真的去接"与"接住之后产出是否完整"**（6 条历史截断里一条都没续写过）；**异实体按实体拆 + 共同结论层工件**的真实效果（子代理个数 / 调度者上下文增量 / 重复读取次数，量法与观测量见根 `README.md`「多智能体的 token 消耗」节与 `preset/testing-guide.md` I13 的 N1 / N2 / N3）。
@@ -138,9 +117,9 @@ last_reviewed: 2026-09-30
 - `install.ps1` / `install.sh`：生成物改为**两份**（plain → `$DSH_HOME/bundles/dsh-adg-preset`，注入版 → `$DSH_HOME/bundles/dsh-adg-preset-bili`，包名都叫 `dsh-adg-preset`，两份味道无条件都生成），`auto` 下**逐个 profile** 用它自己的探测结果决定 `link:` 哪一份，`on` / `off` 只做整体覆盖（覆盖与探测不一致时打黄字警告）。
 - `install.ps1` / `install.sh`：新增第 4b-1 步 —— 用 `tools/check-bundle-flavor.mjs` 断言该 profile **实际链接到的那一份**的味道（判据不能是"包在不在"：两种味道的 `package.json` 逐字节相同），不一致即判失败（exit 2）。
 - `install.ps1` / `install.sh`：第 0 节探测与 4b-1 都改成"`cmd /c` 重定向写文件 + 读文件 + 显式查退出码"——沙箱里 `@(& node ...)` 捕获会把输出吞成空串、`$LASTEXITCODE` 还是上一条的值（会静默把味道判反、断言假绿）。
-- `AGENTS.md` 红线 11：删掉"生成物全机共用一份 ⇒ auto 只在'每个目标 profile 都挂着'时才注入"，改为两种味道两个落点 + 逐 profile 选味道 + 4b-1 断言；命令段与生效方式表同步（复核第一步改成"先确认该 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份"）。
+- `AGENTS.md` 红线 10：删掉"生成物全机共用一份 ⇒ auto 只在'每个目标 profile 都挂着'时才注入"，改为两种味道两个落点 + 逐 profile 选味道 + 4b-1 断言；命令段与生效方式表同步（复核第一步改成"先确认该 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份"）。
 - `README.md`：「与 billion-context 协同」的 auto 口径改写；**删掉"本机特例（`web` 的 `dsh-adg-preset` 是实体目录）"**——那套绕法不再需要，改为写明 `web` 该指向注入版、`desktop` 指向 plain；第 2 步"生成 bundle"、第 3 步"装 bundle"与部署目标表都补第二种味道。
-- `docs/evidence.md`：新增 **§18**（症状 / 根因 / 修法 / 临时 DSH_HOME 端到端四轮检验 / 未观测）；§17.1 第 8 条加"该口径已被推翻"的指针，§17.2 ① 补一条负向观测（plain 落点下真实专家确实报 `unknown tool compress`）。
+- `docs/evidence.md`：新增 **§11**（症状 / 根因 / 修法 / 临时 DSH_HOME 端到端四轮检验 / 未观测）；§10.1 第 8 条加"该口径已被推翻"的指针，§10.2 ① 补一条负向观测（plain 落点下真实专家确实报 `unknown tool compress`）。
 
 ## 2026-09-28（追加）— 调度 persona 规则 8：**委派一律走后台**（阻塞会把这一次降级成一次性、接不回来）
 
@@ -158,94 +137,26 @@ last_reviewed: 2026-09-30
 - `tools/check-preset.mjs`：源文件里手写 `compaction-basic` 的 `auto` 判 **ERROR** 并指回 `--with-billion-context`（`auto` 本就在该插件 `allowedKeys` 里，"未知键"那条拦不住它）。
 - `preset/agent.cordis.yml`：注释块记录"唯一一个构建期注入的键是 `compaction-basic` 的 `auto`"；**源文件本体仍不写 config**。
 - `preset/bundle.package.json`：`1.1.0` → `1.2.0`。
-- `AGENTS.md`：红线 11 与质量门 1b 各补 compaction 半边（含两种味道的实测计数与"手写即 ERROR"的反向守卫实测）；生效方式表那一行同步。
+- `AGENTS.md`：红线 10 与质量门 1b 各补 compaction 半边（含两种味道的实测计数与"手写即 ERROR"的反向守卫实测）；生效方式表那一行同步。
 - `README.md`：「与 billion-context 协同」改写成**两处交界**，并写明**本机特例** —— `web` 的 `dsh-adg-preset` 是实体目录（不是共享稳定目录的链接），重跑 `install.*` 会把它打平回 plain；给出恢复命令与"给 `desktop` 也装 bili"的绕开办法。
-- `docs/evidence.md`：§17.1 新增第 10 条（四层依据 + 检验 + 防重踩）、§17.2 从三条改四条、§8"realm 里 `auto` 取值"那行从「刻意留在范围外」改成「部分已处置 + 两条未观测」，§17 边界句改为"开关不是旋钮"。
+- `docs/evidence.md`：§10.1 新增第 10 条（四层依据 + 检验 + 防重踩）、§10.2 从三条改四条、§4"realm 里 `auto` 取值"那行从「刻意留在范围外」改成「部分已处置 + 两条未观测」，§10 边界句改为"开关不是旋钮"。
 - 依据：bili 官方 patch 自己就关自动压缩；只注入那四个名字而不关它，结果是两套折叠各自抢阈值、压同一段历史。
 
-## 2026-09-28（下午 15:31+08:00）— billion-context 协同：那四个上下文工具改为**构建期条件化注入**；挂着 bili 的 profile **不再启用** `dsh-adg-token-budget`
+## 2026-09-28（下午 15:31+08:00）— billion-context 协同：那四个上下文工具改为**构建期条件化注入**
 
 - `tools/gen-preset-bundle.mjs`：新增 `--with-billion-context`，给 9 个专家行的 `toolFilter.allow` 追加 `compress` / `decompress` / `search_context` / `acp_status`（**不含** `acp_cache` —— 它是账本诊断，归调度者）。不带旗标时产物逐字节不变。
-- 新增 `tools/has-billion-context.mjs`：判据"某个 profile 算不算挂着 billion-context" = `dsh.profile.bundles` 含该包 **且** `node_modules/billion-context/dsh.bundle.patch.yml` 存在；输出每 profile 一行 `<name><TAB>1|0`，退出码恒 0。**注入与停用两件方向相反的事共用这一份实现**。
+- 新增 `tools/has-billion-context.mjs`：判据"某个 profile 算不算挂着 billion-context" = `dsh.profile.bundles` 含该包 **且** `node_modules/billion-context/dsh.bundle.patch.yml` 存在；输出每 profile 一行 `<name><TAB>1|0`，退出码恒 0。
 - 新增 `tools/check-bundle-flavor.mjs`：钉住**产物**里那四个名字的有无（`check-preset.mjs` 读源文件、专家行在第 4 列；产物里它们在第 14 列，产物是它的盲区）。自己探测缩进；`acp_cache` 出现在产物里即 ERROR。
-- `tools/check-preset.mjs`：新增 `BUILD_TIME_INJECTED_TOOLS`，源文件里**手写**这四个名字判 **ERROR** 并指回构建期旗标（红线 11）。
-- `install.sh`：新增 `--billion-context[=auto|on|off]` 与 `ADG_BILLION_CONTEXT`；探测段（auto = 每个目标 profile 都挂着才注入）；gen 调用带旗标；4c 段把挂着 bili 的 profile 的 `dsh-adg-token-budget` 从 `dsh.profile.bundles` **移除**（备份 `.bak-adg-token-budget`）。
-- `install.ps1`：同上四处（参数 `-BillionContext`，UTF-8 BOM 已复核 `EF BB BF` + 解析零错误）。
-- `preset/agent.cordis.yml`：只加名册注释块第 5 条（说明这四个名字来自构建期注入、源文件保持中立）。**源文件的 `allow` 名单一项未增删** ⇒ 不挂 bili 的人拿到的产物不变。
-- `preset/bundle.package.json`：`1.0.0` → `1.1.0`。
-- `AGENTS.md`：新增**红线 11**（两侧后果、判据位置、"生成物全机共用一份"、token-budget 让位用"移除选中"而不是塞 `enabled: false`）；命令段加两条；`Context Loading` / 生效方式表补一行。
+- `tools/check-preset.mjs`：新增 `BUILD_TIME_INJECTED_TOOLS`，源文件里**手写**这四个名字判 **ERROR** 并指回构建期旗标（红线 10）。
+- `install.sh`：新增 `--billion-context[=auto|on|off]` 与 `ADG_BILLION_CONTEXT`；探测段（auto = 每个目标 profile 都挂着才注入）；gen 调用带旗标。
+- `AGENTS.md`：新增**红线 10**（两侧后果、判据位置、"生成物全机共用一份"）；命令段加两条；`Context Loading` / 生效方式表补一行。
 - `README.md`：新增「与 billion-context 协同（可选能力）」一节（L615-656）。
-- `docs/evidence.md`：新增 §17（逐条带状态档 + 交叉断言与零回归证据）、§8 三条未观测、证据来源表两行。
-- 依据：`allow` 是真白名单（`restrict()` 未知名当场抛 ⇒ 红线 7），而 bili 的压缩指令与 nudge **不看可见性**（`billion-context/src/server.ts:3427`）⇒ 不给就是指令悬空、乱给就是委派必挂；`dsh-adg-token-budget` 与 bili 都给同一批子代理下收敛/压缩提醒，两套同时开会互相抢阈值。
-
-## 2026-09-28（上午 10:00+08:00）— `dsh-adg-token-budget` 从手贴挂载行迁移成 bundle：挂载行改由包自己声明，落点并入 `$DSH_HOME/bundles/`
-
-- 挂载行来源：手贴进 `profiles/<profile>/cordis.patch.yml` 的 `- insert:` 条目 → 包自己的 `plugin/dsh-adg-token-budget/cordis.patch.yml`（**bundle 层**），由 `package.json` 的 `dsh.bundle.patch: ./cordis.patch.yml` 声明。
-- 部署落点：`$DSH_HOME/plugins/dsh-adg-token-budget/` → `$DSH_HOME/bundles/dsh-adg-token-budget/`（与 `dsh-adg-preset` 同一根）；profile 依赖 spec 同步由 `link:$DSH_HOME/plugins/dsh-adg-token-budget` 改成 `link:$DSH_HOME/bundles/dsh-adg-token-budget`；旧落点目录已删除（`install.ps1` 第 5 步：只有没有任何 profile 的链接指着它才删）。
-- 选中方式：新增"写进该 profile 的 `dsh.profile.bundles`"；profile 层不再出现挂载行。
-- 部署集合：五项（`package.json` / `src` / `README.md` / `examples` / `LICENSE`）→ **六项**，加的正是 `cordis.patch.yml`（= 挂载行本身）；与 `package.json` 的 `files` 一致；`test/` 与 `INSTALL.md` 仍不进部署。
-- 版本 `0.2.0` → `0.3.0`。
-- bundle 行的默认 config：例子文件 `enabled: false`（要人来武装）→ **出厂即武装**：`enabled: true`、`presets: ['adg']`、`stepNudge: true`、`stepTiers: [4, 8, 12, 18, 24, 32, 42, 55, 72, 95, 125, 165, 215, 280]`、`dryRun: false`、不写 `stepText`（用内置正文）、`logFile: !!js dshHomePath('adg-token-budget.log')`。
-- `logFile` 写法：每 profile 硬编码绝对路径 → `!!js dshHomePath('adg-token-budget.log')`（Loader 求值，任何机器都落到 `$DSH_HOME/adg-token-budget.log`）。
-- `examples/cordis.patch.yml` 的角色："可直接贴进 profile patch 层的挂载行" → **键参考 + 手工覆盖模板**（贴之前必须重写全部键）。
-- 层序与"整块替换"写进台账：profile 自己的 `cordis.patch.yml` 在**所有 bundle 层之后**应用；按 id 命中的 patch **整块替换** `config`（不是深合并），覆盖行必须整块重写所有键。
-- 热重载口径分层：**没有任何东西 watch `bundles/`** ⇒ 单独改 bundle 层的 `cordis.patch.yml` 不会自己触发重读，这一层以**重启 dsh** 为生效口径（禁止宣称"不重启也会生效"）；改一次 profile 的 `cordis.patch.yml` 或 profile 清单会让**整份 patch 栈重读**、顺带重读 bundle 层；改 profile 层的 `config:` 覆盖行**热重载**（`web` 是 `patchReload: live`，Plugins 页保存写的就是这一层）；改 `src/` 代码**必须重启**（不变）；行 id 与包名都没改 ⇒ 热重载身份不变。
-- 测试：`cd plugin/dsh-adg-token-budget && node --test test` **51 → 54** 个用例（新增三条钉住 bundle 挂载行形状的用例：包声明 `dsh.bundle.patch` 且文件存在 / 部署集合等于 `files` 六项 / bundle 行只有一条挂载行且出厂武装、旧 token 键不得回到生效行）。本机实测 **检验档**：`tests 54 / pass 54 / fail 0`（DSH 沙箱里要加 `--test-isolation=none`，见根 `AGENTS.md` 质量门第 2 条）。
-- `install.ps1` / `install.sh`：旧的 `- insert:` 行必须删，脚本改成**只报告、不代删**（不猜用户手改过的文件）。
-- 本机 profile：`web` 与 `desktop` 各加 `dsh.profile.bundles` 一条、`link:` 改指 bundle 落点、手贴行删除（备份 `cordis.patch.yml.bak-adg-token-budget-bundle-migration`，`desktop` 另有 `package.json.bak-adg-token-budget`）；`headless` 不含 `@deepseek-ai/dsh-web-app`，按判据跳过。
-- `docs/evidence.md`：新增 **§16**（机制对照表 + 本次本机日志行 + 顺带量到的两个技术事实 + 迁移后的本机状态与未观测 + 检验档那条测试数）；「证据来源」表"活行"一行改口成 bundle 层落点；§7 惰性旧键标注为手贴行时代的**历史状态**；§8 未观测清单补四条；§14.5 的旧落点与 `profiles/node_modules` 那段标注为**历史证据、不代表当前落点**（原文保留）；§15.5 补一句"多帧同日第二次确认"的指针。
-- `docs/evidence.md` §16.4 新增第 5 条**真机实测**：profile 层一条只写 `disabled: true`（不带 `config:`）的覆盖行**能关掉 bundle 层那一行** —— `list_plugins` 报 `enabled: false` / `fiberPhase: null`、总数仍 190、**日志不写任何新行**；撤掉覆盖行后 `02:19:52` 立刻重新写出 `activation: active …` 且键回落到 bundle 行。由此登记两条推论：`disabled`（Loader 层）与 `enabled: false`（插件自己）是**两个开关、证据形状不同**；**禁止用"日志没有新行"判断插件还活着**，判据是 `list_plugins` 的 `enabled` / `fiberPhase`。`INSTALL.md` 第 5 节原先挂的"迁移后未实测"缺口就此补上。
-- `docs/evidence.md` §16.4 新增第 6 条**真机实测**：profile 层残留一条同 id 的 `- insert:` 手贴行的后果 —— **不多挂一行**（条目总数仍 190、只写一行激活行），但**整块接管那一行的 `config:`**（只写 `dryRun: true` 的残留行把 `dryRun` 顶成 `true`：**注入当场停掉而 `fiberPhase` 仍是 `active`、日志看起来完全正常**；`02:31:45` 写入、删掉后 `02:32:13` 回到 `dryRun=false`），并让该行**脱离管理**（`readOnlyReason: "unaddressable"`、`patchId` 消失 ⇒ Plugins 页与 `set_plugin` 都点不动）。两条判据：`list_bundles` 的 `overrides` 发现不了这种残留（仍是 `[]`），**最快信号是 `list_plugins` 里这一条还有没有 `patchId`**；此事与 §14.3 那条"同一 profile 里同 id 只能有一个家"（同一层内的形状）**不是一件事，禁止混引**。
-- `install.ps1` / `install.sh` 那条"**只报告、不代删**"的理由已实测：残留行会整块接管 `config:`（`dryRun` 被顶成 `true`）并让该行变成 `unaddressable`（`docs/evidence.md` §16.4 第 6 条）。
-- `docs/registry.md`：`install.ps1` / `install.sh` 索引行的"挂载行的处理"改"bundle 选中的处理"。
-- `tools/testing-guide.md` 第 3.1 节：部署集合改**六项**、插件落点改 `$DSH_HOME/bundles/dsh-adg-token-budget/`、选中改 `dsh.profile.bundles`；两条冒烟判据同步（"不写挂载行"改"不写 `dsh.profile.bundles`"，并补"不代删 profile 层遗留行"）。
-- `browser/AGENTS.md`「生效方式」：插件落点那句改口成 `$DSH_HOME/bundles/dsh-adg-token-budget`。
-- 文档同步（插件模块）：`plugin/dsh-adg-token-budget/` 的 `AGENTS.md` / `INSTALL.md` / `design.md` / `testing-guide.md` / `README.md` 全部改到 bundle 形状（六项部署集合与 `dsh.bundle.patch`、`bundles/` 落点 + `dsh.profile.bundles` 选中、三层生效口径、`disabled: true` 与残留手贴行的实测、三条新用例的不变量归属、测试数 51 → 54）；`examples/cordis.patch.yml` 的头注释改成"键参考 + 手工覆盖模板"并写明跨层残留的接管后果（**数据行未动**，仍被 Loader 解析成 `config {enabled: false}`）。
-- 文档同步（仓库根）：根 `README.md`（安装表六项与新落点、「挂载行住在哪一层」「为什么装在 `$DSH_HOME/bundles`」两节重写 + 内部锚点同步、"怎么开 / 怎么关"改成覆盖行与 `disabled: true` 口径并取消"整行删掉"的建议、`logFile` 判据改 `!!js dshHomePath` 求值、证据表 51 → 54 并新增两行 bundle 化实测、目录树列出 `cordis.patch.yml`、「给 AI 的安装指令」第 5 / 6 / 8 / 9 步改口——**步骤编号 1–10 不变**，第 7 步沙箱提权 / 第 8 步真实挂载的全部引用点已复核）；根 `AGENTS.md`（命令块注释、生效方式表新增 bundle 层那一档并把小节标题里的"两条链路"去掉（表里早就不止两条）、表下"唯一的静默失效模式"一句、Project Map、Context Loading、Quality Gates 54；现 **104 行**，上限 200）。
-- `docs/evidence.md` §14.3 那条护栏补一句：它只登记到"两份同 id 的 `insert:` 行是危险形状"、**后果当时没有量过**，并给出**不许互相外推**的指针（跨层同 id 合并的后果见 §16.4 第 6 条）。
-
-## 2026-09-28（上午 08:50+08:00）— 同一个 dsh 升级的**第三个**成因：session format v4 废弃 `{kind:'plugin', plugin}`，插件注入检查点让**每一次委派**当场失败
-
-- **用户报的症状**：Adg 模式下子代理报「本轮运行失败」，原文
-  `format v4 message requires a producer-owned source kind`，任务做不完。与 §14 那两个成因不同：
-  preset 挂得上、会话能开，**是委派出去的每一个子代理在第一个步数检查点当场死掉**。
-  **preset 侧这次不用改** —— §14 的 bundle 迁移已经完成，本次只动插件。
-- **成因（源码级事实）**：v4 的原生准入只拒裸 `plugin` 这一个 `kind`，而它拒在**持久化写入路径**上
-  （`session.append('user/message', …)` 抛 `SessionFormatError`）；异常发生在监听器返回之后，
-  插件接不住，整轮委派失败。插件当时写的正是 `{kind:'plugin', plugin:'dsh-adg-token-budget'}`。
-- **定位（真机实测，一一对应）**：`adg-token-budget.log` 四条 `step stage: nudged tier=1/14 step=4`
-  与四个子代理的 `settled:` 相差 **12–35 毫秒**；四个子代理的 `session.v4.jsonl.zstd` **全部停在
-  `step/end`（step 3）**、没有 `turn/end`；同一时段**没有**注入的那个子代理走的是
-  `turn/end … aborted(parent)`（另一条已知路径）。调度者侧的同一次失败在它的转写 `tool/result` 里。
-  全部逐条见 `docs/evidence.md` §15。
-- `plugin/dsh-adg-token-budget/src/plugin.js`：`PLUGIN_SOURCE` 从
-  `{kind:'plugin', plugin: name}` 改成 `` {kind: `plugin:${name}`} `` ——
-  **逐字等于 v4 读取本插件 v3 记录时分配的那个 kind**（未识别生产者 → `plugin:<原名>`），
-  所以迁移前后的记录指向同一个生产者、本仓库"按 source 找证据"的 grep 口径不用改。代码注释与
-  `design.md` I17 记了准入规则的出处（`dsh-session-format-v3-to-v4` 的 `source()`，以及 JSONL writer
-  里内联的同一判据）。
-- **测试**：50 → **51** 个用例（新增 `the reminder source passes the session format v4 admission rule`：
-  两条构造路径 + 规则本身 + 旧包装的 `plugin` 属性必须消失），实测 `pass 51 / fail 0`；
-  变异 **M18**（把旧包装写回去）被 **4 条断言**抓住。**同一次复核还发现 harness 漂移**：
-  M1 / M3 / M4 / M5 / M6 的变异串是对 token 两档移除**之前**的代码写的，重跑报 `NOT-APPLIED`
-  —— 是 harness 漂移、不是回归（存活档由 M8 / M13 罩住，同跑仍被抓住），已写进插件 README、
-  `testing-guide.md` 第 6 节与 `docs/evidence.md` §15。
-- **宿主侧复测（不是复述规则）**：`node D:\dsh\.adg-step-mutations\verify-v4-source-admission.mjs`
-  用**装好的** `assertV4RowAdmission` 跑插件的真实消息 —— 当前 kind 通过、旧包装被拒并给出用户报的
-  那句原文。
-- 文档同步：`plugin/dsh-adg-token-budget/`（`AGENTS.md` 模块红线新增第 7 条、`design.md` 新增不变量
-  **I17** + 非功能红线第 7 条、`README.md` 新增「The source kind is a v4 admission contract」小节 +
-  变异表 M18 行 + 那一跑的漂移说明、`testing-guide.md` 不变量表 I17 行 + 第 6 节、`INSTALL.md` 引用
-  旧摘录处加"那是 v3 历史形状"的注）、仓库根 `README.md`（证据表新增一行 + 变异条数）、根 `AGENTS.md`
-  与插件 `AGENTS.md`（测试数 50 → 51）、`docs/evidence.md`（新增 §15；§8 的"本机没有 zstd 解压能力"
-  更正为已复核并给出多帧切分口径；§14.6 的"web 插件 dep 还是旧 tgz"更正为事实已对齐）。
-- **未观测（不许写成实测）**：修复后**没有再跑过一次真实 Adg 委派** —— 改插件 `src/` 必须重启 dsh，
-  而重启会结束当时正在跑的会话。验收动作写在 `docs/evidence.md` §15.4 末（三件事：注入后同一 label
-  不紧跟 `settled:`、转写里出现新的 `source.kind`、调度者不再收到那句 `SessionFormatError`）。
+- `docs/evidence.md`：新增 §10（逐条带状态档 + 交叉断言与零回归证据）、§4 三条未观测、证据来源表两行。
+- 依据：`allow` 是真白名单（`restrict()` 未知名当场抛 ⇒ 红线 7），而 bili 的压缩指令与 nudge **不看可见性**（`billion-context/src/server.ts:3427`）⇒ 不给就是指令悬空、乱给就是委派必挂。
 
 ## 2026-09-28（晚）— dsh 0.1.7-rc.2 之后 preset 挂不上：旧目录机制被移除 + 引擎行包名改名，安装链路整体改成 bundle
 
-- **两个独立成因，都必须修（详见 `docs/evidence.md` §14）**：① dsh 0.1.7-rc.2 **移除**了
+- **两个独立成因，都必须修（详见 `docs/evidence.md` §9）**：① dsh 0.1.7-rc.2 **移除**了
   `$DSH_HOME/.agent-presets/<id>/` 那套目录发现机制，而 `install.ps1` / `install.sh` 仍在往那里拷文件 ——
   拷过去的东西没有任何组件会读，这就是用户报的「预设加载不出来」；② 同一版里引擎行的包名从
   `@deepseek-ai/dsh-workflow-worker-thread` 变成 `@deepseek-ai/dsh-workflow-ptc`，旧名会让 registry
@@ -259,15 +170,11 @@ last_reviewed: 2026-09-30
   （`name: '@deepseek-ai/dsh-workflow-ptc'`、`config: {provider: spawn}`），行旁留注释记录改名与原诊断字符串。
 - `install.ps1` / `install.sh` 重写：生成 bundle → 拷到 `$DSH_HOME/bundles/dsh-adg-preset` → 自动识别
   "能装 preset 的 profile"（判据：其 `dsh.profile.bundles` 含 `@deepseek-ai/dsh-web-app`，因为声明
-  `agentPresets` 服务的 `agent-preset-registry` 由它提供）→ `pnpm add link:` 装 bundle 与插件 →
-  写 `dsh.profile.bundles` → 把插件挂载行追加进该 profile 的 `cordis.patch.yml`（保留备份）→
-  部署技能与 `browser/`。插件部署位置从 `profiles/node_modules/`（本版解析已排除该共享根）改为
-  `$DSH_HOME/plugins/` + `link:`。pnpm 失败不再中断脚本、只如实报告；**只有包真的出现在 profile 的
-  `node_modules` 里之后**才写清单与挂载行。
+  `agentPresets` 服务的 `agent-preset-registry` 由它提供）→ `pnpm add link:` 装 bundle → 写 `dsh.profile.bundles` → 部署技能与 `browser/`。pnpm 失败不再中断脚本、只如实报告；**只有包真的出现在 profile 的 `node_modules` 里之后**才写清单。
 - 文档同步：`README.md`（安装表、"给 AI 的安装指令"整节重写、"为什么装在 `$DSH_HOME/plugins`"、
   历史段落加"已过时"标注）、根 `AGENTS.md`（命令块、生效方式表新增"包名会随 dsh 改名"一行、
   模块地图 `tools/` 行、Quality Gates 第 3 条指向新步骤号）、`preset/*`、`tools/*`、
-  `plugin/dsh-adg-token-budget/*`（含 `INSTALL.md` 的部署路径）、`skills/adg-add-agent/SKILL.md`
+  `skills/adg-add-agent/SKILL.md`
   （改成"改仓库源文件 + 重跑生成与安装"）、`browser/*` 的交叉引用。
 - **实测（本机，web profile）**：bundle 路线 18:23:07 与 18:28:18 各一次、profile-patch 路线 18:24:27
   一次，三次数值一致 —— `resolve('adg').broken` 为空、`compositionInventory()` 35 行 / 32 启用 /
@@ -276,9 +183,7 @@ last_reviewed: 2026-09-30
   `managed exclusively by the Electron application` 拒绝）；`install.sh` 在本机没跑过（Windows 无 `sh`）。
 - **遗留的环境问题（如实记录，未修好）**：`profiles/web/node_modules/.modules.yaml` 缺失、锁文件与清单
   有漂移 —— dsh 正在运行时 pnpm 无法重建目录；**影响为 0**（依赖都能解析、行都 active），
-  关掉 dsh 后重跑安装脚本或 `pnpm install` 即修复（`docs/evidence.md` §14.6）。
-  同一原因导致 `web` 的**插件** dep 还是旧的仓库 tgz（`desktop` 已换成新形状的 `link:`）——
-  功能无影响，关掉 dsh 后重跑一次安装脚本即对齐（同 §14.6）。
+  关掉 dsh 后重跑安装脚本或 `pnpm install` 即修复（`docs/evidence.md` §9.6）。
 
 ## 2026-09-28 — 新增第 9 个专家 `agent_general`（交接专用全功能**叶子**）：只在用户显式要求时派，靠运行时注入的 `send_message` 指引回报上级
 
@@ -290,21 +195,21 @@ last_reviewed: 2026-09-30
 - `preset/testing-guide.md`：`I1..I15` → `I1..I16`；新增 **P1**（静态核对三个半条 + 为什么"给它加 `agent_*`"脚本拦不住）与 **P2**（真实挂载量法：不提"交接"时不应派、提了应派、它那一轮有没有 `send_message` 与四字段交接回执）；K2 / M1 / 3.2 的"8 行"改"9 行"，3.2 补一句"技能对 `agent-general` 特殊性的断言过期也算过期"。
 - `preset/AGENTS.md`、根 `AGENTS.md`：专家行数 8 → 9；新增 I16 红线（含"`send_message` 不许删"）；根 `AGENTS.md` 关键红线新增 4b；Quality Gates 第 1 条的实测值由 **0 错误 / 1 警告** 改 **0 错误 / 2 警告**（`agent-general` 也用了条件性注册的 `read_image`）。
 - `skills/adg-add-agent/SKILL.md`：名册 8 → 9；开头新增一段说明第 9 行是**特殊行**（不要照抄它的名单与 persona、不要给它加委派能力、不要删它的 `send_message`）；硬约束节新增同一条。
-- `README.md`：顶部改成"九个专家"并新增 `agent_general` 条目 + 一段设计说明（含"技术上能委派、为什么做成叶子、回报协议从哪来"）；「怎么用」表格新增一行并写明触发条件是**用户的话**而不是任务性质；「装完必须重启 dsh」那段补 2026-09-28 的重测数字；「persona 层保留的政策」「token 消耗」「实质改动（十一处 → 十二处）」等处的 8/10/34 计数同步为 9/11/35；「给 AI 的安装指令」第 7 步的挂载判据由 **10/8/0** 改 **11/9/0**（并保留旧值作对照）。
+- `README.md`：顶部改成"九个专家"并新增 `agent_general` 条目 + 一段设计说明（含"技术上能委派、为什么做成叶子、回报协议从哪来"）；「怎么用」表格新增一行并写明触发条件是**用户的话**而不是任务性质；「装完必须重启 dsh」那段补 2026-09-28 的重测数字；「persona 层保留的政策」「token 消耗」「实质改动（十一处 → 十二处）」等处的 8/10/34 计数同步为 9/11/35；「给 AI 的安装指令」第 6 步的挂载判据由 **10/8/0** 改 **11/9/0**（并保留旧值作对照）。
 - `docs/registry.md`：`README.md` 一行由"八个专家的分工"改"九个"；`preset/design.md` 一行补 I16。
-- **本次实测（preset 改动的挂载校验，按 README「给 AI 的安装指令」第 7 步）**：`standingKeyFor('adg')` → **mounted OK**（挂载校验用的是**已部署**到 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 的那一份）、`compositionInventory()` → **35 行** / 11 个 `tool-subagent` 模块行里 **9 行启用**（`agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ `tool-subagent-fork` **0 行**。静态自检：**0 错误 / 2 警告**（两条都是 `read_image` 条件性注册）。
+- **本次实测（preset 改动的挂载校验，按 README「给 AI 的安装指令」第 6 步）**：`standingKeyFor('adg')` → **mounted OK**（挂载校验用的是**已部署**到 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 的那一份）、`compositionInventory()` → **35 行** / 11 个 `tool-subagent` 模块行里 **9 行启用**（`agent-general` 与其余 8 行同为 `enabled: true`、`fiberState` 相同）/ `tool-subagent-fork` **0 行**。静态自检：**0 错误 / 2 警告**（两条都是 `read_image` 条件性注册）。
 - **未观测（不许写成实测）**：① 真实委派下 `agent_general` 的可见工具目录"恰好等于 allow 名单"（机制与 `agent_coder` 的已实测同源）；② 调度者是否真的只在用户显式要求时才派它；③ 它的任务末尾是否真的被追加了那段回报指引（源码级事实，真机没有观测过）。三条都登记在 `preset/testing-guide.md` 的 **P2**。
-- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`browser/` 全部文件、`tools/check-preset.mjs`（它的 `KNOWN_TOOLS` 已含本次用到的全部工具名，无需同步）、`.gitattributes` / `.gitignore` / 两个安装脚本。生效方式照 preset 口径：**重启 dsh + 新对话**（`agent_general` 要先重启才会出现在新会话的工具面里）。
+- 未改动：`browser/` 全部文件、`tools/check-preset.mjs`（它的 `KNOWN_TOOLS` 已含本次用到的全部工具名，无需同步）、`.gitattributes` / `.gitignore` / 两个安装脚本。生效方式照 preset 口径：**重启 dsh + 新对话**（`agent_general` 要先重启才会出现在新会话的工具面里）。
 
 ## 2026-09-27（晚·五）— 调度纪律：同一份信息默认只在一个站点取（I13 ① 的浏览器那半）
 
 - **按用户要求追加**：浏览器操作非常耗时，除非有必要，调度时不要要求同一个信息在两个以上站点获取。这条并入**规则 6**（同一实体 + 同一性质的任务只派一次）的末尾，不新开编号 —— 它本来就是同一条原则（同一份材料不要买 N 次）在浏览器上的形态，且 I13 的"五条编排层规则"计数与全部引用都不用改。
 - `preset/agent.cordis.yml` 规则 6 末尾新增：**同一份信息默认只在一个站点取**；一轮浏览的**下限**实测 **0.8–2.0 秒**（开空白标签 → 导航 → 等可读 → 读回 → 收走临时页；不含每个模型步），多站点取同一份信息基本等于把同一份材料买 N 次；三个例外 —— ①用户明确要「多源 / 对比 / 交叉验证」②那个站点拿不到、或各站数据互相矛盾 ③交付物本身就是跨站点比较的结果（比价、同款选型）；真要多源就让**一个** `agent_browser` 在一条委派里串行跑完并合并产出。
-- `preset/design.md`：I13 ① 补上这半条（含三个例外与实测成本下限，指向 `docs/evidence.md` §13）。
+- `preset/design.md`：I13 ① 补上这半条（含三个例外与实测成本下限，指向 `docs/evidence.md` §8）。
 - `preset/AGENTS.md` 与根 `AGENTS.md`：I13 的红线条目 / 关键红线 4 同步这半条。
 - `preset/testing-guide.md`：N1 的 ① 补这半条；新增 **N8**（静态核对：默认只在一站点 + 三个例外 + 一个专家一条委派）与 **N9**（真实挂载量法：数委派里点名的站点数，应为 1 个；同时对照 `TABS` 净增长）。
 - `README.md`：「登录墙与验证码」之后新增「**同一份信息默认只在一个站点取**」一段（给出实测下限与三个例外，说明这条属规则 6 的浏览器那半）；「多智能体的 token 消耗」里列举五条规则的那句同步。
-- `docs/evidence.md`：「未观测清单」新增一行（**浏览器任务是否真的只在一个站点取** —— 来源是用户报告 + 本机成本实测，尚无真实会话为证，含量法）。§13 已有的单轮耗时实测就是这条规则的依据。
+- `docs/evidence.md`：「未观测清单」新增一行（**浏览器任务是否真的只在一个站点取** —— 来源是用户报告 + 本机成本实测，尚无真实会话为证，含量法）。§8 已有的单轮耗时实测就是这条规则的依据。
 - 未观测：这条规则**没有真实会话证据**（N9 登记为此结论）；成本下限是工具侧实测，每个模型步的耗时没有测量。生效方式照 preset 口径：**重启 dsh + 新对话**。
 
 ## 2026-09-27（晚·四）— 一次性读页抢跑修复（I10 补两半）：先开空白标签再导航等可读，失败也收页
@@ -315,8 +220,8 @@ last_reviewed: 2026-09-30
 - 真机实测：一次性实例（端口 9444 + 临时 profile）三个站点 `TABS` 全程 1 → 1 且每条都打 `TAB_CLOSED=`；单轮工具侧耗时 **0.78 / 1.43 / 1.98 s**。异常地址另测两条：`.invalid` 域名读到 Chrome 错误页（224 字节、退出码 0）、不可路由 IP `10.255.255.1` 约 10.7s 后正常返回 —— 两种都**不留标签**，但也都**没有触发**超时分支。
 - `browser/design.md`：I10 补两半（不许抢跑 / 失败路径同样"谁开的谁收"）+ For Agents 的「绝不能做」同步。
 - `browser/testing-guide.md`：新增 A38 / A39 / A40 三行 + 未观测一条（**超时与失败清理分支没有真机触发过**，因为 Chrome 对不可达站点给错误页或 10.7s 后返回，只有源码级断言）；第 5 节最小闭环那条改为「须打 `TAB_CLOSED=`、**正文非空**且 tabs 数不变」；顺手修掉本文件第 10 / 15 行还写着 `I1..I8` 与「27 个用例」的漏改（那批编辑当时因"文件未读"被拒，只补上了一部分）。
-- 用例数同步（34 → 36）：`browser/AGENTS.md`、根 `AGENTS.md`（Quality Gates 第 7 条，同时补"正文非空"）、`README.md` 目录树、`docs/registry.md`、`docs/evidence.md` §13 及重测脚本。
-- `docs/evidence.md` §13：新增「一次性读页的抢跑」小节（修复前后对比表 + 三个站点的单轮耗时），未观测清单新增一条（超时 / 失败清理分支）。
+- 用例数同步（34 → 36）：`browser/AGENTS.md`、根 `AGENTS.md`（Quality Gates 第 7 条，同时补"正文非空"）、`README.md` 目录树、`docs/registry.md`、`docs/evidence.md` §8 及重测脚本。
+- `docs/evidence.md` §8：新增「一次性读页的抢跑」小节（修复前后对比表 + 三个站点的单轮耗时），未观测清单新增一条（超时 / 失败清理分支）。
 - 生效方式：`browser/` 是用户根下的普通文件 —— **重新跑一次 `install.*` 即生效，不用重启 dsh**。
 
 ## 2026-09-27（晚·三）— 删除「人工介入每任务至多一轮」：默认不设上限，只按用户要求受限（I12 修订）
@@ -327,9 +232,9 @@ last_reviewed: 2026-09-30
 - `preset/AGENTS.md`：「模块特有红线」新增一条（禁止给人工介入设次数上限，含例外口径与删除理由）。
 - `preset/testing-guide.md`：新增 **M7**（人工介入不得有次数上限 + 规则 16 在位的静态核对，含"历史条目不算违例"的口径）；I11 的 L1 行里"至多一轮"那句同步。
 - `README.md`：「登录墙与验证码」表格里「试过了还是被挡」一行改口径，并在表后新增一段「**人工介入没有次数上限**」（默认不设上限、适用所有专家所有任务、唯一例外是用户自己要求「不要打扰」／「只介入一轮」、收手判据两条）；那处描述压缩结果的「同一条路径至多一轮」全部保留**加日期标注**说明它已不存在。
-- `docs/evidence.md` §12：「规则缺口复核」的复核表把该上限标为已删除，并追加「同日追加处置」——删除理由、例外口径、落地位置清单、以及"历史条目不回改"的处置。
+- `docs/evidence.md` §7：「规则缺口复核」的复核表把该上限标为已删除，并追加「同日追加处置」——删除理由、例外口径、落地位置清单、以及"历史条目不回改"的处置。
 - **不回改历史条目**：`docs/changelog.md` 里记录当时压缩"保留了什么"的旧条目、README 里那句压缩结论，都按"变更记录只记当时发生了什么"的纪律原样保留（README 那句加日期标注）。
-- 未改动：I11 权限闸门、I13 / I14 / I15、`plugin/dsh-adg-token-budget/`、`tools/`、`browser/`。生效方式照 preset 口径：**重启 dsh + 新对话**。
+- 未改动：I11 权限闸门、I13 / I14 / I15、`tools/`、`browser/`。生效方式照 preset 口径：**重启 dsh + 新对话**。
 
 ## 2026-09-27（晚·二）— 调度 persona 补「事前登录口径」（I12 下半）：请用户手动登录是正常路径
 
@@ -339,8 +244,8 @@ last_reviewed: 2026-09-30
 - `preset/AGENTS.md`：「模块特有红线」新增同一条（I12 下半）。
 - `preset/testing-guide.md`：I12 新增 **M5**（事前半条的静态核对，含判违例口径）与 **M6**（真实挂载量法，状态记为**有反例、改动后未观测**：上一版调度者确实下过「不登录」）；顺手把辅助检索里 `\|` 与 `|` 的取用口径写清楚（`\|` 是字面竖线，实测命中 0 行；要择一匹配须取用成不带反斜杠的 `|`，行内写作 `\|` 只为不在 GFM 表格里断格）。
 - `README.md`：「登录墙与验证码：人工介入协议」导语补明**这是默认路径**（需要登录态才拿得到目标时调度者就该照常派发并请你登录一次；只有你明确说过不想登录 / 不想验证时才走收手），并点明「不许代理代填密码 / 不许绕过登录墙」≠「不许请你登录」这两件事曾被混为一谈。
-- `docs/evidence.md` §12：新增「规则缺口复核：调度者事前禁止登录」小节 —— 用户报告（真实挂载观测，转写未提供）、逐行复核表（名册 / 规则 4 / 规则 11 / 规则 12 / 规则 5 / `agent_browser` persona 各自说了什么、缺了什么）、全仓检索结论、`6cfdbe6` 的历史证据、处置清单与"改动后未观测"。
-- 未改动：I11 权限闸门（原文不动）、I13 / I14 / I15、`plugin/dsh-adg-token-budget/` 全部文件、`tools/`、`browser/`（登录边界那条红线的措辞不变：仍然禁止代填密码 / 读取 cookie 库 / 验证码识别与指纹伪装）。生效方式照 preset 口径：**重启 dsh + 新对话**。
+- `docs/evidence.md` §7：新增「规则缺口复核：调度者事前禁止登录」小节 —— 用户报告（真实挂载观测，转写未提供）、逐行复核表（名册 / 规则 4 / 规则 11 / 规则 12 / 规则 5 / `agent_browser` persona 各自说了什么、缺了什么）、全仓检索结论、`6cfdbe6` 的历史证据、处置清单与"改动后未观测"。
+- 未改动：I11 权限闸门（原文不动）、I13 / I14 / I15、`tools/`、`browser/`（登录边界那条红线的措辞不变：仍然禁止代填密码 / 读取 cookie 库 / 验证码识别与指纹伪装）。生效方式照 preset 口径：**重启 dsh + 新对话**。
 
 ## 2026-09-27（晚）— 标签页卫生（I9 / I10）：`tabs` 与 `close-tab`、一次性读取不留页
 
@@ -353,9 +258,9 @@ last_reviewed: 2026-09-30
 - `browser/AGENTS.md`：命令块补 `tabs` / `close-tab`（用例 27 → 34），红线加一条（禁止关别人的标签页 / 关到 0 个），跨模块路由加一行。
 - `preset/agent.cordis.yml`：`agent-browser` 的 persona 补一段**标签页卫生**（一次性读取会自己收、`--keep` 才留、收尾用 `close-tab --match <站点>` 点名清并保留用户正在用的页、拒绝关到 0 个）；顶注第 11 条与 design.md 的不变量编号同步（I1 / I3 / I8 / I9 / I10）。I11 / I12 语义不动。
 - `README.md`：「浏览器工具链与登录态资产」的"三条不变的行为" → **四条**（新增标签页不堆积，附 19 个标签页的实测来源）；示例补 `tabs` / `close-tab`；目录结构补 `PageTab` / 34 个用例 / 三个矩阵。
-- `docs/evidence.md` §13：新增「标签页堆积：问题与修复」小节（19 个页的构成、成因、修复后四组实测数字、护栏输出原文），单元测试 27/27 → **34/34**，未观测清单加一条（收尾点名清理没有真实 Adg 会话为证），重测脚本补三行。
+- `docs/evidence.md` §8：新增「标签页堆积：问题与修复」小节（19 个页的构成、成因、修复后四组实测数字、护栏输出原文），单元测试 27/27 → **34/34**，未观测清单加一条（收尾点名清理没有真实 Adg 会话为证），重测脚本补三行。
 - 根 `AGENTS.md`：Quality Gates 第 7 条同步（27 → 34，真机闭环加"零残留"与"拒绝关到 0 个页面"）。`docs/registry.md`：三个 browser 行的描述同步。
-- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`browser/lib/target.mjs`（标签页规则全在 cdp/cli 两层，`target.mjs` 的纯函数不涉及目标选择）。
+- 未改动：`tools/` 全部文件、`preset/preset.yml`、`browser/lib/target.mjs`（标签页规则全在 cdp/cli 两层，`target.mjs` 的纯函数不涉及目标选择）。
 
 ## 2026-09-27 — 浏览器工具链入仓：新模块 `browser/` + `agent_browser` 收敛到单一入口
 
@@ -363,24 +268,24 @@ last_reviewed: 2026-09-30
 - **新模块登记**：根 `AGENTS.md` 的 Project Map 与 Context Loading 各加一行、Quality Gates 加第 7 条（`cd browser && node --test test` 27/27）、关键红线加第 10 条、生效方式表加 `browser/` 一行（**重新安装即生效、不用重启**）、导语与命令块同步；`docs/registry.md` 索引表加 3 行、状态表 **13 → 16 条**、"三个模块" → **四个模块**、冷启动三问的"三套" → "四套"。
 - `preset/agent.cordis.yml`：`agent-browser` 的 persona 改为「只用 `$DSH_HOME/browser/cli.mjs` 一个入口」（禁止现场手写 CDP 脚本、禁止装 playwright / puppeteer / ws）；profile 口径由"工作区里一个固定目录"改为**固定在 `<DSH_HOME>/browser-profile`、与工作区无关**（旧写法换工作区就换 profile、登录态当场清零）；补「`launch` 幂等、`STATE=REUSED` 不要重启」「任务进行中不要 `close`」「撞墙前先用 `text` 确认是不是真的登录墙」；顶注「实质改动十处」→ **十一处**并加第 11 条。**I11 / I12 两半只改措辞、语义不动**（四组检索命中仍在）。
 - `install.ps1` / `install.sh`：部署集合加 `browser/` → `${DSH_HOME:-~/.dsh}/browser/`，输出与小结同步。（`install.ps1` 的 UTF-8 BOM 被编辑工具剥掉后**已补回**，实测前三个字节 `EF BB BF`；`install.sh` 本机没有 `sh`，只做了人工核对。）
-- `docs/evidence.md`：新增 **§13**（浏览器工具链真机实测：规范 profile、幂等复用、优雅关闭后 cookie 落盘并跨浏览器重启存活、部署校验、四条未观测、可照抄的重测脚本）；**§12** 的两条未观测按日期复核 —— "cookie 落盘"那半被 §13 **推翻并升为实测**，"真实站点端到端"那半仍标未观测。
+- `docs/evidence.md`：新增 **§8**（浏览器工具链真机实测：规范 profile、幂等复用、优雅关闭后 cookie 落盘并跨浏览器重启存活、部署校验、四条未观测、可照抄的重测脚本）；**§7** 的两条未观测按日期复核 —— "cookie 落盘"那半被 §8 **推翻并升为实测**，"真实站点端到端"那半仍标未观测。
 - `README.md`：新增「浏览器工具链与登录态资产」一节；`agent_browser` 名册行与「怎么用」派发表同步；「安装」的部署集合加 `browser/`。
 - `preset/design.md` / `preset/testing-guide.md`：依赖关系补 `browser/`（被依赖）；新增 **L4**（工具链路径与命令是否指向真实存在的东西：`$DSH_HOME/browser/cli.mjs` 的落点、persona 里的命令名与 `STATE=` / `PORT=` / `PROFILE=` 输出行对照 `cli.mjs` 的 `USAGE`）与 **M4**（禁止代填密码 / 读 cookie 库 / 验证码识别与指纹伪装三条边界是否还在）两条用例；M2 / M3 的措辞同步成"再 `launch` 走幂等复用"。
 - `preset/testing-guide.md`（**顺带修的既有缺陷**）：6 行的 `Select-String` 示例把**裸 `|`** 写在行内代码里 —— GFM 表格会在那里切断单元格（行内代码**不**保护 `|`，只有 `\|` 保护），其中一行还正好在解释"`\|` 是字面竖线"。6 处已转义为 `\|`；现在全仓 21 个 markdown 文件的表格列数逐行一致（检查脚本用完即删，未留在仓库里）。
-- 未改动：`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`bundle/`。
+- 未改动：`tools/` 全部文件、`preset/preset.yml`、`bundle/`。
 
 ## 2026-09-26（晚·六）— 输出／交接去冗余纪律（I15）：分字段写、不回贴原文、未验证块必填
 
 - `preset/agent.cordis.yml` **规则 5**：补"五项**分字段写**（不要写成一整段散文：这段话专家每一步都会重读）"+ "**期望产出**里写明返回结构：结论 / 证据（`path:line` 或链接）/ 未验证或未纳入（必填）"。171 → 277 字符。
 - `preset/agent.cordis.yml` **规则 10**：由一句话（"不要把中间过程原样转述给用户"）扩成**四条去冗余纪律** —— ① 不回贴工具输出原文（给位置就够）② 同一结论只说一次，后文用"见上 / 第 N 条"引用 ③ 不转述中间过程 ④ **"未验证 / 未纳入"必填块不许为求简短省略**；并写明最终答复同样适用。40 → 170 字符。
 - `preset/agent.cordis.yml` 顶注：实质改动「九处」→「十处」并新增第 10 条；prefix 块 4584 → **4820 字符**（+236）。顶注写明依据是"输出只占账单 1%，但它会变成上下文"这一算术，以及**纪律一律写成禁止式、不写字数上限**（后者会精确退化成已撤销的那层）。
-- `preset/design.md`：新增 **I15**（输出／交接件的去冗余纪律：四条禁止式判据 + 分字段写 + 返回结构 + **明文禁止被改写为字数上限**；依据引 `docs/evidence.md` §2 的 94.1M / 0.9M / 85.1M，并**标注"乘数"部分是由聚合数字算出的推算、不是新实测**；形态依据引 `doc-engineer` 的"约束必须可执行化 / 禁止无据形容词"）；I10 的边界补 I15；非功能红线补一条（禁止把 I15 写成字数上限、禁止为"简洁"省掉未验证块），「12 条」→「13 条」。
+- `preset/design.md`：新增 **I15**（输出／交接件的去冗余纪律：四条禁止式判据 + 分字段写 + 返回结构 + **明文禁止被改写为字数上限**；依据引 `docs/evidence.md` §1 的 94.1M / 0.9M / 85.1M，并**标注"乘数"部分是由聚合数字算出的推算、不是新实测**；形态依据引 `doc-engineer` 的"约束必须可执行化 / 禁止无据形容词"）；I10 的边界补 I15；非功能红线补一条（禁止把 I15 写成字数上限、禁止为"简洁"省掉未验证块），「12 条」→「13 条」。
 - `preset/testing-guide.md`：`I1..I14` → `I1..I15`；新增 **O1**（四条禁止式判据与分字段写是否在位、有没有被写成字数上限，人工 review）与 **O2**（真实挂载，**未观测**，五条量法，含**反向检查**："未验证 / 未纳入"块是否仍齐全）；K1 补 I15 不算预算违例的边界。
 - `README.md`：「多智能体的 token 消耗」新增一行（规则 5 / 10 的交接件纪律，**已落地**，含"为什么价值不在那 1%"的理由与四条判据）；四个观测量表新增**去冗余抽查**一行；"成本控制分两层"改**三层**（编排层 / 输出层 / 运行期）；「persona 层保留的政策」「兼容性」（九处 → 十处）与 persona 体积账（4584 → 4820）同步。
 - `AGENTS.md`（根）：红线 4 补"一条输出纪律"及其边界（禁止改写成字数上限）；Context Loading 新增输出／交接纪律一行。
 - `preset/AGENTS.md`：新增 I15 一条模块红线；导语与路由表各补一行。
 - `skills/adg-add-agent/SKILL.md`：第 3 步的"不要动"清单补输出纪律（规则 5 分字段写 + 规则 10 四条）。
-- 未改动：`plugin/dsh-adg-token-budget/` 全部文件（检查点文本与 I14 边界都不动）、`install.ps1` / `install.sh`、`tools/`、`preset/preset.yml`、`docs/evidence.md`（§8 的两行已在晚·五登记，本次未新增）、`docs/registry.md`。
+- 未改动：`install.ps1` / `install.sh`、`tools/`、`preset/preset.yml`、`docs/evidence.md`（§4 的两行已在晚·五登记，本次未新增）、`docs/registry.md`。
 
 ## 2026-09-26（晚·五）— 编排层第五层：验收标准 + 本次不做、必要性闸门 + 强制挂号
 
@@ -394,16 +299,8 @@ last_reviewed: 2026-09-30
 - `AGENTS.md`（根）：红线 4 由四条改五条并补"禁止把未纳入的旁路静默丢掉"；Context Loading 的编排层规则一行补闸门与挂号。
 - `preset/AGENTS.md`：模块红线的 I13 一条改五条 + 五项必填；新增"禁止静默丢掉旁路"一条；路由行与导语同步。
 - `skills/adg-add-agent/SKILL.md`：第 3 步的编排层规则清单补 15 与五项必填；硬约束的唯一例外由四条改五条。
-- `docs/evidence.md` §8 未观测清单：新增两行 —— 五条编排层规则的遵守情况（四个观测量）与"旁路是否被记录而非被做"（含来源与三种判定）。
-- 未改动：`install.ps1` / `install.sh`、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`。
-
-## 2026-09-26（晚·四）— 检查点正文改口径：收尾条件句 + 不规定汇报内容
-
-- `plugin/dsh-adg-token-budget/src/plugin.js`：`STEP_CHOICE_BODY` 第一分支由「`- **收敛**：如果现有产出已经能回答委派目标，就收尾汇报——交付了什么、还有哪些部分没有验证。`」改为「`- **如果现有产出已经能回答委派目标，就收尾汇报。**`」—— 去掉对**汇报内容**的指定（交付了什么、哪些没验证由子代理自己决定）。头部 `【收敛检查点 n／N】`、第二条分支、以及「选哪个由任务本身决定…」整句不变；同文件的构造器注释同步（原文写的是"收敛分支仍要求写明没验证的东西"，已不再是本插件口径）。
-- `plugin/dsh-adg-token-budget/design.md`：I14 补「**禁止规定子代理汇报什么**」，删掉「收敛分支仍要写明'哪些没验证'」。
-- `plugin/dsh-adg-token-budget/test/plugin.test.js`：字面量断言同步；原 `/收敛/` 与 `/没有验证/` 两条正断言改为 ①新句子正断言 ②对 `没有验证|交付了什么|哪些部分` 的**反向断言**（"不规定汇报内容"靠这条钉住）。
-- 文档：根 `README.md`（注入文本示例、"为什么必须写成可选"的第 ③ 条、开头那段的选项名）、`plugin/dsh-adg-token-budget/INSTALL.md`（行为表的选项名）里的"收敛汇报"改为"收尾汇报"；`install.ps1` 写挂载行注释里的同一措辞同步（**编辑后已确认恢复 UTF-8 BOM**，见根 `AGENTS.md` 红线 8）。
-- 未改动：`install.sh`（它那行只写"可选收敛提醒"，没有选项名）、插件的 `config` 默认值、挂载行与 `stepTiers` / `stepText` 口径。**生效需要重启 dsh**（改的是 `src/`）。
+- `docs/evidence.md` §4 未观测清单：新增两行 —— 五条编排层规则的遵守情况（四个观测量）与"旁路是否被记录而非被做"（含来源与三种判定）。
+- 未改动：`install.ps1` / `install.sh`、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`。
 
 ## 2026-09-26（晚·三）— 编排层再落地三条：压缩浏览器细则、digest 中转、先定位再改
 
@@ -416,20 +313,20 @@ last_reviewed: 2026-09-30
 - `preset/testing-guide.md`：不变量全表 `I1..I13` → `I1..I14`；I13 的 N1/N2/N3 三条改写为"四条规则"；新增 **N4 / N5**（digest 落位与清理，N5 含包文档级机制前提，状态如实标**未观测**）；I11 L1 补一句分工说明（调度那组靠 `danger-full-access` / `完全权限` 命中，搜不到 `platform_channel` 是压缩后的预期形状）。
 - `preset/AGENTS.md`、根 `AGENTS.md`：编排层红线由两条扩为四条、新增 digest 落位红线；跨模块路由与 Context Loading 的 I13 引用改为 I13 / I14。
 - `skills/adg-add-agent/SKILL.md`：第 3 步的"不要动规则 6 / 规则 7"扩为"不要动编排层与闸门那几条（6 / 7 / 13 / 14 / 11 / 12）"；硬约束的唯一例外由两条改四条。
-- 未改动：`install.ps1` / `install.sh`、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`、`docs/evidence.md`。
+- 未改动：`install.ps1` / `install.sh`、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`、`docs/evidence.md`。
 
 ## 2026-09-26（晚·二）— 派发拓扑：同实体合并 + 复用既有专家；去掉无关产品提示词
 
 - `preset/agent.cordis.yml` 调度 persona 新增规则 6 / 规则 7：① **同一实体 + 同一性质**的任务合并成一次委派（判据只有"实体 × 性质"两个维度；同一实体的多个方面列进同一条委派，由一个专家一次通读、按方面分节产出）；② 同一实体的**后续**任务先 `list_agents` 找到既有子代理、再 `send_message` 接给已经读过它的那个专家，不重新开一个。原规则 6–10 顺延为 8–12（权限闸门与人工介入两条现为规则 11 / 12）。
 - `preset/agent.cordis.yml` 调度 persona 规则 1 补一句：一两次抓取就能答完的已知 URL 定点核对由调度者自己 `web_fetch`，不为此派子代理。
 - `preset/agent.cordis.yml` 去掉全部无关产品提示词：删除文件顶注里的名册出处段（腾讯 Marvis 及其专项 Agent 划分）、五个专家 persona 开头的「参考 Marvis 的 X Agent」、`agent_app` 里对 Marvis GUI 路线的对照，以及名册段的「Marvis 参考组」小标题 —— 能力口径与缺口一字未改，只去掉产品名。
-- 根 `README.md`：「专家名册与 Marvis 对应关系」改为「专家名册」（三列 8 行，去掉 Marvis 列与「无对应」标注）；`agent_browser` 行的登录墙口径改为指向人工介入协议；新增「多智能体的 token 消耗：已落地与可选手段」一节（8 条手段 + 状态 + 量法 + 1 条未观测）；「persona 层保留的政策」改为「…专家侧的收敛纪律与调度侧的派发拓扑」，写明它与已撤销那层的边界；顶部「省 token 的口径」、「怎么用」、「兼容性」（六处改七处）同步。
+- 根 `README.md`：「专家名册与 Marvis 对应关系」改为「专家名册」（三列 8 行，去掉 Marvis 列与「无对应」标注）；`agent_browser` 行的登录墙口径改为指向人工介入协议；新增「多智能体的 token 消耗：已落地与可选手段」一节（8 条手段 + 状态 + 量法 + 1 条未观测）；「persona 层保留的政策」一节标题改写，并写明它与已撤销那层的边界；顶部「省 token 的口径」、「怎么用」、「兼容性」（六处改七处）同步。
 - `preset/design.md`：`SchedulerPersona` 新增不变量 I13（两条派发拓扑规则、判据是"实体 × 性质"、禁止改写成预算）；I10 收窄为只管**子代理预算**并写明与 I13 的边界；非功能红线补一条（禁止删掉这两条规则）；For Agents 的「9 条」改「10 条」；负责清单、依赖关系、跨模块路由同步。
 - `preset/AGENTS.md`：模块红线把 I10 一条改写为「子代理预算」并补 I13 一条；跨模块路由补「派发拓扑规则」一行。
 - `preset/testing-guide.md`：不变量全表补 I13 三条用例（N1 规则在位 / N2 未写成预算 / N3 真实合并与恢复，如实标**未观测**）；I10 K1、I11 L1、I12 M1 的规则编号与判据同步，并去掉几处会漂移的行号坐标。
 - `skills/adg-add-agent/SKILL.md`：落盘步骤第 3 步补「不要动规则 6 / 规则 7」；硬约束里那条"不要写 token／读取预算"补上唯一例外（编排层两条规则）；"旧 allow 6 个工具"改成不写会漂移的数量。
 - 根 `AGENTS.md`：关键红线第 4 条补上唯一例外（编排层两条派发拓扑规则约束的是"派给谁、派几次"，不是"单个专家能读多少"）；Context Loading 的调度 persona 一行补 I13 的读法。
-- 未改动：`install.ps1` / `install.sh`（部署集合没变）、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`、`docs/evidence.md`。
+- 未改动：`install.ps1` / `install.sh`（部署集合没变）、`tools/` 全部文件、`preset/preset.yml`、`docs/registry.md`、`docs/evidence.md`。
 
 ## 2026-09-26（晚）— 登录墙／验证码的人工介入协议
 
@@ -440,9 +337,9 @@ last_reviewed: 2026-09-30
 - `preset/AGENTS.md`：模块红线补 I12；跨模块路由补「登录墙／验证码的人工介入」一行。
 - `preset/testing-guide.md`：不变量全表补 I12 的三条用例（M1 allow 机器可读 + 语义判读、M2 分工两半、M3 真实重连，如实标**未实现**）；I11 的 L1 用例按实测把命中位置由「三处」更正为「四组」（新协议段末句也命中权限关键字）。
 - 根 `README.md`：在浏览器那节新增「登录墙与验证码：人工介入协议」一小节（四分支处置表、为什么专家问不了、窗口怎么开的三条机制实测、两条未观测）；「兼容性」的实质改动清单由五处改六处并补一条「人工介入也只能由调度者转达」。
-- `docs/evidence.md`：新增 §12「子代理能不能直接问用户？人工介入的可行路径」（四条源码级事实表 + 有头窗口存活／跨调用 CDP 重连的五条机制实测 + 三条未观测 + 重测口径）；证据来源表补一行人工介入探测脚本；§8 未观测清单补三条（真实站点端到端、关掉浏览器后靠 profile 复用登录态、调度者是否真的转达）。
-- `docs/registry.md`：`docs/evidence.md` 行的索引补 §12。
-- 未改动：`install.ps1` / `install.sh`、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
+- `docs/evidence.md`：新增 §7「子代理能不能直接问用户？人工介入的可行路径」（四条源码级事实表 + 有头窗口存活／跨调用 CDP 重连的五条机制实测 + 三条未观测 + 重测口径）；证据来源表补一行人工介入探测脚本；§4 未观测清单补三条（真实站点端到端、关掉浏览器后靠 profile 复用登录态、调度者是否真的转达）。
+- `docs/registry.md`：`docs/evidence.md` 行的索引补 §7。
+- 未改动：`install.ps1` / `install.sh`、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
 
 ## 2026-09-26 — 浏览器专家的权限前置闸门
 
@@ -453,42 +350,30 @@ last_reviewed: 2026-09-30
 - `preset/AGENTS.md`：模块特有红线补一条（I11）。
 - `preset/testing-guide.md`：不变量全表补 I11 的两条用例（人工 review + 本地文本检索），如实标注**未实现**。
 - 根 `README.md`：新增「浏览器专家需要完全权限」一节（A/B 真机实测表、三问三答的源码依据、两道闸门的口径、备选方案的取舍、「这是流程闸门不是安全边界」）；专家名册 Browser Agent 行、怎么用派发表 `agent_browser` 行、「兼容性」的实质改动清单与两条说明同步。
-- `docs/evidence.md`：新增 §11「浏览器自动化的沙箱前提（真机实测 A/B）」；§8 未观测清单补两条（闸门是否真的触发、沙箱外手工拉起浏览器 + 连 CDP 端口）；证据来源表补一行沙箱探测脚本。
-- 未改动：`install.ps1` / `install.sh`（部署集合没变）、`plugin/dsh-adg-token-budget/` 全部文件、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
-- 引用真实性复核（按 `docs/docs-guide.md` §5 逐条判存在），更正三处：`docs/evidence.md` 证据来源表与 §11 里那个不存在的 `probe2-*.err.txt` 改成实际文件名形状 `<变体>.out.txt` / `<变体>.err.txt`（如 `edge-dumpdom.err.txt`）；根 `AGENTS.md` 去掉手写的「`README.md`（905 行）」行数（已漂移到 986，且规范禁止手写会漂移的副本）；README 小节标题去掉括号后缀，让全仓 9 处「浏览器专家需要完全权限」引用逐字命中标题。
+- `docs/evidence.md`：新增 §6「浏览器自动化的沙箱前提（真机实测 A/B）」；§4 未观测清单补两条（闸门是否真的触发、沙箱外手工拉起浏览器 + 连 CDP 端口）；证据来源表补一行沙箱探测脚本。
+- 未改动：`install.ps1` / `install.sh`（部署集合没变）、`tools/` 全部文件、`skills/adg-add-agent/SKILL.md`、`preset/preset.yml`。
+- 引用真实性复核（按 `docs/docs-guide.md` §5 逐条判存在），更正三处：`docs/evidence.md` 证据来源表与 §6 里那个不存在的 `probe2-*.err.txt` 改成实际文件名形状 `<变体>.out.txt` / `<变体>.err.txt`（如 `edge-dumpdom.err.txt`）；根 `AGENTS.md` 去掉手写的「`README.md`（905 行）」行数（已漂移到 986，且规范禁止手写会漂移的副本）；README 小节标题去掉括号后缀，让全仓 9 处「浏览器专家需要完全权限」引用逐字命中标题。
 
 ## 2026-09-25（晚·三）— 按对抗性审查结论修正文档
 
 - 删除 `preset/design.md` 里指向不存在文件的契约引用（`docs/contracts/roster.md`），改为直接指向 `preset/agent.cordis.yml` 的 `delegation` 组并注明是唯一真相源。
 - 去掉文档里所有手写行数：`docs/docs-guide.md` 与本文对根 `AGENTS.md` 记的"58 行"是过期值（实测 81 行），一律改成不写当前行数；`preset/design.md` 里 8 个专家行的具体行号（280/307/…）改为按 `id` 定位（行号会被任何一次编辑改掉，需要坐标就跑自检脚本）。
-- 纠正"恢复的子代理被再次提醒"的结论：由"已被推翻"改为**机制已观测、事实仍未观测**——日志证明驻留期重置在跑，但 `subagent/end` 对"结束"与"被恢复"发同一事件，无从判定"该子代理确实被恢复"，故既有文档的"未观测"**依然成立**（`docs/evidence.md` §8/§9、`plugin/dsh-adg-token-budget/testing-guide.md`、根 `AGENTS.md` Gate 6 四处统一口径）。
-- `docs/evidence.md` §9 补**快照指纹**（`sha256` + 字节数 + 行数 + mtime + UTC/本地双时间戳），并说明"同一命令隔一秒再跑低档计数各 +1"是文件在长、不是口径差；§8 未观测清单补"注入消息转写原文未独立复核（本机无 zstd 解压能力）"。
 - 对象形态判错修正：`tools/design.md` 的 `KnobRow` 由"受控操作对象"改判为**不可变值对象**（只读投影，无批准接口、无特权操作封装），`ExitStatus` 删掉状态机、改为**返回契约 + 不变量**。
-- 无条件化不变量：`preset/design.md` I3 由带"在…情况下"的条件式拆成两条无条件式（禁止不附前后对比数字就改成本结论 / 禁止把 §2 基线当可比基线）。
+- 无条件化不变量：`preset/design.md` I3 由带"在…情况下"的条件式拆成两条无条件式（禁止不附前后对比数字就改成本结论 / 禁止把 §1 基线当可比基线）。
 - 消除手抄副本：`tools/design.md` 不再复述三个插件的出厂默认值数字，改为指向 `check-preset.mjs` 的 `FACTORY_DEFAULTS`。
 - 补登记一条能力边界：`tools/testing-guide.md` 记下自检脚本的行匹配器写死 4 空格缩进，缩进一变整段专家行检查会**静默跳过并仍报通过**。
 - `preset/design.md` 补登记 `agent-instructions` 那一行**不是专家委派行**（位于 `delegation` 组之外，自检的专家行检查不覆盖它）。
-- 体例统一：状态分层的第二档统一为"单元 / 静态检验 / 变异验证"；`plugin/.../AGENTS.md` 补"必须在模块目录里跑"；`plugin/.../design.md` 的历史包名一句补回连接词。
+- 体例统一：状态分层的第二档统一为"单元 / 静态检验 / 变异验证"。
 
-## 2026-09-25（晚·二）— 作废并重算 `docs/evidence.md` §9 的第一版计数
+## 2026-09-25（晚·一）— 沙箱测试口径修正（本次交付的附带发现）
 
-- §9 第一版用 `Select-String | ForEach-Object | Group-Object` 管道统计，得出 `nudged` 370 行 / 83 个子代理 / 逐 tier 84,83,73,44,30,19,15,10,5,4,1，并把 88 行带 `usage=` 的过渡格式行**整体误判为"旧三档阶梯历史"**（该格式只是过渡期没精简字段，其中 85 行已经是 14 档阶梯）。该口径已作废。
-- 重算口径改为**逐行文本匹配、不做管道分组**；当前值：`nudged` 合计 390（当前格式 302 + 过渡格式 88，其中旧三档仅 3 行）、逐 tier 87,86,75,47,33,22,17,10,5,4,1、有 `nudged` 的不同子代理 86（当前格式 64）、`settled:` 90。
-- §9 标题时间戳改为实测时刻并附 `sha256` 指纹，新增"该日志一直在被追加，引用必须同时给时间戳与哈希"的强提示；插件 `testing-guide.md` 的引用同步更新。
-
-## 2026-09-25（晚·一）— 活证据复核（本次交付的附带发现）
-
-- 复核 `C:\Users\cenqian\.dsh\adg-token-budget.log` 的逐行文本匹配，登记进 `docs/evidence.md` §9：新 14 档阶梯下 `step stage: nudged` 覆盖 tier 1/14–11/14。
-- 登记一条与既有文档冲突的观测：根 `README.md`「现在的证据到哪为止」与插件 `README.md`「What has still never been observed live」把"新阶梯下的注入"记为未观测，而日志显示它已发生（tier 1/14–11/14 都真的注入过）——处置权留人类。
-- 登记两条口径差异（`soft stage: nudged` 5 vs 0、`dry-run hard stage: would cancel` 481 vs 437），来源待复核；**未改**既有文档的叙述。
 - 修正文档层里对沙箱测试口径的描述：DSH 沙箱（`workspace-write`）下 `node --test test` 必因 piped-stdio 子进程被拒而报 `spawn EPERM`，必须用 `node --test --test-isolation=none test`；PowerShell 管道 `|` 另被拒为 `Access is denied`，重定向到文件允许。
 
 ## 2026-09-25（早）— 新增文档层（本次交付）
 
 - 新增根 `AGENTS.md`：项目一句话、命令、关键红线 9 条、生效方式两条链路、模块地图、Context Loading 路由、Quality Gates、能力边界。
 - 新增 `preset/design.md`（I1–I10）/ `preset/AGENTS.md` / `preset/testing-guide.md`。
-- 新增 `plugin/dsh-adg-token-budget/design.md`（I1–I16）/ `AGENTS.md` / `testing-guide.md`。
 - 新增 `tools/design.md`（I1–I9）/ `AGENTS.md` / `testing-guide.md`。
 - 新增 `docs/docs-guide.md`（写作规范与文档分层契约）、`docs/registry.md`（索引与冷启动三问的答题路径）、`docs/evidence.md`（实测证据台账）。
 - `docs/` 下不建 `_index.md`（当前 4 篇；`docs/registry.md` 即该目录的索引页）。
-- 既有文件一律未改：`README.md`、`preset/*.yml`、`tools/check-preset.mjs`、`skills/adg-add-agent/SKILL.md`、`install.ps1` / `install.sh`、插件目录下全部文件。
+- 既有文件一律未改：`README.md`、`preset/*.yml`、`tools/check-preset.mjs`、`skills/adg-add-agent/SKILL.md`、`install.ps1` / `install.sh`。

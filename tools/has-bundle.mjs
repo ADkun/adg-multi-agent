@@ -4,8 +4,7 @@
 // 为什么单独一个文件：这条判据决定安装侧的**味道选择** ——
 //   1. preset 生成物要不要给专家的 toolFilter.allow 追加该插件的全局层工具名（见 gen-preset-bundle.mjs）；
 //   2. 这个 profile 该拿哪一份生成物（味道与目录名见 tools/flavors.mjs）。
-// **它不再决定"要不要启用配套插件 dsh-adg-token-budget"**：2026-10 用户决定挂着 bili 也一律启用
-// （此前"挂了 bili 就不启用"已推翻）。所以现在的口径是**单向**的，不存在"方向相反的两个决策"。
+// 它只决定**味道**（这个 profile 该拿哪一份生成物），与任何插件启不启用无关。
 // 判据写成两份（install.ps1 一份、install.sh 一份）迟早会漂，漂了的后果不是"少个能力"就是"专家一委派
 // 就抛 names unknown global tool"，所以两边都调这里。
 //

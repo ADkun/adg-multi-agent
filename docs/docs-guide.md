@@ -41,14 +41,14 @@ last_reviewed: 2026-09-25
 | 档 | 含义 | 允许的说法 | 典型的当下实例（示例，不替代 `docs/evidence.md`） |
 |---|---|---|---|
 | 源码级事实 | 读代码就能确认，不依赖运行环境 | "代码里 X 检查 Y" | `check-preset.mjs` 的常量名与分支、composition 的行结构 |
-| 单元 / 静态检验 / 变异验证 | 有可重复执行的检查跑过 | "`node tools/check-preset.mjs` 退出码 0""插件的 `node --test test` 全绿" | 静态自检、插件单元测试与变异验证 |
-| 真机实测（有日志为证） | 在真实机器上观测到，且能指出日志/转写 | "已实测：<现象>，证据见 `<日志路径>`" | 激活行、`step stage: nudged` 注入、真实挂载校验结果 |
-| 未观测 | 没有证据 | "**未观测**：<问题>" + 量法 | "提醒是否让子代理更快收敛"（**注意**："新阶梯下的注入"原是本档示例，`docs/evidence.md` §9 已把它升到"真机实测"，用前先读 §9） |
+| 单元 / 静态检验 / 变异验证 | 有可重复执行的检查跑过 | "`node tools/check-preset.mjs` 退出码 0"、"`cd browser && node --test test` 全绿" | 静态自检、`browser/` 单元测试 |
+| 真机实测（有日志为证） | 在真实机器上观测到，且能指出日志/转写 | "已实测：<现象>，证据见 `<日志路径>`" | preset 真实挂载校验结果、`browser/` 真机闭环（`profile` → `launch` → 再 `launch` 须 `STATE=REUSED`） |
+| 未观测 | 没有证据 | "**未观测**：<问题>" + 量法 | 见 `docs/evidence.md` 的未观测清单 |
 
 规则：
 
-- **引用他人记载的实测，必须写明来源并保留其状态档与时间戳**（"仓库 `README.md` 记载，真机实测，2026-09-25 01:37 重启后"、"`plugin/dsh-adg-token-budget/INSTALL.md` 记载"），**不得写成自己验证过**。自己没有跑过、没有读过那行日志，就不是实测档。
-- **未观测不许写成实测**；同时不许把"未观测"写成"不可观测"——要写出量法。引用前先看 `docs/evidence.md` 的未观测清单：人向 `README.md` 与插件 `README.md` 里若干"未观测"条目已被 2026-09-25 的日志复核推翻（见该文件 §9），**处置权在人类**，发现冲突要报出来而不是按旧口径照抄。
+- **引用他人记载的实测，必须写明来源并保留其状态档与时间戳**（"仓库 `README.md` 记载，真机实测，2026-09-25 01:37 重启后"），**不得写成自己验证过**。自己没有跑过、没有读过那行日志，就不是实测档。
+- **未观测不许写成实测**；同时不许把"未观测"写成"不可观测"——要写出量法。引用前先看 `docs/evidence.md` 的未观测清单与各节的状态分层：人向 `README.md` 里若干"未观测"条目可能已被日志更新，**处置权在人类**，发现冲突要报出来而不是按旧口径照抄。
 - 已被撤销的旧口径必须标成**历史证据，不代表当前行为**。
 
 ## 4. 新模块登记义务
@@ -73,7 +73,6 @@ Select-String -Path .\AGENTS.md, .\docs\registry.md, .\docs\docs-guide.md, .\too
   ForEach-Object { $_.Matches.Value.Trim('`') } | Sort-Object -Unique |
   ForEach-Object { [pscustomobject]@{ Ref = $_; Exists = Test-Path -LiteralPath $_ } }
 # 2) 命令引用：把文档里出现的 node / powershell 调用逐条真的敲一遍（`node tools/check-preset.mjs` 这类应当 exit 0）
-#    插件的 `node --test test` 要 cd 到 plugin/dsh-adg-token-budget 下跑
 # 3) 文档内小节引用：形如“见 `README.md`「某某」”的，先确认文件在，再确认那个小节标题真的在这份文件里
 Select-String -Path .\README.md -Pattern '^#{1,4} ' | Select-Object -ExpandProperty Line
 ```

@@ -33,7 +33,7 @@ import { join } from 'node:path'
  *   flag             gen 脚本的旗标；也是安装脚本 `--<组>=on` 时给 gen 传的东西
  *   package          profile 的 `dsh.profile.bundles` 里要出现的包名（探测用）
  *   tools            gen 要追加进每个专家行 allow 的**全局层已注册**工具名（顺序即注入顺序）
- *   notInjected      同属该插件、但**故意不注入**的名字：出现在源文件里同样算红线 11 违规，
+ *   notInjected      同属该插件、但**故意不注入**的名字：出现在源文件里同样算红线 10 违规，
  *                    出现在生成物里则是"注入清单没同步"的信号，要报出来
  *   autoCompactionOff 该组是否要求关掉 preset realm 里 compaction-basic 的自动压缩
  *   flavorToken      味道键里的记号（拼目录名用 `-`，拼味道键用 `+`）

@@ -16,7 +16,6 @@
 //      thresholdChars / headChars / tailChars、`tool-web` 的 fetchMaxOutputChars /
 //      searchMaxResults / searchMaxQueries —— 本 preset 一律用插件出厂默认值
 //      （0.8+0.16 / 8192+4096+1024 / 200000+8+4），不再靠截断工具结果与提前压缩省 token
-//      （省 token 是 host-plane 插件 `dsh-adg-token-budget` 的事，见 README「token 成本纪律」）。
 //      因此这里**不再钉死取值**，只保留两类检查：
 //      （a）三行必须存在、`name:` 正确、没被 `disabled` 关掉、同一个 id 不重复 ——
 //          这几条坏了是整块能力消失或跑的根本不是那个插件；
@@ -24,7 +23,7 @@
 //          范围里：两个 ratio 在 (0,1] 且 retainRatio < thresholdRatio；pruner 正整数且
 //          head + marker + tail ≤ threshold；tool-web 正整数且 fetchMaxOutputChars ≤ 200000
 //          （> 60000 只提示）。不合法的那一行会在挂载时直接抛错。
-//      除外：`compaction-basic` 的 `auto` 是**构建期注入**的键（红线 11）—— 源文件里出现就报错，
+//      除外：`compaction-basic` 的 `auto` 是**构建期注入**的键（红线 10）—— 源文件里出现就报错，
 //      指向 `node tools/gen-preset-bundle.mjs --with-billion-context`（它按 bili 自己的
 //      `dsh.bundle.patch.yml` 往生成物里写 `auto: false`，见 README「与 billion-context 协同」）。
 //      同理，别的 bundle 注册到全局层的工具名（billion-context 的四个上下文工具、save-token 的
@@ -40,7 +39,7 @@
 // 零依赖：本文件按行做结构化解析，不引入 YAML 库（文件形状由本仓库自己固定）。
 // 注意它终究只是个**文本扫描器**，不是 YAML 解析器：它能证明"这些行写对了"，
 // 不能证明整份文件能解析、也不能证明插件真的挂载成功 —— 后者要按 README
-// 「给 AI 的安装指令」第 8 步做一次真实挂载：`agentPresets.resolve('adg')` 的 `.broken` 为空
+// 「给 AI 的安装指令」第 6 步做一次真实挂载：`agentPresets.resolve('adg')` 的 `.broken` 为空
 // （`standingKeyFor` 在本版 dsh 里已经不存在，别调它）。
 
 import { readFileSync, statSync } from 'node:fs'
@@ -113,7 +112,7 @@ const SCHEDULER_ONLY = new Set(['workflow', 'ralph'])
  * 要它们生效请走生成那一步：`node tools/gen-preset-bundle.mjs <该组的旗标>`
  * （install.ps1 / install.sh 会探测目标 profile 挂了哪些组，自动带上对应旗标）。
  * 清单**从 tools/flavors.mjs 推导**，不在这里另抄一份 —— 抄了就会漂，漂了就是"委派全失败"或"漏注入"。
- * 值里的 `notInjected` 是那组里**故意不注入**的名字（例如 bili 的 acp_cache）：同样算红线 11 违规，
+ * 值里的 `notInjected` 是那组里**故意不注入**的名字（例如 bili 的 acp_cache）：同样算红线 10 违规，
  * 提示语不同（它的修法是改清单，不是加旗标）。
  */
 const BUILD_TIME_INJECTED_TOOLS = new Map()
@@ -549,7 +548,7 @@ if (compactionRow !== undefined) {
   if (thresholdRatio !== undefined && retainRatio !== undefined && retainRatio >= thresholdRatio) {
     fail(`第 ${compactionRow.line} 行 ${compactionRow.id}：retainRatio ${retainRatio} 必须小于 thresholdRatio ${thresholdRatio}（否则插件加载时抛 retainRatio must be less than the resolved thresholdRatio）`)
   }
-  // `config.auto` 是**构建期注入**的键（AGENTS.md 红线 11）：挂了 billion-context 的 profile 由
+  // `config.auto` 是**构建期注入**的键（AGENTS.md 红线 10）：挂了 billion-context 的 profile 由
   // `tools/gen-preset-bundle.mjs --with-billion-context` 往生成物里写 `auto: false`（与 bili 自己的
   // dsh.bundle.patch.yml 同键同值）。源文件必须保持中立 —— 没挂 bili 的 profile 里，dsh 自带的
   // 自动压缩是**唯一**的压缩手段，手写 false 等于让那些 profile 的上下文无限增长。

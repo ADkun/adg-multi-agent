@@ -2,7 +2,7 @@
 // 把本仓库的 preset 源文件（`preset/preset.yml` + `preset/agent.cordis.yml`）打包成
 // dsh 0.1.7 起唯一认识的形状：一个由 bundle patch 声明的 agent preset 行。
 //
-// 为什么需要它（2026-09-28 实测，见 docs/evidence.md §14）：
+// 为什么需要它（2026-09-28 实测，见 docs/evidence.md §9）：
 //   dsh 0.1.7-rc.2 起，`$DSH_HOME/.agent-presets/<id>/`（`preset.yml` + `agent.cordis.yml`）
 //   这套**目录发现机制被整体移除** —— 旧的 `@deepseek-ai/dsh-agent-presets`（复数）包在升级时
 //   被挪走，取而代之的是 `@deepseek-ai/dsh-agent-preset`（单数，声明行插件）+
@@ -171,7 +171,7 @@ function addToolsToExpertAllows(source, names) {
  * 与 billion-context 自己的 profile 层补丁**同键同值** —— 见文件头的说明。
  * 源文件刻意不写这个 config：它必须对没挂 billion-context 的人也成立（那种 profile 里 dsh 自带的
  * 自动压缩是唯一的压缩手段）。因此若源文件里已经有 `config:`，这里**直接失败**而不是叠加：
- * 两份 config 会让"到底谁生效"不可判定，而 AGENTS.md 红线 11 要求这个键只能出现在生成物里。
+ * 两份 config 会让"到底谁生效"不可判定，而 AGENTS.md 红线 10 要求这个键只能出现在生成物里。
  */
 function disableAutoCompaction(source) {
   const lines = source.replace(/\n+$/, '').split('\n')

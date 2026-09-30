@@ -13,7 +13,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 |---|---|
 | `id` | 行标识，约定 `agent-<name>` |
 | `config.toolName` | 模型看到的委派工具名，约定 `agent_<name>`，**必须全局唯一** |
-| `config.persona` | 这个智能体的职责、能力边界、越界时怎么做、输出要求，以及最后一行**收敛纪律**（照抄现有专家行） |
+| `config.persona` | 这个智能体的职责、能力边界、越界时怎么做、输出要求 |
 | `config.toolFilter.allow` | 它被允许使用的工具白名单 —— 这是**真实的能力边界**，不是提示 |
 | `config.backgroundMode` | 保持 `continuable`（后台接续干活，结果以通知回到调度者） |
 
@@ -37,7 +37,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 
 1. **定位 preset 的源文件**，不要猜路径，也不要改错那一份：Adg 现在是一个 **bundle** ——
    `$DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml`（bili / save-token 的注入版各有自己的稳定目录
-   `dsh-adg-preset-bili` / `dsh-adg-preset-save-token` / `dsh-adg-preset-bili-save-token`，见根 `AGENTS.md` 红线 11）是 `tools/gen-preset-bundle.mjs` 从
+   `dsh-adg-preset-bili` / `dsh-adg-preset-save-token` / `dsh-adg-preset-bili-save-token`，见根 `AGENTS.md` 红线 10）是 `tools/gen-preset-bundle.mjs` 从
    `preset/preset.yml` + `preset/agent.cordis.yml` **生成**的构建产物，**每次安装都会被覆盖**，
    所以**要改的是仓库里的 `preset/agent.cordis.yml`**。仓库不在本机就先 `git clone`
    （或让用户给出仓库路径）。旧的 `${DSH_HOME:-~/.dsh}/.agent-presets/adg/` 自 dsh 0.1.7-rc.2
@@ -113,18 +113,13 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
     所以 `check-preset.mjs` 见到源文件里手写这些名字直接判 ERROR。要给专家补上它们就用生成命令，不要改源文件：
     `node tools/gen-preset-bundle.mjs --with-billion-context` / `--with-save-token`（两个旗标可叠加）。
 - **有 `pwsh` 的专家要同时给 `job_list` / `job_output` / `job_kill`**，否则后台跑起来的任务取不回来。
-- **新专家的 persona 必须继承「收敛纪律」那一行。** 每个专家 persona 的最后一行都是同一句话：
-  "收敛纪律：收到步数检查点提醒时自己二选一：够用就收敛汇报，仍有必需工作就继续做并说明理由
-  ——不要为回应提醒砍掉必需工作。"（2026-09-30 全字段压缩后的现文）复制现有专家行时**把这行
-  一起复制**，不要漏掉。**不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
+- **不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
   "结论控制在 N 字符内"、"禁止整读大文件"之类）：那一层纪律已整体撤销 —— 截断与提前压缩会把
   工具已经取到的事实切掉，写在 persona 里的预算提示会把注意力从"把事情做对"挪到"别写太多"，
   净效果是更差的结论。**唯一的例外是调度侧那五条编排层规则**（同实体合并、优先恢复既有专家、
   先定位再动手、digest 中转、必要性闸门 + 挂号）：它们管的是"派给谁、派几次、材料怎么中转、
-  要不要做"，不管"单个专家能读多少、写多少"，所以**不要拿这条红线当理由删掉它们**。省 token
-  交给插件的**步数收敛检查点**（`dsh-adg-token-budget`；它**不比较
-  任何 token 阈值**，包名里的 `token-budget` 只是历史名称），见 README「token 成本纪律（这些上限是怎么来的）」与
-  「多智能体的 token 消耗：已落地与可选手段」。
+  要不要做"，不管"单个专家能读多少、写多少"，所以**不要拿这条红线当理由删掉它们**。成本口径见
+  README「token 成本纪律（这些上限是怎么来的）」与「多智能体的 token 消耗：已落地与可选手段」。
 - **不要给那三行体积旋钮加回覆盖值。** `compaction-basic` / `tool-result-pruner` / `tool-web` 三行
   刻意不写压缩阈值、单条工具结果截断、`fetchMaxOutputChars` / `searchMaxResults` /
   `searchMaxQueries`，一律用插件出厂默认值 —— 加一个智能体**不需要**动它们，而且"靠截断省 token"

@@ -37,7 +37,7 @@ last_reviewed: 2026-09-30
 | I7 | 用 `PRUNER_MARKER_CHARS = 39` 为常量，比较 `headChars: 2048` / `tailChars: 2010` 两例的摘要行 | CLI 冒烟 | 摘要里 `标记 39` 与实际算式一致；改常量必须同时改动摘要与判错 |
 | I8（WARN 不是失败） | 在干净副本上只制造一条 WARN（如 `allow` 加 `bash`） | CLI 冒烟 | 退出码 `0`，末行 `通过：0 个错误，1 个警告` |
 | I9（`exit 0` 的语义） | 文档与对外说明里检索"校验通过 = 已挂载"这类等价写法 | 人工 review | `tools/design.md`、`tools/AGENTS.md`、`skills/adg-add-agent/SKILL.md` 里都必须保留"不是 YAML 解析器 / 不证明挂载"的限定语 |
-| I9 | 真实挂载校验（`agentPresets.resolve('adg')` 的 `.broken` 为空 + `agentPresets.compositionInventory()`；`standingKeyFor` 在本版 dsh 已不存在，别调它） | 未实现 | 本文件内没有任何自动化调用它；按 `README.md`「给 AI 的安装指令」第 8 步人工执行 |
+| I9 | 真实挂载校验（`agentPresets.resolve('adg')` 的 `.broken` 为空 + `agentPresets.compositionInventory()`；`standingKeyFor` 在本版 dsh 已不存在，别调它） | 未实现 | 本文件内没有任何自动化调用它；按 `README.md`「给 AI 的安装指令」第 6 步人工执行 |
 
 ## 2. 状态机迁移矩阵
 
@@ -72,16 +72,14 @@ last_reviewed: 2026-09-30
 
 ## 3. 跨模块消费侧契约测试
 
-### 3.1 `install.ps1` / `install.sh` 消费 preset 与插件部署集合
+### 3.1 `install.ps1` / `install.sh` 消费 preset 与部署落点
 
-两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及落点：preset bundle 的**四种味道、四个稳定落点** `$DSH_HOME/bundles/dsh-adg-preset/`（plain）/ `…-bili/` / `…-save-token/` / `…-bili-save-token/`（`auto` 下**逐个注入组**探测、按该 profile 自己的结果选一份 —— 探测入口 `tools/has-bundle.mjs`、键→目录→旗标 `tools/resolve-flavor.mjs`，见根 `AGENTS.md` 红线 11 与第 5.1 节）、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径，以及落点：preset bundle 的**四种味道、四个稳定落点** `$DSH_HOME/bundles/dsh-adg-preset/`（plain）/ `…-bili/` / `…-save-token/` / `…-bili-save-token/`（`auto` 下**逐个注入组**探测、按该 profile 自己的结果选一份 —— 探测入口 `tools/has-bundle.mjs`、键→目录→旗标 `tools/resolve-flavor.mjs`，见根 `AGENTS.md` 红线 10 与第 5.1 节）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。preset bundle 靠**写进该 profile 的 `dsh.profile.bundles`** 选中。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
 | 另建一个工作副本，删掉 `preset/preset.yml`，分别跑 `node tools/check-preset.mjs` 与 `node tools/gen-preset-bundle.mjs` | CLI 冒烟 | 校验器**不会**报警（它只看 `agent.cordis.yml`），而生成器会 **exit 1** 并报 `preset/preset.yml 里没有可用的 name:` —— 这条脱钩的兜底从"没有防线"变成了**构建层拦截** |
-| 在 `install.ps1` / `install.sh` 中检索它们引用的仓库内路径，逐个 `Test-Path` | 人工 review | 每条被引用的仓库内路径都存在；任一条不存在即为**脱钩**（脚本里写的是 `preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`、`skills/adg-add-agent/SKILL.md`、`plugin/dsh-adg-token-budget` 五项） |
-| 在脚本里检索插件项清单 `'package.json', 'cordis.patch.yml', 'src', 'examples', 'README.md', 'LICENSE'`（与 `install.ps1` / `install.sh` 的拷贝循环逐字一致），与 `plugin/dsh-adg-token-budget/` 下的实际条目对比 | 人工 review | 六项都在；新增部署项（或新增不该进部署的目录）时两个脚本必须同时改，只改一个即脱钩。`cordis.patch.yml` 缺进部署 = 那个包只是普通依赖、挂载行不存在（2026-09-28 的六项集合见 `docs/evidence.md` §16.1） |
-| 在插件目录下新增一个 `CHANGELOG.md`，不加入任何脚本的部署清单 | 人工 review | 判定为"新增文件不进部署"是**有意的**还是**漏的**——两种脚本的注释与 `INSTALL.md` 必须给出同一个答案，否则脱钩 |
+| 在 `install.ps1` / `install.sh` 中检索它们引用的仓库内路径，逐个 `Test-Path` | 人工 review | 每条被引用的仓库内路径都存在；任一条不存在即为**脱钩**（脚本里写的是 `preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`、`skills/adg-add-agent/SKILL.md` 四项） |
 | 把一个包从目标 profile 的 `node_modules` 里挪走，重跑 `install.*` | CLI 冒烟 | 脚本必须**只报告、不写** `dsh.profile.bundles`（"写进列表"与"包装上了"必须同时成立，否则该 profile 会报未安装的 bundle）；对 profile 层遗留的旧 `- insert:` 挂载行同样**只报告、不代删**（脚本不猜用户手改过的文件，2026-09-28 起） |
 | **dsh 正在运行时**重跑 `install.*`（有变更需要重装依赖时） | CLI 冒烟 | `pnpm add link:` 失败（`os error 32` / `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`），脚本**如实报告并继续**；包已在位**不算失败**。判据：包不在位即被上一条挡住 |
 | 比对 `install.ps1` 与 `install.sh` 的部署集合 | 未实现 | 现在没有自动化比对；两个脚本的清单必须逐项一致（本仓库声明"行为等价"） |
@@ -134,8 +132,7 @@ last_reviewed: 2026-09-30
 | 制表符缩进 | 缩进只用空格数计算，tab 不会报错 | **真实挂载**（YAML 规范禁止 tab 缩进）；人工 review |
 | **专家行不在 4 空格缩进上** | 脚本的行匹配器写死 `^ {4}- id: (agent-…)`：缩进一变，**整段专家行检查静默跳过、脚本照旧报"通过"**。当前 `delegation` 是带 `isolate` 的 `cordis:group`、其条目恰好 4 空格 | **改 `delegation` 结构后必须人工确认**：跑 `node tools/check-preset.mjs`，报告里必须出现"专家行 9 个"；没有这一行就说明一个都没匹配上 |
 | 同一行里写两个键 | 一行的正则只取第一个 `key: value` | **真实挂载**；人工 review |
-| 运行期是否真的挂载（包解析、行被条件表达式关掉、服务发布到全局 realm） | 静态扫描拿不到运行期信息 | **真实挂载**：`agentPresets.resolve('adg')`（`.broken` 为空）/ `agentPresets.list()` / `agentPresets.compositionInventory()`（按 `README.md`「给 AI 的安装指令」第 8 步；`standingKeyFor` 在本版 dsh 已不存在，别调它） |
-| `plugin/dsh-adg-token-budget` 那一层（能否 import、行是否激活、`stepNudge` / `stepTiers` 生效值） | 本模块完全没覆盖它 | **宿主日志与 `logFile` 的激活行**；插件自己的 `node --test test` |
+| 运行期是否真的挂载（包解析、行被条件表达式关掉、服务发布到全局 realm） | 静态扫描拿不到运行期信息 | **真实挂载**：`agentPresets.resolve('adg')`（`.broken` 为空）/ `agentPresets.list()` / `agentPresets.compositionInventory()`（按 `README.md`「给 AI 的安装指令」第 6 步；`standingKeyFor` 在本版 dsh 已不存在，别调它） |
 | `install.ps1` / `install.sh` 的部署集合与落点 | 与本模块职责无关 | 人工 review（见 3.1） |
 | `KNOWN_TOOLS` 之外的名字是否在当前这台机器上注册 | 条件性注册求值不了 | **未覆盖**：`bash` / `read_image` / codex / claude-code 四类只在缺条件的部署上以"那一次委派抛错"暴露 |
 
@@ -169,7 +166,7 @@ node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle
 
 | 用例 | 类型 | 判据（2026-09-30 本机实测值） |
 |---|---|---|
-| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `99623` / `101632` / `101104` / `103113`（各 18 个顶层子插件条目、9 个专家行）；断言末行逐字 `通过：10 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
+| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `95631` / `97640` / `97112` / `99121`（各 18 个顶层子插件条目、9 个专家行；字节数随 persona 正文改动而变，别当判据）；断言末行逐字 `通过：10 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
 | 专家行报告行（`<toolName>[<项数>]=<组>:<ALL\|NONE\|PARTIAL\|LEAK>`） | CLI 冒烟 | `allow` 计数 plain `10/7/7/10/2/5/9/7/16`；bili `14/11/11/14/6/9/13/11/20`（每行 +4）；save-token `11/8/8/11/3/6/10/8/17`（每行 +1）；两旗标 `15/12/12/15/7/10/14/12/21`（每行 +5） |
 | `compaction-basic` 那一行 | CLI 冒烟 | plain / save-token 报 `compaction-basic[auto=未写]`；bili / bili+save-token 报 `auto=false`（这个键只在 bili 组激活时注入） |
 | **负例 1：错味道**（拿 bili 产物按 `plain` 判） | CLI 冒烟 | exit `1`、末行 `不通过：10 个错误（plain 味道 / 10 行报告）`；9 条 `ERROR agent-<id>（agent_<id>）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status` + `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK` |

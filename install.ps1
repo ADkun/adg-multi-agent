@@ -1,4 +1,4 @@
-﻿# 安装 Adg 多智能体模式 preset + 配套技能 + 步数收敛检查点插件到本机 dsh 用户根。
+﻿# 安装 Adg 多智能体模式 preset + 配套技能到本机 dsh 用户根。
 # 用法： powershell -ExecutionPolicy Bypass -File .\install.ps1
 #        powershell -ExecutionPolicy Bypass -File .\install.ps1 -Profiles web,desktop
 #        powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -SaveToken on -Profiles web
@@ -24,8 +24,6 @@
 # **不要再退回"生成物全机共用一份 + 每个目标 profile 都挂着才注入"那套口径**：那种做法在混装机器上
 # 必然给挂着 bili 的那个 profile 装 plain —— 专家收到 bili 的压缩指令却没有工具可调（2026-09-28 本机实测：
 # web 挂 bili、desktop 没挂 ⇒ auto 选中 plain ⇒ web 的子代理报 `unknown tool compress`）。
-# 插件 dsh-adg-token-budget 自 2026-09-28 起是**同一个形状**：它的挂载行由包自己的
-# cordis.patch.yml 提供（旧装法是把行手贴进 profile 的 patch 层，那条路已废弃，脚本只负责报告残留）。
 param(
   [string[]]$Profiles,
   [switch]$SkipPackages,
@@ -35,8 +33,6 @@ param(
   #   on  = 给**所有目标 profile** 都用带 bili 那一组的味道（自己保证它们都挂上了 billion-context，
   #         否则每次委派都抛 `names unknown global tool "compress"`）
   #   off = 给所有目标 profile 都用不带 bili 那一组的味道
-  # 注意：dsh-adg-token-budget **不再**按"这个 profile 挂没挂 bili"分叉 —— 2026-10 用户决定，
-  # 挂着 bili 的 profile 也照样启用它（此前的"挂了就别启用"已推翻，见 4c）。$BillionContext 只管味道。
   [ValidateSet('auto', 'on', 'off')] [string]$BillionContext = 'auto',
   # save-token 协同开关（2026-10 加），与 $BillionContext **完全并列、语义相同**（同一套 auto/on/off）：
   #   auto（默认）= 按每个 profile 自己的探测结果决定它装哪一份生成物：装了 dsh-plugin-save-token 的
@@ -49,7 +45,7 @@ $ErrorActionPreference = 'Stop'
 
 $root = $env:DSH_HOME
 if (-not $root) { $root = Join-Path $HOME '.dsh' }
-# 插件要求 logFile 是绝对路径（相对路径会被它关掉文件日志），所以这里先把 DSH_HOME 归一成绝对路径。
+# 先把 DSH_HOME 归一成绝对路径：稳定落点、探测与生成日志都按绝对路径用。
 if (-not [System.IO.Path]::IsPathRooted($root)) { $root = Join-Path (Get-Location).Path $root }
 $root = [System.IO.Path]::GetFullPath($root)
 
@@ -59,11 +55,6 @@ $skillDest = Join-Path $root 'skills\adg-add-agent'
 $bundleName = 'dsh-adg-preset'
 # 四个稳定落点（包名都是 $bundleName，见文件头）：名字不在本脚本里拼 —— 第 3 节问
 # `node tools\resolve-flavor.mjs` 拿（拼法只写在 tools\flavors.mjs）。每个 profile 的 node_modules 里只 link 其中一个。
-$pluginName = 'dsh-adg-token-budget'
-# 2026-09-28：插件也走 bundle —— 落点与 preset 同为 $DSH_HOME\bundles\，挂载行由包自己的
-# cordis.patch.yml（package.json 的 dsh.bundle.patch）提供，不再手贴进 profile 的 patch 层。
-$pluginStable = Join-Path $root "bundles\$pluginName"
-$pluginLegacyStable = Join-Path $root "plugins\$pluginName"
 
 # ── 目标 profile ────────────────────────────────────────────────────────────────
 # 默认：能装 preset 的所有 profile —— 判据是它的 bundle 列表里有 @deepseek-ai/dsh-web-app，
@@ -88,8 +79,8 @@ if ($Profiles.Count -eq 0) { throw "在 $profilesDir 下没找到可装 preset �
 
 # ── 0. 注入组探测（billion-context / save-token；2026-10 起两组各探一次）─────────────────────
 # 口径：**先探测该环境下是否装有对应插件；装了才注入它的工具名**（这正是 auto 的语义）。
-# 同一件事有两半，判据不一样：
-#   1. 专家要不要看见某个插件的全局层工具（bili 的 compress / decompress / search_context / acp_status；
+# 判据只有一条，决定这个 profile 的专家能看见哪些全局层工具：
+#   专家要不要看见某个插件的全局层工具（bili 的 compress / decompress / search_context / acp_status；
 #      save-token 的 save_token_expand）。这决定该 profile 链接哪一种味道的生成物（四个稳定目录，见文件头）。
 #      **按 profile 决定**：给没装的 profile 注入，它每一次委派都会抛 `names unknown global tool "<名字>"`
 #      （restrict() 的真行为，AGENTS.md 红线 7）；反过来给装了的不注入，专家就收到该插件的指令却没有工具可调
@@ -97,9 +88,6 @@ if ($Profiles.Count -eq 0) { throw "在 $profilesDir 下没找到可装 preset �
 #      两头都是缺陷，所以不能再用"宁可少给"一刀切。
 #      `-BillionContext on|off` / `-SaveToken on|off` 是**整体覆盖**（所有目标 profile 同一味道），
 #      auto 才是按 profile 选。
-#   2. （2026-10 起**不再**有这一半）早先挂 bili 的 profile 不启用 dsh-adg-token-budget，理由是两套收敛
-#      提醒重复；用户决定推翻它 —— 挂着 bili 也一律启用（见 4c）。所以探测现在只决定"给专家注入哪一份
-#      味道"，插件那一侧对所有 profile 走同一条路径。
 # 判据在 tools\has-bundle.mjs（bili 用缺省包名，save-token 加 --package=dsh-plugin-save-token）：
 # 每个组两条判据都要成立才算"装着"，两处安装脚本共用一份实现，不要在这里重写。
 # 探测结果不能靠 `@(& node ...)` 收（见下面 4b-1 里同一条实测）：把原生命令的 stdout 收进变量时，
@@ -280,20 +268,9 @@ if ($plainPkgName -ne $bundleName) {
   throw "稳定目录里的包名是 $plainPkgName，期望 $bundleName（profile 的 dsh.profile.bundles 那一行按这个包名写）"
 }
 
-# ── 4. 插件：作为 bundle 拷到稳定位置（同上去掉仓库依赖）────────────────────────
-# 部署集合六项 = package.json / cordis.patch.yml / src / examples / README.md / LICENSE
-# （与插件 package.json 的 files 一致；test\ 与 INSTALL.md 不进部署）。
-# cordis.patch.yml 是这一层的第六项：它就是挂载行本身，缺了它这个包只是普通依赖。
-$pluginSrc = Join-Path $here "plugin\$pluginName"
-if (Test-Path -LiteralPath $pluginStable) { Remove-Item -LiteralPath $pluginStable -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $pluginStable | Out-Null
-foreach ($item in 'package.json', 'cordis.patch.yml', 'src', 'examples', 'README.md', 'LICENSE') {
-  Copy-Item -LiteralPath (Join-Path $pluginSrc $item) -Destination $pluginStable -Recurse -Force
-}
-
+# ── 4. 装进目标 profile（依赖 link + 写进该 profile 的 dsh.profile.bundles）────────
 $pnpm = (Get-Command pnpm -ErrorAction SilentlyContinue)
 $installNotes = @()
-$patchNotes = @()
 $packageFailed = $false
 foreach ($name in $Profiles) {
   $profileDir = Join-Path $profilesDir $name
@@ -312,7 +289,7 @@ foreach ($name in $Profiles) {
     $installNotes += "$name : 跳过依赖安装（-SkipPackages）—— 这个 profile 期望的味道是 $flavor（$wantBundle）"
   } elseif (-not $pnpm) {
     $pnpmFailed = $true
-    $installNotes += "$name : 未找到 pnpm，跳过依赖安装 —— 请在该 profile 里执行 pnpm add link:`"$wantBundle`" link:`"$pluginStable`""
+    $installNotes += "$name : 未找到 pnpm，跳过依赖安装 —— 请在该 profile 里执行 pnpm add link:`"$wantBundle`""
   } else {
     Push-Location $profileDir
     try {
@@ -324,14 +301,14 @@ foreach ($name in $Profiles) {
       # （.modules.yaml 缺失）就想整目录重建，而文件被运行中的 dsh 占着
       # （实测：ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR / os error 32）。那要先关掉 dsh。
       $pnpmLog = Join-Path $profileDir 'pnpm-adg-install.log'
-      cmd /c "pnpm add `"link:$wantBundle`" `"link:$pluginStable`" > `"$pnpmLog`" 2>&1"
+      cmd /c "pnpm add `"link:$wantBundle`" > `"$pnpmLog`" 2>&1"
       if ($LASTEXITCODE -ne 0) {
         $pnpmFailed = $true
         $installNotes += "$name : pnpm add 失败（exit $LASTEXITCODE）—— 常见原因是 dsh 正在运行、node_modules 被占用；关掉 dsh 后重跑本脚本（日志 $pnpmLog）"
         Write-Host (Get-Content -LiteralPath $pnpmLog -Raw -Encoding UTF8)
       } else {
         Remove-Item -LiteralPath $pnpmLog -Force -ErrorAction SilentlyContinue
-        $installNotes += "$name : 已 link $bundleName（$flavor 味道）+ $pluginName"
+        $installNotes += "$name : 已 link $bundleName（$flavor 味道）"
       }
     } finally { Pop-Location }
   }
@@ -342,12 +319,11 @@ foreach ($name in $Profiles) {
   if (-not (Test-Path -LiteralPath (Join-Path $profileDir "node_modules\$bundleName\package.json"))) {
     $packageFailed = $true
     $installNotes += "$name : $bundleName 还没装进这个 profile 的 node_modules —— 未写入 dsh.profile.bundles（先解决上一条的 pnpm 失败）"
-    $patchNotes += "$name : 同上，未注册插件挂载行（不想让 profile 指向没装上的包）"
     continue
   }
   # pnpm 那一步失败、但包其实早就在位（例如上一次安装留下的）时不算失败，只说明本次没重装依赖。
   if ($pnpmFailed) {
-    $installNotes += "$name : pnpm 那一步没成功，但 $bundleName / $pluginName 已在 node_modules 里 —— 本次安装不受影响"
+    $installNotes += "$name : pnpm 那一步没成功，但 $bundleName 已在 node_modules 里 —— 本次安装不受影响"
   }
   # 4b-1. 断言**已经链接进去的那一份**的味道，正是这个 profile 该拿的味道。
   # 判据不能是"包在不在"：四种味道的 package.json 逐字节相同、包名也一样，只有产物本体不同 ——
@@ -391,86 +367,6 @@ foreach ($name in $Profiles) {
     [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
     $installNotes += "$name : 已把 $bundleName 加进 dsh.profile.bundles（原文件备份 $manifest.bak-adg-bundle）"
   }
-
-  # 4c. 插件 bundle 同样要选进 dsh.profile.bundles —— 挂载行现在由包自己的 cordis.patch.yml
-  # 提供（package.json 的 dsh.bundle.patch），profile 的 patch 层不再需要那条手贴的 insert 行。
-  # 判据比"包在不在 node_modules 里"更严：装上的那份必须真的声明 dsh.bundle.patch。pnpm 失败时
-  # 链接可能还指着旧落点 plugins\<pluginName>\，那份 package.json 没有 dsh.bundle.patch，
-  # 把它写进列表只会让 dsh 启动时选到一个没有 patch 层的 bundle。
-  # 不动机器级的 $root\cordis.patch.yml：那一层套在每个 profile 上（web / headless / sdk / 自建），
-  # 而这个插件只对 adg preset 的子代理生效，选进机器级等于让每个 profile 都去 import 它。
-  $pluginPkg = Join-Path $profileDir "node_modules\$pluginName\package.json"
-  $pluginLayer = $null
-  if (Test-Path -LiteralPath $pluginPkg) {
-    $pluginManifest = Get-Content -LiteralPath $pluginPkg -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($pluginManifest.dsh -and $pluginManifest.dsh.bundle) { $pluginLayer = $pluginManifest.dsh.bundle.patch }
-  }
-  if (-not $pluginLayer) {
-    $packageFailed = $true
-    $patchNotes += "$name : 装上的 $pluginName 没有声明 dsh.bundle.patch —— 未写入 dsh.profile.bundles（链接多半还指着旧落点 $pluginLegacyStable；关掉 dsh 重跑本脚本）"
-    continue
-  }
-  # 旧机制留下的手贴挂载行必须删：profile 层是 bundle 层之后应用的，一条 `- insert:` 会再插入
-  # 一行同 id 的条目；而按 id 覆盖时 config 是整块替换、不是深合并，留着它就把 bundle 行的
-  # config 换掉了（阶梯 / enabled 全回到插件出厂默认）。这里只报告、不代删。
-  $patchFile = Join-Path $profileDir 'cordis.patch.yml'
-  if (Test-Path -LiteralPath $patchFile) {
-    # -Encoding UTF8 不能省：Windows PowerShell 5.1 的 Get-Content 默认按系统 ANSI 代码页读，
-    # 用户自己在注释头里写的中文会被读成乱码再被原样写回去（5.1 下实测）。
-    $patchLines = @(Get-Content -LiteralPath $patchFile -Encoding UTF8)
-    # 在已经解码的行里找，不用 Select-String：5.1 上按 ANSI 解码时，一个残缺的前导字节
-    # 可能把紧跟其后的 ASCII 首字母一起吞掉，导致明明存在的行匹配不上。
-    # 两种形状都要抓到：旧机制写的是 `- insert:` 里缩进的 `    - id: adg-token-budget`，
-    # Plugins 页保存的是顶层的 `- id: adg-token-budget`。Trim 之后两者同形，一次比较就够。
-    $handRows = @($patchLines | Where-Object { $_.Trim() -eq '- id: adg-token-budget' })
-    if ($handRows.Count -gt 0) {
-      $patchNotes += "$name : $patchFile 里还有旧机制手贴的挂载行（$($handRows.Count) 处）—— 请删掉，这一行现在由 bundle 层提供；不删则 profile 层会整块替换掉 bundle 行的 config"
-    }
-  }
-  # 4c-1. 挂着 billion-context 的 profile **同样启用**这个插件（2026-10 用户决定，推翻此前的"挂了 bili
-  # 就不启用"）。早先的理由是：它按步数档位给子代理注入收敛提醒，而 bili 在同一个 profile 上也有自己的
-  # 压缩 / nudge 指令（`billion-context/src/server.ts` 的系统段与 nudge），两套提醒重复还都进前缀。
-  # 用户判定"步数检查点保留"（bili 不做按步数问一句"要不要收尾"这件事），重复的代价由用户接受；
-  # 2026-09-30 给提醒正文加的"压缩时把本段整条删除"也正好压掉了跨套提示的残留。
-  # 所以这一块不再按 profile 分叉：所有目标 profile 都走同一条"确保已选进 dsh.profile.bundles"的路径。
-  # 选中的做法不变、也不改塞一条 enabled:false/true 覆盖行 —— profile 层按 id 覆盖是**整块替换 config**，
-  # 要重写阶梯里每一个键（AGENTS.md 红线 3 同一个理由）。旧版安装按 bili 移除过的 profile，这里会把它加回去。
-  $json = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
-  $bundles = @($json.dsh.profile.bundles)
-  $mountsBili = [bool]$biliMounts[[string]$name]
-  if ($bundles -contains $pluginName) {
-    if ($mountsBili) {
-      $patchNotes += "$name : 这个 profile 挂着 billion-context，$pluginName 保持启用（挂载行来自 $pluginLayer；2026-10 起挂 bili 也不停用）"
-    } else {
-      $patchNotes += "$name : $pluginName 已在 dsh.profile.bundles 里（挂载行来自 $pluginLayer）"
-    }
-  } else {
-    Copy-Item -LiteralPath $manifest -Destination "$manifest.bak-adg-token-budget" -Force
-    $json.dsh.profile.bundles = @($bundles + $pluginName)
-    [System.IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
-    $suffix = $(if ($mountsBili) { '这个 profile 挂着 billion-context：2026-10 起挂 bili 也启用它（旧版安装曾按 bili 把它移除过就由此加回）' } else { '' })
-    $patchNotes += "$name : 已把 $pluginName 加进 dsh.profile.bundles$(if ($suffix) { " —— $suffix" })（原文件备份 $manifest.bak-adg-token-budget）"
-  }
-}
-
-# ── 5. 旧落点 plugins\<pluginName>\ 的清理 ────────────────────────────────────────
-# 只有"没有任何 profile 的链接还指着它"时才删：pnpm 那一步失败时链接可能仍指向旧目录，
-# 删掉会让那个 profile 启动时解析不到包（判据用链接目标，不用"包在不在"）。
-$legacyNote = '旧落点不存在'
-if (Test-Path -LiteralPath $pluginLegacyStable) {
-  $legacyUsers = @()
-  foreach ($name in $Profiles) {
-    $link = Join-Path (Join-Path $profilesDir $name) "node_modules\$pluginName"
-    if (-not (Test-Path -LiteralPath $link)) { continue }
-    $target = (Get-Item -LiteralPath $link).Target
-    if ("$target" -notlike "*bundles\$pluginName") { $legacyUsers += $name }
-  }
-  if ($legacyUsers.Count -eq 0) {
-    Remove-Item -LiteralPath $pluginLegacyStable -Recurse -Force
-    $legacyNote = "已删除旧落点 $pluginLegacyStable"
-  } else {
-    $legacyNote = "旧落点 $pluginLegacyStable 未删除：$($legacyUsers -join ', ') 的链接还指着它（关掉 dsh 重跑本脚本）"
-  }
 }
 
 Write-Host "已安装到 dsh 用户根：$root"
@@ -478,23 +374,16 @@ Write-Host "  skill   -> $skillDest"
 foreach ($gen in $genFlavors) {
   Write-Host "  bundle  -> $($gen.dest)（$($gen.flavor) 味道：$($gen.note)；生成物来自 preset\preset.yml + preset\agent.cordis.yml）"
 }
-Write-Host "  plugin  -> $pluginStable（bundle：挂载行来自它自己的 cordis.patch.yml）"
-Write-Host "  legacy  -> $legacyNote"
 Write-Host "  browser -> $browserNote"
 foreach ($note in $installNotes) { Write-Host "  profile -> $note" }
-foreach ($note in $patchNotes) { Write-Host "  patch   -> $note" }
 Write-Host ""
 Write-Host "下一步：重启 dsh，然后在新建对话里选择「Adg 多智能体模式」。"
 Write-Host "（preset 走的是一条独立的 patch 层：`dsh --profile <name> --dump-config` 能确认它被读到，"
 Write-Host "  但只有真的新建一个会话才算挂载成功 —— 静态文件与 --dump-config 都证明不了挂载。）"
-Write-Host "（插件行现在来自 bundle 层：没有任何东西 watch bundles\，单独改 bundles\$pluginName\cordis.patch.yml"
-Write-Host "  不会自己触发重读 —— 以**重启 dsh** 为准。换过插件 src\ 里的代码同样必须重启（热重载不重新 import）。"
-Write-Host "  只想改本机这一份 config：在 Plugins 页保存，它写的是 profile 的 cordis.patch.yml，"
-Write-Host "  热重载立即生效；注意那条覆盖行整块替换 config、不是深合并，要留的键都得重写。）"
 Write-Host "（browser/ 工具链又是另一回事：用户根下的普通文件，重新跑本脚本即生效，不用重启 dsh。）"
 if ($packageFailed) {
   Write-Host ""
-  Write-Host "注意：至少有一步 pnpm 没成功，$bundleName / $pluginName 可能还没装进 profile（上面的 profile 与 patch 行里写明了）。" -ForegroundColor Yellow
+  Write-Host "注意：至少有一步 pnpm 没成功，$bundleName 可能还没装进 profile（上面的 profile 行里写明了）。" -ForegroundColor Yellow
   Write-Host "先关掉正在运行的 dsh（它占着 node_modules 里的文件，pnpm 无法重建目录），再重跑本脚本。" -ForegroundColor Yellow
   exit 2
 }

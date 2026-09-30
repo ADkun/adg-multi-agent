@@ -13,7 +13,6 @@ last_reviewed: 2026-09-30
 
 - **不是 YAML 解析器。** 证明不了整份文件能被 YAML 解析，更证明不了解析结果等于写的人以为的结构。
 - **不证明插件真的挂载。** 包能否解析、行是否被 `disabled` 或条件表达式关掉、服务是否发布了全局 realm——这三类只有真实挂载能证明：`agentPresets.resolve('adg')` 的 `.broken` 为空（**判据**）与 `agentPresets.compositionInventory()` 的形状（`entryId` / `moduleName` / `enabled` / `fiberState`）。`standingKeyFor` 在本版 dsh 里**已不存在**，别照旧文档调它。
-- **不校验 `plugin/dsh-adg-token-budget`。** 插件那一层它完全没覆盖：能否 import、行有没有激活、`stepNudge` / `stepTiers` 生效值是什么，只能看宿主日志与 `logFile`。
 - **不修改任何文件。** 只读目标，不写、不格式化、不修 BOM。
 - **不部署。** 复制到用户根是 `install.ps1` / `install.sh` 的职责。
 - **不校验 `KNOWN_TOOLS` 之外的工具是否在当前这台机器上注册。** 条件性注册的名字（`bash` / `read_image` / `subagent_codex` / `subagent_claude_code`）只给 WARN——静态检查求值不了条件表达式，也判断不了服务是否挂载。

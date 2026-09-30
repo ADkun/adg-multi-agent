@@ -25,7 +25,7 @@ last_reviewed: 2026-09-27
 - 被依赖：
   - `preset/agent.cordis.yml` 的 `agent-browser` 行（`agent_browser` 专家）按本模块的命令行契约执行浏览器交互；**persona 只写命令与纪律，不复制选项表**；
   - `install.ps1` / `install.sh` 把 `browser/` 拷到 `${DSH_HOME:-~/.dsh}/browser/`（部署落点与仓库路径同名，减少一层映射）；
-  - `docs/evidence.md` 引用本模块的真机实测（§13）。
+  - `docs/evidence.md` 引用本模块的真机实测（§8）。
 - 跨模块改动路由：改命令行契约（命令名、输出行、退出码）→ 先读 `preset/agent.cordis.yml` 的 `agent-browser` persona 与本模块 `testing-guide.md` 的消费侧契约，再改；改 `launch` 的默认行为 → 先读 `preset/design.md` I11（权限闸门）与 I12（人工介入），确认没有把闸门或分工写坏。
 
 ## 核心数据模型
@@ -48,7 +48,7 @@ last_reviewed: 2026-09-27
   - `absent`：端口上没有任何 CDP 端点。**它不是**「没有 Chrome 在跑」——用户日常的 Chrome 就在跑，只是没有调试端口。
   - `starting`：已 spawn，正在等 `/json/version` 起来。**它不是**「可用」：这期间任何页面操作都必须先失败。
   - `live`：`/json/version` 可达。**它不是**「当前页已登录」——登录是与站点之间的事，本模块无从判断。
-  - `closed`：`Browser.close` 之后端口不再可达。**它不是**「数据丢了」：优雅关闭正是登录态落盘的时刻（§13 实测）。
+  - `closed`：`Browser.close` 之后端口不再可达。**它不是**「数据丢了」：优雅关闭正是登录态落盘的时刻（§8 实测）。
   - 迁移唯一入口：`absent|closed → starting → live` 只能由 `cli.mjs launch` 触发；`live|starting → closed` 只能由 `cli.mjs close` 触发。禁止绕过对象直接改状态（例如手工 kill 进程：那会跳过落盘）。
 - 不变量：
   - I3: `live` 时禁止重启。`launch` 必须先探测端口，活着就**复用**并按需补开标签页。来源：重启会丢内存里的会话态，并逼用户重新登录 —— 而「用户刚登录完」正是最不该被打断的时刻。
