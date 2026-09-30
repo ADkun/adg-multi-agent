@@ -2,7 +2,7 @@
 title: 实测证据台账
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-30
 ---
 
 # 实测证据台账（docs/evidence.md）
@@ -35,8 +35,8 @@ last_reviewed: 2026-09-28
 | 沙箱探测（§11） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
 | 人工介入探测（§12） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘） | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
-| 生成物自检（§17） | `node tools/check-bundle-flavor.mjs <cordis.patch.yml> <plain\|bili>` | 钉住 **bundle 产物**里 billion-context 那四个名字的有无；`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列，产物是它的盲区。零依赖按行扫、自己探测缩进 |
-| billion-context 挂载判据（§17） | 判据实现 `tools/has-billion-context.mjs`；被判对象 = 某 profile 的 `package.json` 里 `dsh.profile.bundles` 含 `billion-context` **且** `profiles/<p>/node_modules/billion-context/dsh.bundle.patch.yml` 存在 | 判据是**单向**的，只决定这个 profile 拿哪份味道（给专家注入那四个工具）—— **不再**决定 `dsh-adg-token-budget` 启不启用（2026-10 按用户要求推翻，见 §17.1 第 11 条）。实现只在这一处 |
+| 生成物自检（§17 / §22） | `node tools/check-bundle-flavor.mjs <cordis.patch.yml> <plain\|bili\|save-token\|bili+save-token>` | 钉住 **bundle 产物**里每个注入组的名字有无（该在的组必须全有、不该在的组一个都不能有、`notInjected` 出现即错），外加 `compaction-basic` 的 `auto` 只在 bili 味道为 `false`；四味道实测见 §22。原来只有这一句：钉住 **bundle 产物**里 billion-context 那四个名字的有无；`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列，产物是它的盲区。零依赖按行扫、自己探测缩进 |
+| 构建期注入组的挂载判据（§17 / §22） | 判据实现 `tools/flavors.mjs` 的 `probeBundle`，入口 `node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（缺省包名 `billion-context`；**逐个注入组各问一次**，save-token 组加 `--package=dsh-plugin-save-token`）；被判对象 = 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名 **且** `profiles/<p>/node_modules/<包名>/<补丁文件>` 存在，补丁文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读（billion-context = `./dsh.bundle.patch.yml`、dsh-plugin-save-token = `./cordis.patch.yml`，实测于 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json` 的 2.4.1），读不到才退回历史名 `dsh.bundle.patch.yml`。它取代了 2026-09-28 的 `tools/has-billion-context.mjs`（**已删除**，口径与实测见 §22） | 判据是**单向**的，只决定这个 profile 拿哪份味道（两组的布尔组合决定 plain / bili / save-token / bili+save-token）—— **不再**决定 `dsh-adg-token-budget` 启不启用（2026-10 按用户要求推翻，见 §17.1 第 11 条）。实现只在这一处 |
 
 ## 1. 步数分布与阶梯校准（真机实测）
 
@@ -930,7 +930,7 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
    - 零回归证据：**不带旗标重跑生成物，去掉注释行后与改动前已装的稳定产物逐行相同**（非注释行 `278 = 278`、diff `0`）。整体 SHA256 从 `8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`（1.1.0 的 plain）变成 `8FD4D6A5B0C9D64AF33E5E3A9A6B2C65EE506FEC37FBCB91834904A8B1F78289`（1.2.0 的 plain）：**13 行差异全是注释**（生成物头部的 flavor 说明 + 源文件注释块新增的 `auto` 段）**加上 `package.json` 的版本号** ⇒ 行、键、取值一个都没动，改的是说明文字。
    - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
 6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
-7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。
+7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。**（该脚本 2026-10 起由 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]` 取代 —— 逐组问，补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读；口径与四味道实测见 §22。上面这次读取本身仍是 2026-09-28 的历史事实。）**
 8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 与 `dsh-adg-token-budget` 两个稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 11 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分两种味道、两个稳定目录，按 profile 各拿一份 —— 见 §18。）**
 9. **源码级事实（2026-09-28 的"让位"口径；2026-10 已被推翻 —— 见第 11 条）**：当时决定"挂着 bili 的 profile 不启用 `dsh-adg-token-budget`"，实现选"从 `dsh.profile.bundles` 里移除选中"而不是塞 `enabled: false`：profile 层按 id 覆盖是**整块替换 `config`**（`plugin/dsh-adg-token-budget/cordis.patch.yml` 的注释 + §16.4 第 6 条），为关一个键要重写整份 config —— 与红线 3 同一个理由；而且 `enabled: false` 时 apply 只写一行 `activation: inactive (enabled: false)`，**行仍然挂着**，与"这个 profile 不启用该插件"在日志上不同形。所以实现是"从 `dsh.profile.bundles` 里移除 + 备份 `.bak-adg-token-budget`"。**这条"为什么不用覆盖行"的理由在 2026-10 的新口径下依然成立、照旧执行**，被推翻的只是"该不该让位"这件事本身。
 10. **第二处交界：挂 bili 的 profile 要关掉 preset realm 里的自动压缩（本次新增）**，依据分四层：
@@ -1041,3 +1041,55 @@ zlib.zstdDecompressSync)"` → `function`）。**坑在帧**：一个 `session.v
 **§21.1 父级侧的截断信号：运行时结算通知的开场白（2026-09-30 补，源码级事实）**：后台子代理结算时，运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，**开场白按 `stopReason` 分支**（`@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()`）：`completed` → `Background subagent <id> finished and will do no further work unless you send it more.`／`aborted` → `was stopped before it finished.`／**`max-tokens` → `ran out of room before it finished.`**／`refusal` → `declined the task.`／`error` → `failed before it finished.`（另有 default 分支 `ended abnormally (<stopReason>) before it finished.`）。随后是 `Its closing message:` + 子级最终 assistant 输出的**非空文本块**；若一个非空文本块都没有，就补一句 `It left no closing message.`（`:85-105` 的 `createSettlementMessage()`；逐字见 `@deepseek-ai/dsh-subagent/README.md:150`，运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ **用户给的例子（`… ran out of room before it finished.` 紧跟 `It left no closing message.`）正是"被截断且没留下收尾文本"这一态**，既不是失败、不是被停、也不是拒绝。对规则的意味：调度者不必去读 child 的转写，**结算通知的开场白就是判据**；被截断 ≠ 被终止（`dsh-subagent\lib\index.js:1076` 的 `resume({ resumeSessionId: childId })` 那条路照旧可用），所以规则 7 把这句开场白写成了触发信号。
 
 **未观测（已照 §8 登记）**：调度者是否真的去接、接住之后产出是否完整（6 条截断里一条都没续写过）；**见到 §21.1 那句开场白之后会不会真的发出继续消息**（同一条行为观测）；本机 `maxTokens` 是否被模型目录抬高（离线无法确证）。
+
+## 22. 构建期注入组：两个组、四种味道、按 profile 逐个探测（2026-09-30）
+
+**来源（本次改动的起点）**：用户要求（原话，安装侧口径的唯一权威）：「更正一下语言，安装时要先检查当前环境有没有安装对应插件，有的话才把对应的工具添加进去。」⇒ **安装时先探测该 profile 的环境里有没有装对应插件；装了才把它注册在全局层的那几个工具名注进专家 `allow`，没装就不注入。**
+
+**机制（源码级事实；单一事实来源 = `tools/flavors.mjs`，其余脚本一律 `import` 它、不另抄清单）**：
+
+| 注入组 | gen 旗标 | 对应插件包 | 注入的工具名 | `notInjected` | 关自动压缩 |
+|---|---|---|---|---|---|
+| `billion-context` | `--with-billion-context` | `billion-context` | `compress` / `decompress` / `search_context` / `acp_status` | `acp_cache` | **是**（给 `compaction-basic` 写 `config.auto: false`） |
+| `save-token` | `--with-save-token` | `dsh-plugin-save-token` | `save_token_expand` | 无 | 否 |
+
+- `GROUP_ORDER = ['billion-context','save-token']` 决定 `allow` 的追加顺序；味道键由"装着哪几组"决定（`flavorKeyOf`）：`plain` / `bili` / `save-token` / `bili+save-token`；稳定目录名由 `dirNameFor(key)` 拼（`dsh-adg-preset` / `-bili` / `-save-token` / `-bili-save-token`，味道键里的 `+` 换成 `-`）。四份产物的 `package.json` **逐字节相同**、包名都是 `dsh-adg-preset`（所以 `dsh.profile.bundles` 那一行四种味道通用），不同的只有 `cordis.patch.yml`。
+- 探测判据 = `tools/flavors.mjs` 的 `probeBundle(profilesDir, profile, packageName)`：① 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名；② `profiles/<profile>/node_modules/<包名>/<补丁文件>` 存在。**补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读**，读不到才退回历史名 `dsh.bundle.patch.yml` —— 两个真实插件实测：`billion-context` 写 `./dsh.bundle.patch.yml`，`dsh-plugin-save-token` 写 `./cordis.patch.yml`（本机 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json`，版本 **2.4.1**）⇒ **写死历史名会把装了 save-token 的 profile 判成"没装"**。读文件异常一律 catch 成 false。
+- 两个入口：`node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（缺省包名 `billion-context` = 历史默认值；每 profile 一行 `<name>\t<0|1>`；**退出码恒 0**，探测结果是数据不是错误）；`node tools/resolve-flavor.mjs [--billion-context] [--save-token]` → 一行三列 TSV `<味道键>\t<稳定目录名>\t<gen 旗标>`（只做映射，**不做探测**）。
+- 为什么必须一枚味道一份（两侧后果都不轻）：**不给** —— 那两个插件的指令/通知只看自己的 config，不看这次请求有没有那些工具；**给了但目标 profile 没装那个插件** —— 名字不存在，撞红线 7，每一次委派当场抛 `names unknown global tool "…"`。
+
+**源码级事实（save-token 那一半的通知确实会打到专家身上）**：
+- `dsh-plugin-save-token/lib/index.js:487` 的通知正文直接点名工具：`… Need any omitted detail? Call the save_token_expand tool with id "…"`；该插件**只注册这一个工具**（同文件 `:957` `name: "save_token_expand"`）。它把工具结果**进入历史的那一刻**换成 `[save-token #id] …` 通知。
+- `ctx.on("tools/post-execute", …)` 在同文件 `:722`；`:726` `if (exec.parent !== void 0) comp.nestedCalls++;`、`:728` `if (exec.parent !== void 0) return decision;` ⇒ 它只跳过**设了 `parent`** 的派发。`parent` 是 PTC / `run_code` 子派发的 token（`@deepseek-ai/dsh-tools/lib/types/ptc.js:438` 逐字 `parent: exec.token,`，`C:\Users\cenqian\AppData\Local\npm-cache\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\dsh-tools`），**普通子代理委派不设它** ⇒ 被委派的专家会收到"去调 `save_token_expand`"的通知。
+
+**真机实测（2026-09-30，Windows / Node v26.9.0 / 仓库根 `D:\dsh\adg-multi-agent`）**：四条命令各生成一份 `cordis.patch.yml`（每份都 **18 个顶层子插件条目 / 10 行报告 = 9 个专家行 + 1 行 `compaction-basic`**），再各按自己的味道断言：
+
+| 味道 | 生成命令 | `cordis.patch.yml` | 专家 `allow` 计数（file / computer / app / browser / search / researcher / coder / reviewer / general） | `compaction-basic` | 断言 |
+|---|---|---|---|---|---|
+| `plain` | `node tools/gen-preset-bundle.mjs bundle/adg-plain` | **99623 B** | `10/7/7/10/2/5/9/7/16` | `auto=未写` | exit 0 |
+| `bili` | `… --with-billion-context bundle/adg-bili` | **101632 B** | `14/11/11/14/6/9/13/11/20`（每行 +4） | `auto=false` | exit 0 |
+| `save-token` | `… --with-save-token bundle/adg-save-token` | **101104 B** | `11/8/8/11/3/6/10/8/17`（每行 +1） | `auto=未写` | exit 0 |
+| `bili+save-token` | `… --with-billion-context --with-save-token bundle/adg-bili-save-token` | **103113 B** | `15/12/12/15/7/10/14/12/21`（每行 +5） | `auto=false` | exit 0 |
+
+- 生成器 stdout 逐字：`  cordis.patch.yml  <字节数> 字节 / 18 个顶层子插件条目（preset id=adg, order=20）`；激活的组打 `  billion-context    已注入：9 个专家行 + 4 个工具名（compress / decompress / search_context / acp_status），并把 compaction-basic 的 auto 设为 false` / `  save-token         已注入：9 个专家行 + 1 个工具名（save_token_expand）`；未激活的组打 `  <组名>  未注入（缺省）。…`（并给出后果提示语）。四份都 exit 0。
+- 断言通过行逐字（`node tools/check-bundle-flavor.mjs <那份文件> <味道键>`）：`通过：10 行报告，plain 味道断言成立（注入组：无）` / `…，bili 味道断言成立（注入组：billion-context）` / `…，save-token 味道断言成立（注入组：save-token）` / `…，bili+save-token 味道断言成立（注入组：billion-context + save-token）`；报告里 `plain` / `save-token` 打 `compaction-basic[auto=未写]`，另两个打 `compaction-basic[auto=false]`。
+
+**检验（负例，脚本不会假绿）**：
+- 拿 **bili 产物按 `plain` 断** → **exit 1、10 个错误**：9 条逐字 `ERROR agent-file（agent_file）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status`（其余 8 条同形，只换 id），外加 `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK`，末行 `不通过：10 个错误（plain 味道 / 10 行报告）`。
+- 拿 **plain 产物按 `save-token` 断** → **exit 1、9 个错误**：逐字 `ERROR agent-file（agent_file）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`（其余 8 条同形）；报告行全 `save-token:NONE`，末行 `不通过：9 个错误（save-token 味道 / 10 行报告）`。
+- **未知味道键** → **exit 2**，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）`。
+- **踩过的坑（登记，防重踩）**：`resolve-flavor.mjs` 的旗标与 `gen-preset-bundle.mjs` 的旗标**不是一套** —— 前者收 `--billion-context` / `--save-token`（含义是"这个 profile **装着**该组"，由探测得来），传 gen 的 `--with-save-token` → **exit 2**、stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）`。
+
+**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 2 警告**，exit 0；两条警告是条件性注册的 `read_image`（`第 528 行 agent-file`、`第 742 行 agent-general`）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，2 个警告`**：
+- 插 `- save_token_expand` → `ERROR 第 528 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`
+- 插 `- acp_cache` → `ERROR 第 528 行 agent-file：allow 里的 "acp_cache" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools））——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
+- 插 `- compress` → `ERROR 第 528 行 agent-file：allow 里的 "compress" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
+  名字清单由 `check-preset.mjs` 从 `tools/flavors.mjs` **推导**、不另抄一份 ⇒ 加一个注入组只需改组表。`acp_cache` 的 `notInjected` 那半也被注明成"gen 的注入清单里没有这个"。
+- **踩过的坑（登记，防重踩）**：`preset/agent.cordis.yml` 这类文件是 UTF-8 **无 BOM**，用 Windows PowerShell 的 `Get-Content` / `Set-Content` 读写会按 ANSI 误读成乱码、并**改变行数**（本轮 `check-preset` 一度报出 8 个专家行、`allow` 为空、11 个错误、0 个警告）；读写一律走 UTF-8 感知的工具（本仓库的 read 工具，或 node 的 `fs.readFileSync(p, 'utf8')`）。
+
+**检验（产物体积不是稳定判据）**：生成物把**源文件的注释行原样带上**。本轮实测：只改 `preset/agent.cordis.yml` 的注释块 ⇒ 四份产物整体 **+431 B**；只改 `tools/flavors.mjs` 里 save-token 组的 `artifactNotes` ⇒ 含该组的两个产物各 **+211 B**。⇒ 判据只能是 `check-bundle-flavor.mjs` 的断言，不是字节数。
+**回归对照（味道拆分没有改变注入行为）**：`bundle/adg-preset/cordis.patch.yml`（上一版生成、缺省落点）与 `bundle/adg-bili/cordis.patch.yml`（本轮生成）逐行**集合**比对 —— 只在旧侧出现的行 **10** 条、只在新侧出现的行 **14** 条，**全部是 `#` 注释行**（旧侧如 `# （billion-context 的 DSH 插件把这几个名字注册在全局层，…`、新侧如 `# （billion-context 把这几个名字注册在全局层，…`），**正文行完全相同**；行数 906 → 911 的差也全来自注释块改写。
+
+**真机实测（本机 profile / 链接现状，2026-09-30）**：`node tools/has-bundle.mjs C:\Users\cenqian\.dsh\profiles desktop headless web` → `desktop 0` / `headless 0` / `web 1`；加 `--package=dsh-plugin-save-token` → 同样 `desktop 0` / `headless 0` / `web 1` ⇒ **`web` 的正确味道是 `bili+save-token`**。`C:\Users\cenqian\.dsh\bundles\` 下有 `dsh-adg-preset`、`dsh-adg-preset-bili`、`dsh-adg-token-budget`；`profiles\web\node_modules\dsh-adg-preset` 是指向 `..\..\..\bundles\dsh-adg-preset-bili` 的 **SymbolicLink**，其 `package.json` 写 `"dsh-adg-preset": "link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset-bili"` ⇒ **当前链接的是 bili 那一份，与探测结果（两组都装）不一致**；重跑 `install.*` 应改链到 `dsh-adg-preset-bili-save-token`（`-save-token` / `-bili-save-token` 两个稳定目录本机**尚未创建**）。
+
+**未观测（已照 §8 登记）**：① 四种味道的产物在**真实挂载**（重启 dsh + 新会话）里是否各自正确 —— 本节只有静态断言与产物比对，**没有重启挂载**；② 装了 save-token 的那一份在真实委派里，专家拿到 `[save-token #id]` 通知后是否真的去调 `save_token_expand`（行为层，本轮只证明"通知会到、工具名该在"）；③ `install.ps1` / `install.sh` 的逐组探测与选味道实现（另一撰写者负责）本轮未复核，本节只记判据与脚本入口，**不把它写成已实现的安装行为**。

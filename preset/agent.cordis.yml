@@ -423,7 +423,9 @@
 # 写错不是静默生效，而是整行挂载时直接抛错。
 #
 # 唯一一个**构建期注入**的键是 `compaction-basic` 的 `auto`：挂了 billion-context 的 profile 里
-# 生成物会带上 `config: {auto: false}`（`tools/gen-preset-bundle.mjs --with-billion-context`），
+# 生成物会带上 `config: {auto: false}`（`tools/gen-preset-bundle.mjs --with-billion-context`；注入组
+# 清单在 `tools/flavors.mjs`，两组里**只有** billion-context 要求关自动压缩 —— save-token 组只往
+# allow 里加工具名，不碰任何旋钮），
 # 与 billion-context 自己的 `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）
 # **同键同值**。为什么要在这儿再写一遍：那份官方补丁打在 profile 层，而本 preset 的 compaction
 # 三行活在 `isolate: {compaction: true}` 的 realm 里、是另一份实例，跨 lane 的 id 命中与否从未被观测；
@@ -501,13 +503,15 @@
     #      名字缺失的后果是"这一次委派失败"，不是挂载失败。
     #   4. 有 pwsh 的专家一律同时给 job_list / job_output / job_kill：工具的指导段落
     #      会讲后台任务，只给 pwsh 不给收集工具会让"后台跑了但取不回来"。
-    #   5. 这份名单里**没有** billion-context 的那几个上下文工具（compress / decompress /
-    #      search_context / acp_status），是有意为之：它们由另一个 bundle 注册在全局层，
-    #      装了才存在，所以只能出现在**生成物**里 ——
-    #      `node tools/gen-preset-bundle.mjs --with-billion-context`（install.* 会探测目标
-    #      profile 有没有挂 billion-context 再决定）。手写进这里，没装的人每一次委派都会
-    #      抛 `names unknown global tool`（见上第 3 条 + AGENTS.md 红线 11）；完全不注入的
-    #      代价则是：专家收得到 bili 注入的压缩/nudge 指令，却没有工具可调用。
+    #   5. 这份名单里**没有**任何**构建期注入**的名字，是有意为之：两个注入组（billion-context
+    #      的 compress / decompress / search_context / acp_status、save-token 的
+    #      save_token_expand）由别的 bundle 注册在**全局层**，装了才存在，所以只能出现在
+    #      **生成物**里 —— `node tools/gen-preset-bundle.mjs --with-billion-context` /
+    #      `--with-save-token`（可叠加；install.* 逐 profile 探测装了哪个再选味道，清单在
+    #      `tools/flavors.mjs`）。手写进这里，没装的人每一次委派都会抛
+    #      `names unknown global tool`（见上第 3 条 + AGENTS.md 红线 11）；完全不注入的
+    #      代价则是：专家收得到那个插件注入的指令（bili 的压缩/nudge；save-token 通知正文
+    #      直接点名 "Call the save_token_expand tool"），却没有工具可调用。
     #
     # 注意两个刻意的设计：
     #   1. 这里没有通用 `subagent` / `subagent_fork` 行。子代理会继承父代理的

@@ -2,7 +2,7 @@
 title: check-preset.mjs 校验器 模块设计
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-30
 ---
 
 ## 职责与边界
@@ -24,6 +24,7 @@ last_reviewed: 2026-09-28
 - 依赖的事实来源（改这几处时必须重新核对本模块的常量）：
   - `skills/adg-add-agent/SKILL.md`「硬约束」小节里的硬约束与实测事实；
   - 三个插件包的**出厂默认值**：见 `tools/check-preset.mjs` 的 `FACTORY_DEFAULTS`（**唯一真相源**——本文件不复述具体数字，换插件版本时会漂移，脚本只把它当对照）。
+  - **构建期注入组的组表**：见 `tools/flavors.mjs` 的 `INJECTION_GROUPS` / `GROUP_ORDER`（**唯一真相源**——旗标、包名、注入的工具名、故意不注入的名字、是否关自动压缩、味道键与目录名的拼法、探测判据全在那里；`check-preset.mjs` / `gen-preset-bundle.mjs` / `check-bundle-flavor.mjs` / `has-bundle.mjs` / `resolve-flavor.mjs` 一律 `import` 它，本文件不复述里面的字符串）。
 - 被依赖：
   - `skills/adg-add-agent/SKILL.md`（改完 preset 跑它，并在它的正文里描述本模块的检查范围与边界）；
   - `install.ps1` / `install.sh` 的交付说明（把"preset 改动要重启"与本模块的门禁位置讲给用户）；
@@ -81,6 +82,21 @@ node tools/check-preset.mjs [<path-to-agent.cordis.yml>]
 省略参数时校验仓库里的 `preset/agent.cordis.yml`；传路径即校验那一份**文本**（路径参数还在，但**没有第二份"已安装的文本"**可传了 —— 安装侧的真相是 profile 里注册的声明行，它由 `tools/gen-preset-bundle.mjs` 生成）。退出码契约：`0` 通过（允许 WARN）、`1` 有 ERROR、`2` 目标不存在/不是普通文件。stdout 打印报告，其中两条是生效值摘要行：`体积旋钮（生效值）` 与 `裁剪后实际吐出（按生效配置算）`；读不到目标时的原因走 stderr。
 
 模块内导出面：**无**。`KNOWN_TOOLS` / `CONDITIONAL_TOOLS` / `SCHEDULER_ONLY` / `FACTORY_DEFAULTS` / `EXPECTED_ROWS` / `PRUNER_MARKER_CHARS` 都只是本文件内的常量，不 `export`——要读它们只能读源码。调用方（技能、安装脚本、CI）一律只按"退出码 + stdout 摘要行"消费。
+
+## 构建期注入组与味道（`tools/flavors.mjs`）
+
+`tools/` 里除校验器与生成器外还有一份**组表**：`tools/flavors.mjs`。它回答四个问题，且每题只有这一处答案。
+
+1. **有哪些注入组**：`INJECTION_GROUPS`，顺序由 `GROUP_ORDER = ['billion-context', 'save-token']` 固定（它同时决定 `allow` 里名字的追加顺序）。一组 = 一个旗标（`--with-billion-context` / `--with-save-token`）+ 一个插件包名 + 该组注册在**全局层**的工具名 + 故意不注入的名字（`notInjected`）+ 是否顺手关掉 preset realm 里 `compaction-basic` 的 `auto`。
+2. **味道是"组的集合"，不是枚举**：`plain` = 空集；其余键按 `GROUP_ORDER` 把各组的 `flavorToken` 用 `+` 连起来（`bili` / `save-token` / `bili+save-token`）。`flavorKeys()` / `parseFlavorKey()` 都按组表算。**把味道写成枚举是这类机制最容易犯的错**：加第三个组时手写的枚举会漏掉半数组合，而组表推导一次就对。
+3. **稳定目录名是推导结果**：`dirNameFor(key)` —— 空集是 `DIR_PREFIX`（`dsh-adg-preset`），否则 `dsh-adg-preset-` + 各 token 以 `-` 连接（味道键里的 `+` 换成 `-`）。**文档与脚本都不许写死这串名字**；安装脚本用 `resolve-flavor.mjs` 的输出拿目录名，而不是自己拼。
+4. **怎么判断一个 profile"装着某个组"**：`probeBundle(profilesDir, profile, packageName)` = ① 包名在该 profile 的 `dsh.profile.bundles` 里（**声明选中**）；**且** ② 该 profile 的 `node_modules/<包名>/` 下真的有这个包自己的补丁文件。两条都要，因为它们各自会失效：
+   - 只看 ①：清单里写了名字、`node_modules` 里却没有实体（依赖没装成、链接断了）—— 此时把工具名注入 `allow` 等于给了一个不存在的工具，`restrict()` 抛 `names unknown global tool`；
+   - 只看 ②：包被别的东西当传递依赖带进来，而 profile 并没有**选中**这个 bundle —— 插件其实没挂载，"注入"同样是幻觉；
+   - 补丁文件名**从包自己的 `package.json` 的 `dsh.bundle.patch` 字段读**（billion-context 是 `./dsh.bundle.patch.yml`、`dsh-plugin-save-token` 是 `./cordis.patch.yml`），读不到才退回历史名 `dsh.bundle.patch.yml`。写死历史名的后果不是报错而是**静默漏判**：新插件换文件名时判据恒为假、味道恒落 plain，而没有任何一处会说出来。
+5. **谁做映射、谁做判定**：`resolve-flavor.mjs` **只做"键 → 目录 → 旗标"的映射**，不探测、不做 auto/on/off 决策。这样它能在没有 profile 的机器上被调用、也能被直接喂输入测试；探测（`has-bundle.mjs`）与覆盖策略（安装脚本）各自独立，任一环换实现都不影响另外两环。
+
+**加一个新的注入组**（例如某个新插件往全局层注册 `foo`）：只改 `tools/flavors.mjs` 的 `INJECTION_GROUPS` 加一项（旗标 / 包名 / 工具名 / `flavorToken` / `missingHint` 等），再在 `GROUP_ORDER` 里插上它的位置。之后自动获得：新的味道键与稳定目录名、`gen-preset-bundle.mjs` 的新旗标、`check-preset.mjs` 的"手写即 ERROR"拦截（清单从组表推导，不在校验器里另抄）、`check-bundle-flavor.mjs` 的逐组断言、`has-bundle.mjs --package=<新包>` 与 `resolve-flavor.mjs --<新组>`。**禁止**在校验器、生成器、检查器或文档里另抄一份名字清单 —— 那正是这套机制要消灭的漂移源。
 
 ## 非功能红线
 

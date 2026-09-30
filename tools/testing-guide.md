@@ -2,12 +2,12 @@
 title: check-preset.mjs 校验器 测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-30
 ---
 
 # check-preset.mjs 测试指南
 
-对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。同目录第二个脚本 `gen-preset-bundle.mjs` 的构建契约见第 5 节（它的设计记录在自己的头部注释里）。
+对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。同目录其余脚本的用例都在第 5 节：构建脚本 `gen-preset-bundle.mjs`（它的设计记录在自己的头部注释里）与产物自检 `check-bundle-flavor.mjs`，以及组表 `tools/flavors.mjs`、探测入口 `tools/has-bundle.mjs`、味道映射 `tools/resolve-flavor.mjs` 的调用判据（5.1 节）。
 
 准备动作（下称"夹具 A"）：把 `preset/agent.cordis.yml` 复制到临时文件，只改副本，绝不改仓库里的那份。**注意现在只有这一份文本**：`${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 那份已随机制移除（dsh 0.1.7-rc.2，实测），不要再去找或去传它。
 
@@ -74,7 +74,7 @@ last_reviewed: 2026-09-28
 
 ### 3.1 `install.ps1` / `install.sh` 消费 preset 与插件部署集合
 
-两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及落点：preset bundle 的**两种味道**稳定落点 `$DSH_HOME/bundles/dsh-adg-preset/`（plain）与 `$DSH_HOME/bundles/dsh-adg-preset-bili/`（注入版；`auto` 下按每个 profile 自己的探测结果选一份，见根 `AGENTS.md` 红线 11）、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径、插件的**六项**部署集合（`package.json` / `cordis.patch.yml` / `src` / `examples` / `README.md` / `LICENSE` —— 第二项就是**挂载行本体**，由包清单的 `dsh.bundle.patch` 声明，缺了它这个包只是普通依赖），以及落点：preset bundle 的**四种味道、四个稳定落点** `$DSH_HOME/bundles/dsh-adg-preset/`（plain）/ `…-bili/` / `…-save-token/` / `…-bili-save-token/`（`auto` 下**逐个注入组**探测、按该 profile 自己的结果选一份 —— 探测入口 `tools/has-bundle.mjs`、键→目录→旗标 `tools/resolve-flavor.mjs`，见根 `AGENTS.md` 红线 11 与第 5.1 节）、插件 bundle 稳定落点 `$DSH_HOME/bundles/dsh-adg-token-budget/`（**与 preset bundle 同一根**）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。两个 bundle 都靠**写进该 profile 的 `dsh.profile.bundles`** 选中；`profiles/<profile>/cordis.patch.yml` 里**已不再有插件挂载行**（2026-09-28 起，见 `docs/evidence.md` §16.1）。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
@@ -141,7 +141,7 @@ last_reviewed: 2026-09-28
 
 ## 5. `gen-preset-bundle.mjs`（同目录第二个脚本）的构建契约
 
-它只做一件事：把 `preset/preset.yml`（顶层 `key: value` 标量）+ `preset/agent.cordis.yml`（**原样**缩进进 `config.plugins`）+ `preset/bundle.package.json`（原样拷贝）写成 `<outDir>/{cordis.patch.yml,package.json}`（默认 `bundle/adg-preset/`，在 `.gitignore` 里）。设计记录在脚本头部注释，用例只覆盖它的**输入守卫**与**形状**：
+它只做一件事：把 `preset/preset.yml`（顶层 `key: value` 标量）+ `preset/agent.cordis.yml`（**原样**缩进进 `config.plugins`）+ `preset/bundle.package.json`（原样拷贝）写成 `<outDir>/{cordis.patch.yml,package.json}`（**安装脚本按味道各传一个位置参数**：`bundle/adg-plain/` / `adg-bili/` / `adg-save-token/` / `adg-bili-save-token/`；不传位置参数时的缺省出海目录是 `bundle/adg-preset/`，在 `.gitignore` 里）。设计记录在脚本头部注释，用例只覆盖它的**输入守卫**与**形状**：
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
@@ -152,6 +152,44 @@ last_reviewed: 2026-09-28
 | 把 `preset/agent.cordis.yml` 的第一条有效行改成不是 `- ` 开头 | CLI 冒烟 | exit `1`，stderr 报"第一条有效行不是 `- ` 开头的数组项" |
 | 往 `preset/agent.cordis.yml` 里塞一个制表符 / 一个 CR 行尾 | CLI 冒烟 | exit `1`（YAML 缩进不允许 tab；CR 会让缩进块带上 `\r`） |
 | 生成物形状 | 人工 review | 一行 `insert:` → Loader 行 `id: preset-adg` / `name: '@deepseek-ai/dsh-agent-preset'` / `config:` 里 `id: adg` + `name` + `description`（有才写）+ `order` + `plugins:`；条目缩进 = 10 空格；标量一律双引号（JSON 转义是合法 YAML） |
-| **手改过生成物**（改 `bundle/adg-preset/` / `bundle/adg-plain/` 或 `$DSH_HOME/bundles/dsh-adg-preset/` / `.../dsh-adg-preset-bili/` 里的文件） | CLI 冒烟 | 重跑生成器 / 重跑 `install.*` 即被覆盖 —— 这就是"生成物不许手改"的兜底；判违例看语义：有人拿它们当源文件 |
+| **手改过生成物**（改 `bundle/adg-plain/` / `adg-bili/` / `adg-save-token/` / `adg-bili-save-token/` / 缺省 `bundle/adg-preset/`，或 `$DSH_HOME/bundles/` 下四个稳定目录 `dsh-adg-preset` / `-bili` / `-save-token` / `-bili-save-token` 里的文件） | CLI 冒烟 | 重跑生成器 / 重跑 `install.*` 即被覆盖 —— 这就是"生成物不许手改"的兜底；判违例看语义：有人拿它们当源文件 |
 | 生成物的**运行期**效果（dsh 会不会挂载它） | 未实现 | 生成器只保证形状。要真实挂载：装进 profile（`plugin_manager` 的 `install_bundle`，或 `install.*`）后看 `agentPresets.resolve('adg').broken` 与 `compositionInventory()` 里的 `fiberState` |
-| 生成器与校验器的分工是否被混用 | 人工 review | `check-preset.mjs` 管 `agent.cordis.yml` 的**语义硬约束**；生成器管**形状与嵌缩进**。谁都不覆盖对方，别用其一代替其二 |
+| 生成器与校验器的分工是否被混用 | 人工 review | `check-preset.mjs` 管 `agent.cordis.yml` 的**语义硬约束**；生成器管**形状与嵌缩进**。谁都不覆盖对方，别用其一代替其二
+
+### 5.1 构建期注入组：四种味道的生成、断言、负例与探针（2026-09-30 实测）
+
+**组表与味道键的单一事实来源是 `tools/flavors.mjs`**：两个注入组（`billion-context`、`save-token`）、`GROUP_ORDER = ['billion-context','save-token']`（决定 `allow` 追加顺序）、味道键 `plain` / `bili` / `save-token` / `bili+save-token`、稳定目录名由 `dirNameFor(key)` 拼。**改了 `tools/flavors.mjs`、`tools/gen-preset-bundle.mjs` 或 `preset/agent.cordis.yml` 就必须四条全跑**（根 `AGENTS.md` 质量门 1b）：
+
+```sh
+node tools/gen-preset-bundle.mjs bundle/adg-plain && node tools/check-bundle-flavor.mjs bundle/adg-plain/cordis.patch.yml plain
+node tools/gen-preset-bundle.mjs --with-billion-context bundle/adg-bili && node tools/check-bundle-flavor.mjs bundle/adg-bili/cordis.patch.yml bili
+node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node tools/check-bundle-flavor.mjs bundle/adg-save-token/cordis.patch.yml save-token
+node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle/adg-bili-save-token && node tools/check-bundle-flavor.mjs bundle/adg-bili-save-token/cordis.patch.yml bili+save-token
+```
+
+| 用例 | 类型 | 判据（2026-09-30 本机实测值） |
+|---|---|---|
+| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `99623` / `101632` / `101104` / `103113`（各 18 个顶层子插件条目、9 个专家行）；断言末行逐字 `通过：10 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
+| 专家行报告行（`<toolName>[<项数>]=<组>:<ALL\|NONE\|PARTIAL\|LEAK>`） | CLI 冒烟 | `allow` 计数 plain `10/7/7/10/2/5/9/7/16`；bili `14/11/11/14/6/9/13/11/20`（每行 +4）；save-token `11/8/8/11/3/6/10/8/17`（每行 +1）；两旗标 `15/12/12/15/7/10/14/12/21`（每行 +5） |
+| `compaction-basic` 那一行 | CLI 冒烟 | plain / save-token 报 `compaction-basic[auto=未写]`；bili / bili+save-token 报 `auto=false`（这个键只在 bili 组激活时注入） |
+| **负例 1：错味道**（拿 bili 产物按 `plain` 判） | CLI 冒烟 | exit `1`、末行 `不通过：10 个错误（plain 味道 / 10 行报告）`；9 条 `ERROR agent-<id>（agent_<id>）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status` + `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK` |
+| **负例 2：漏注入**（拿 plain 产物按 `save-token` 判） | CLI 冒烟 | exit `1`、末行 `不通过：9 个错误（save-token 味道 / 10 行报告）`；9 条 `ERROR agent-<id>（agent_<id>）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`；报告行全 `save-token:NONE` |
+| **负例 3：未知味道键**（`… bundle/adg-plain/cordis.patch.yml nope`） | CLI 冒烟 | exit `2`，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）` |
+| `acp_cache`（`notInjected`）出现在任何味道里 | 人工 review（读脚本源码，本轮未单独造产物） | `NEVER_INJECTED = notInjectedFor(GROUP_ORDER)` ⇒ `ERROR …：acp_cache 不在任何注入清单里（gen 脚本与 tools/flavors.mjs 的清单需对齐）` |
+| **手写注入名字进源文件**（夹具 A 的某个专家行 `allow:` 块末尾插一行） | CLI 冒烟 | 三条都 exit `1`、末行 `不通过：1 个错误，2 个警告`：插 `save_token_expand` ⇒ `ERROR 第 528 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`；插 `acp_cache` ⇒ 同一形状，括注里多一句 `（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools）`；插 `compress` ⇒ 与 bili 组同形、指回 `--with-billion-context`。名字清单由校验器从 `tools/flavors.mjs` **推导**、不另抄一份 |
+| 探针做法本身（怎么造夹具） | 人工 review | 复制 `preset/agent.cordis.yml` 到临时文件 → 在某个专家行的 `allow:` 块末尾插一行 → `node tools/check-preset.mjs <临时文件>`。**别用 Windows PowerShell 的 `Get-Content` / `Set-Content` 读写这些文件**（UTF-8 **无 BOM**，会被按 ANSI 误读成乱码并改变行数，本轮踩过）；用 UTF-8 感知的读写（node 的 `fs.readFileSync(p,'utf8')`，或本仓库的 read 工具） |
+
+**探测与味道映射（安装侧的判据，两个独立入口）**：
+
+```sh
+node tools/has-bundle.mjs "$env:USERPROFILE\.dsh\profiles" desktop headless web      # 缺省探测 billion-context
+node tools/has-bundle.mjs "$env:USERPROFILE\.dsh\profiles" web --package=dsh-plugin-save-token
+node tools/resolve-flavor.mjs --billion-context --save-token
+```
+
+| 用例 | 类型 | 判据（2026-09-30 本机） |
+|---|---|---|
+| `has-bundle.mjs` 逐组探测 | CLI 冒烟 | 每 profile 一行 `<name>\t<0\|1>`、**退出码恒 0**；本机缺省探测 `desktop 0` / `headless 0` / `web 1`，`--package=dsh-plugin-save-token` 同形；缺参数 exit `2` |
+| `resolve-flavor.mjs` 键 → 目录 → 旗标 | CLI 冒烟 | `plain\tdsh-adg-preset\t`（第三列为空）/ `bili\tdsh-adg-preset-bili\t--with-billion-context` / `bili+save-token\tdsh-adg-preset-bili-save-token\t--with-billion-context --with-save-token`；三条都 exit `0` |
+| **把 gen 的旗标传给 `resolve-flavor.mjs`**（`--with-save-token`） | CLI 冒烟 | exit `2`，stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）` ⇒ 两个入口的旗标**不是一套**（前者表示"装着该组"，后者表示"生成时带上该组"） |
+| 补丁文件名不是历史名（`dsh-plugin-save-token` 用 `./cordis.patch.yml`） | 人工 review | 判据在 `tools/flavors.mjs` 的 `probeBundle`：从包自己的 `package.json` 的 `dsh.bundle.patch` 读，读不到才退回 `dsh.bundle.patch.yml`；本机 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json` = `"./cordis.patch.yml"`（写死历史名会把装了它的 profile 判成"没装"） | |

@@ -9,7 +9,22 @@ last_reviewed: 2026-09-30
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 用户复核：今天两处新增提示词按"只留判据"再精简（−121 字符）
+## 2026-09-30（最新）— 构建期注入组扩成两组、四种味道：安装时先探测、装着才注入
+
+- 依据（用户要求，原话）：「更正一下语言，安装时要先检查当前环境有没有安装对应插件，有的话才把对应的工具添加进去。」⇒ 口径定为**安装时逐个注入组探测该 profile 装了没有；装了才把那一组注册在全局层的工具名注进专家 `allow`，没装就不注入**。
+- `tools/flavors.mjs`（新增）：构建期注入组的**单一事实来源** —— `INJECTION_GROUPS`（旗标 / 包名 / 注入的工具名 / `notInjected` / 是否关自动压缩）、`GROUP_ORDER`、味道键与稳定目录名的拼法、探测判据 `probeBundle`。两个组：`billion-context`（`compress` / `decompress` / `search_context` / `acp_status`，故意不注入 `acp_cache`，并给 `compaction-basic` 注入 `config.auto: false`）与 `save-token`（只有 `save_token_expand`，不碰任何旋钮）。其余脚本与文档一律从它推导。
+- `tools/has-bundle.mjs`（新增，**取代已删除的 `tools/has-billion-context.mjs`**）：`node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`，每 profile 一行 `<name>\t<0|1>`，退出码恒 0；缺省包名 `billion-context`（历史默认值），save-token 组用 `--package=dsh-plugin-save-token` 再问一次。判据 = 包名在该 profile 的 `dsh.profile.bundles` 里 **且** 装上的那份包里真的有它的补丁文件 —— **补丁文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读**（`billion-context` = `./dsh.bundle.patch.yml`、`dsh-plugin-save-token` = `./cordis.patch.yml`），读不到才退回历史名 `dsh.bundle.patch.yml`。
+- `tools/resolve-flavor.mjs`（新增）：`node tools/resolve-flavor.mjs [--billion-context] [--save-token]` → 一行三列 TSV `<味道键>\t<稳定目录名>\t<gen 旗标>`，把"这个 profile 装着哪几组"翻成"该拿哪份生成物"；只做映射、**不做探测**（注意它的旗标是 `--<组>`，与生成的 `--with-*` 不是一套）。
+- `tools/gen-preset-bundle.mjs`：接受两个可叠加旗标（`--with-billion-context` / `--with-save-token`）；只有 bili 组激活才给 `compaction-basic` 注入 `config.auto: false`，save-token 组只往 `allow` 加名字。
+- `tools/check-bundle-flavor.mjs`：味道键从 `plain|bili` 扩成 `plain|bili|save-token|bili+save-token`，逐组断言"该在的组必须全有 / 不该在的组一个都不能有 / 该组 `notInjected`（`acp_cache`）出现即错"，并断言 `compaction-basic` 的 `auto` 只在 bili 味道恰好为 `false`（其余味道要求这个键不存在）。
+- `tools/check-preset.mjs`：`BUILD_TIME_INJECTED_TOOLS` 改为从 `tools/flavors.mjs` **推导**（不再另抄一份名字清单）⇒ 手写 `save_token_expand` 也会被拦，报错直接指回对应旗标。
+- 味道键 → 稳定目录：`plain` = `dsh-adg-preset`、`bili` = `dsh-adg-preset-bili`、`save-token` = `dsh-adg-preset-save-token`、`bili+save-token` = `dsh-adg-preset-bili-save-token`（四份 `package.json` 逐字节相同、包名都是 `dsh-adg-preset`）；目录名不写死，以 `flavors.mjs` 的 `dirNameFor(key)` 为准。
+- 安装脚本按每个 profile 的探测结果选择味道（**只记口径，不记 `install.ps1` / `install.sh` 的实现细节** —— 那一层尚未定稿）。
+- 文档同步：`docs/evidence.md` 新增 §22（机制表、四味道实测、两个方向的负例、源文件侧探针、"产物体积不是稳定判据"与本机 profile/链接现状），并改「证据来源」表两行（生成物自检扩成四味道；挂载判据改指 `tools/flavors.mjs` 的 `probeBundle` 与 `tools/has-bundle.mjs`）、§17 第 7 条补一句"该脚本已由 `has-bundle.mjs` 取代"的括注（原读数保留为历史）；`tools/testing-guide.md`（四味道生成 + 断言 + 三条负例 + 探针做法）；`preset/testing-guide.md`（I3c 与状态机表扩成四个稳定落点 + 构建期注入名怎么验证）；`docs/registry.md`。
+- 检验：四份生成物 **99623 / 101632 / 101104 / 103113 B**（各 18 个顶层子插件条目、9 个专家行），四条 `node tools/check-bundle-flavor.mjs <那份文件> <味道键>` **全 exit 0**；负例两个方向 exit 1（10 个错误 / 9 个错误）、未知味道键 exit 2；`node tools/check-preset.mjs` **0 错误 / 2 警告**（第 528 / 742 行的条件性 `read_image`）；源文件侧探针手写 `save_token_expand` / `acp_cache` / `compress` 各 exit 1（报错逐字见 `docs/evidence.md` §22）；回归对照：旧 `bundle/adg-preset/cordis.patch.yml` 与新 `bundle/adg-bili/cordis.patch.yml` 的差异行**全是注释行**、正文行相同。
+- 未观测：四种味道产物的**真实挂载**（重启 dsh + 新会话）本轮没做；专家收到 `[save-token #id]` 通知后是否真的去调 `save_token_expand` 未观测；`install.*` 的逐组探测与选味道实现未复核。
+
+## 2026-09-30 — 用户复核：今天两处新增提示词按"只留判据"再精简（−121 字符）
 
 - 依据（用户复核，原话）：「你前面那个子代理到输出上限的，以及这个新权限对新子代理生效的提示词，有必要这么长吗？」
 - 规则 7 的识别信号片段 **218 → 143 字符（−75）**：删掉 `Background subagent <id>` 这截样板前缀（只留唯一的判据 `ran out of room before it finished.`）、子代理侧视角那句「已达到输出 token 上限，回答被截断，已有输出保留在对话中」（调度者看不到、也不需要），"被截断不等于被终止"→"被截断≠被终止"；**负面清单保留**（`finished…`／`failed…`／`declined…`／`was stopped…` 都不是截断），否则正常收尾会被误判成截断。现逐字：「你那边的信号是结算通知里的 `ran out of room before it finished.`（只有这一句是截断：`finished…`／`failed…`／`declined…`／`was stopped…` 都不是）—— 被截断≠被终止，**回一条继续消息它就能接着做**：」

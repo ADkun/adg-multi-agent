@@ -1,6 +1,7 @@
 ﻿# 安装 Adg 多智能体模式 preset + 配套技能 + 步数收敛检查点插件到本机 dsh 用户根。
 # 用法： powershell -ExecutionPolicy Bypass -File .\install.ps1
 #        powershell -ExecutionPolicy Bypass -File .\install.ps1 -Profiles web,desktop
+#        powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -SaveToken on -Profiles web
 # 注意：本文件必须保留 UTF-8 BOM —— Windows PowerShell 5.1 在没有 BOM 时会按系统 ANSI
 # 代码页读取脚本，中文变成乱码并直接解析失败（本仓库已实测复现，见 README「兼容性」）。
 #
@@ -10,12 +11,16 @@
 # 声明（id/name/description/order/plugins）。本脚本：生成 bundle → 放到 $DSH_HOME\bundles\ →
 # 装进目标 profile 的 node_modules 并写进该 profile 的 dsh.profile.bundles。
 #
-# 2026-09-28 追加：preset 的生成物有**两种味道**（plain / 注入版），各自占一个稳定目录 ——
-#   $DSH_HOME\bundles\dsh-adg-preset         plain（generate 不带旗标）
-#   $DSH_HOME\bundles\dsh-adg-preset-bili    注入版（专家的 allow 里带 bili 的四个上下文工具）
-# 两份的**包名都是 `dsh-adg-preset`**，所以 profile 的 `dsh.profile.bundles` 那一行两种味道通用，
+# 2026-09-28 追加 / 2026-10 扩成四种：preset 的生成物有**四种味道**（两个注入组的四种组合），
+# 每种占一个稳定目录 ——
+#   $DSH_HOME\bundles\dsh-adg-preset                 plain（generate 不带旗标）
+#   $DSH_HOME\bundles\dsh-adg-preset-bili            bili（专家的 allow 里带 bili 的四个上下文工具）
+#   $DSH_HOME\bundles\dsh-adg-preset-save-token      save-token（带 save_token_expand）
+#   $DSH_HOME\bundles\dsh-adg-preset-bili-save-token 两组都带
+# 四种的**包名都是 `dsh-adg-preset`**，所以 profile 的 `dsh.profile.bundles` 那一行四种味道通用，
 # 差别只在它 node_modules 里的那个 link 指向哪一个目录。每个 profile 按**自己的**探测结果选，
-# 于是混装（一个 profile 挂 bili、另一个没挂）也能各拿对的形状。
+# 于是混装（一个 profile 挂 bili、另一个没挂）也能各拿对的形状。味道键、稳定目录名与 gen 旗标都在
+# 第 0 / 3 节问 `node tools\resolve-flavor.mjs`（拼法只写在 tools\flavors.mjs，本脚本不重拼）。
 # **不要再退回"生成物全机共用一份 + 每个目标 profile 都挂着才注入"那套口径**：那种做法在混装机器上
 # 必然给挂着 bili 的那个 profile 装 plain —— 专家收到 bili 的压缩指令却没有工具可调（2026-09-28 本机实测：
 # web 挂 bili、desktop 没挂 ⇒ auto 选中 plain ⇒ web 的子代理报 `unknown tool compress`）。
@@ -24,15 +29,21 @@
 param(
   [string[]]$Profiles,
   [switch]$SkipPackages,
-  # billion-context 协同开关（2026-10 加），两个作用见下面「billion-context 探测」那段注释：
-  #   auto（默认）= **按每个 profile 自己的探测结果**决定它装哪一份生成物：挂了 bili 的装注入版，
-  #                 没挂的装 plain。混装机器上两种形状各归各家（这是 2026-09-28 改掉的核心）。
-  #   on  = 给**所有目标 profile** 都装注入版（自己保证它们都挂上了 billion-context，
+  # billion-context 协同开关（2026-10 加），语义见下面第 0 节「注入组探测」：
+  #   auto（默认）= **按每个 profile 自己的探测结果**决定它装哪一份生成物：装了对应插件的装带该组的味道，
+  #                 没装的装 plain。混装机器上各归各家（这是 2026-09-28 改掉的核心）。
+  #   on  = 给**所有目标 profile** 都用带 bili 那一组的味道（自己保证它们都挂上了 billion-context，
   #         否则每次委派都抛 `names unknown global tool "compress"`）
-  #   off = 给所有目标 profile 都装 plain
+  #   off = 给所有目标 profile 都用不带 bili 那一组的味道
   # 注意：dsh-adg-token-budget **不再**按"这个 profile 挂没挂 bili"分叉 —— 2026-10 用户决定，
   # 挂着 bili 的 profile 也照样启用它（此前的"挂了就别启用"已推翻，见 4c）。$BillionContext 只管味道。
-  [ValidateSet('auto', 'on', 'off')] [string]$BillionContext = 'auto'
+  [ValidateSet('auto', 'on', 'off')] [string]$BillionContext = 'auto',
+  # save-token 协同开关（2026-10 加），与 $BillionContext **完全并列、语义相同**（同一套 auto/on/off）：
+  #   auto（默认）= 按每个 profile 自己的探测结果决定它装哪一份生成物：装了 dsh-plugin-save-token 的
+  #                 才往专家的 allow 里注入 `save_token_expand`；on / off 是整体覆盖。
+  #   给没装的 profile 注入 = 每次委派都抛 `names unknown global tool "save_token_expand"`（红线 7）；
+  #   给装了的不注入 = 专家收到 `[save-token #id] … Call the save_token_expand tool` 的通知却没有工具可调。
+  [ValidateSet('auto', 'on', 'off')] [string]$SaveToken = 'auto'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -46,10 +57,8 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $skillDest = Join-Path $root 'skills\adg-add-agent'
 $bundleName = 'dsh-adg-preset'
-# 两种味道两个稳定落点（包名相同，见文件头）：plain = $bundleStable（沿用旧路径，老链接不用动），
-# bili = $bundleBiliStable。每个 profile 的 node_modules 里只 link 其中一个。
-$bundleStable = Join-Path $root "bundles\$bundleName"
-$bundleBiliStable = Join-Path $root "bundles\$($bundleName)-bili"
+# 四个稳定落点（包名都是 $bundleName，见文件头）：名字不在本脚本里拼 —— 第 3 节问
+# `node tools\resolve-flavor.mjs` 拿（拼法只写在 tools\flavors.mjs）。每个 profile 的 node_modules 里只 link 其中一个。
 $pluginName = 'dsh-adg-token-budget'
 # 2026-09-28：插件也走 bundle —— 落点与 preset 同为 $DSH_HOME\bundles\，挂载行由包自己的
 # cordis.patch.yml（package.json 的 dsh.bundle.patch）提供，不再手贴进 profile 的 patch 层。
@@ -77,71 +86,128 @@ if (-not $Profiles -or $Profiles.Count -eq 0) {
 }
 if ($Profiles.Count -eq 0) { throw "在 $profilesDir 下没找到可装 preset 的 profile（判据：dsh.profile.bundles 含 @deepseek-ai/dsh-web-app）" }
 
-# ── 0. billion-context 探测（2026-10 加；2026-09-28 改成**按 profile** 选味道）──────────────
+# ── 0. 注入组探测（billion-context / save-token；2026-10 起两组各探一次）─────────────────────
+# 口径：**先探测该环境下是否装有对应插件；装了才注入它的工具名**（这正是 auto 的语义）。
 # 同一件事有两半，判据不一样：
-#   1. 专家要不要看见 bili 的上下文工具（compress / decompress / search_context / acp_status）。
-#      这决定该 profile 链接哪一种味道的生成物（plain / bili 两个稳定目录，见文件头）。**按 profile 决定**：
-#      给没挂 bili 的 profile 装注入版，它每一次委派都会抛 `names unknown global tool "compress"`
-#      （restrict() 的真行为，AGENTS.md 红线 7）；反过来给挂了 bili 的装 plain，专家就收到 bili 的压缩
-#      指令却没有工具可调 —— 两头都是缺陷，所以不能再用"宁可少给"一刀切。
-#      `-BillionContext on|off` 是**整体覆盖**（所有目标 profile 同一味道），auto 才是按 profile 选。
+#   1. 专家要不要看见某个插件的全局层工具（bili 的 compress / decompress / search_context / acp_status；
+#      save-token 的 save_token_expand）。这决定该 profile 链接哪一种味道的生成物（四个稳定目录，见文件头）。
+#      **按 profile 决定**：给没装的 profile 注入，它每一次委派都会抛 `names unknown global tool "<名字>"`
+#      （restrict() 的真行为，AGENTS.md 红线 7）；反过来给装了的不注入，专家就收到该插件的指令却没有工具可调
+#      （bili 的压缩指令 / save-token 的 `[save-token #id] … Call the save_token_expand tool` 通知）——
+#      两头都是缺陷，所以不能再用"宁可少给"一刀切。
+#      `-BillionContext on|off` / `-SaveToken on|off` 是**整体覆盖**（所有目标 profile 同一味道），
+#      auto 才是按 profile 选。
 #   2. （2026-10 起**不再**有这一半）早先挂 bili 的 profile 不启用 dsh-adg-token-budget，理由是两套收敛
 #      提醒重复；用户决定推翻它 —— 挂着 bili 也一律启用（见 4c）。所以探测现在只决定"给专家注入哪一份
 #      味道"，插件那一侧对所有 profile 走同一条路径。
-# 判据在 tools\has-billion-context.mjs：两条判据都要成立才算"挂着"，两处安装脚本共用一份实现，不要在这里重写。
+# 判据在 tools\has-bundle.mjs（bili 用缺省包名，save-token 加 --package=dsh-plugin-save-token）：
+# 每个组两条判据都要成立才算"装着"，两处安装脚本共用一份实现，不要在这里重写。
 # 探测结果不能靠 `@(& node ...)` 收（见下面 4b-1 里同一条实测）：把原生命令的 stdout 收进变量时，
-# 拿不到输出、$LASTEXITCODE 还是上一条命令留下的值 —— 判据会静默变成"全都没挂 bili"，于是挂了 bili 的
-# profile 也被当成没挂。走 cmd 重定向写文件再读（与 4a 的 pnpm 同一套做法），并且**显式检查探测自己的
-# 退出码、也检查结果文件在不在**：探测没跑成（≠"没挂 bili"）必须当场停，否则整个安装会按错误的味道装下去。
-$biliProbeLog = Join-Path $root 'adg-bili-probe.log'
-$biliProbeNames = (@($Profiles) | ForEach-Object { '"' + [string]$_ + '"' }) -join ' '
-cmd /c "node `"$here\tools\has-billion-context.mjs`" `"$profilesDir`" $biliProbeNames > `"$biliProbeLog`" 2>&1"
-$biliProbeExit = $LASTEXITCODE
-if ($biliProbeExit -ne 0 -or -not (Test-Path -LiteralPath $biliProbeLog)) {
-  throw "tools\has-billion-context.mjs 探测没跑成（exit $biliProbeExit，结果文件 $(if (Test-Path -LiteralPath $biliProbeLog) { '在' } else { '不在' })）—— 安装停在这里，不要按未探测的状态继续装"
-}
-$biliProbeLines = @(Get-Content -LiteralPath $biliProbeLog -Encoding UTF8)
-Remove-Item -LiteralPath $biliProbeLog -Force
-$biliMounts = [ordered]@{}
-foreach ($line in $biliProbeLines) {
-  $parts = "$line".Split("`t")
-  if ($parts.Length -ge 2) { $biliMounts[[string]$parts[0]] = ($parts[1].Trim() -eq '1') }
-}
-foreach ($name in @($Profiles)) {
-  if ($biliMounts[[string]$name] -eq $null) { $biliMounts[[string]$name] = $false }
-}
-$biliOnProfiles = @($biliMounts.Keys | Where-Object { $biliMounts[$_] } | ForEach-Object { [string]$_ })
-$biliOffProfiles = @($biliMounts.Keys | Where-Object { -not $biliMounts[$_] } | ForEach-Object { [string]$_ })
-# 每个目标 profile 要哪一种味道：auto = 它自己的探测结果；on / off = 全部强制同一种。
-$flavorOf = [ordered]@{}
-foreach ($name in @($Profiles)) {
-  $wantBili = switch ($BillionContext) {
-    'on' { $true }
-    'off' { $false }
-    default { [bool]$biliMounts[[string]$name] }
+# 拿不到输出、$LASTEXITCODE 还是上一条命令留下的值 —— 判据会静默变成"全都没装"，于是装着的 profile 也被
+# 当成没装。走 cmd 重定向写文件再读（与 4a 的 pnpm 同一套做法），并且**显式检查探测自己的退出码、
+# 也检查结果文件在不在**：探测没跑成（≠"没装"）必须当场停，否则整个安装会按错误的味道装下去。
+function Get-BundleMounts {
+  param([string]$PackageArg, [string]$LogName)
+  $log = Join-Path $root $LogName
+  $names = (@($Profiles) | ForEach-Object { '"' + [string]$_ + '"' }) -join ' '
+  cmd /c "node `"$here\tools\has-bundle.mjs`" `"$profilesDir`" $names $PackageArg > `"$log`" 2>&1"
+  $probeExit = $LASTEXITCODE
+  if ($probeExit -ne 0 -or -not (Test-Path -LiteralPath $log)) {
+    throw "tools\has-bundle.mjs $PackageArg 探测没跑成（exit $probeExit，结果文件 $(if (Test-Path -LiteralPath $log) { '在' } else { '不在' })）—— 安装停在这里，不要按未探测的状态继续装"
   }
-  $flavorOf[[string]$name] = $(if ($wantBili) { 'bili' } else { 'plain' })
+  $mounts = [ordered]@{}
+  foreach ($line in @(Get-Content -LiteralPath $log -Encoding UTF8)) {
+    $parts = "$line".Split("`t")
+    if ($parts.Length -ge 2) { $mounts[[string]$parts[0]] = ($parts[1].Trim() -eq '1') }
+  }
+  Remove-Item -LiteralPath $log -Force
+  foreach ($name in @($Profiles)) {
+    if ($mounts[[string]$name] -eq $null) { $mounts[[string]$name] = $false }
+  }
+  return $mounts
 }
-$biliFlavorProfiles = @($flavorOf.Keys | Where-Object { $flavorOf[$_] -eq 'bili' })
-$plainFlavorProfiles = @($flavorOf.Keys | Where-Object { $flavorOf[$_] -eq 'plain' })
+$biliMounts = Get-BundleMounts -PackageArg '' -LogName 'adg-bili-probe.log'
+$saveTokenMounts = Get-BundleMounts -PackageArg '--package=dsh-plugin-save-token' -LogName 'adg-save-token-probe.log'
+
+# 一组按 auto/on/off 解析：auto = 这个 profile 自己的探测值；on / off = 强制。
+function Resolve-GroupWanted {
+  param([string]$Mode, [bool]$Probed)
+  switch ($Mode) {
+    'on' { return $true }
+    'off' { return $false }
+    default { return $Probed }
+  }
+}
+# 每个目标 profile 最终注入哪几组，以及由 tools\resolve-flavor.mjs 给的三列
+# （味道键 / 稳定目录名 / gen 旗标）。探测与 auto/on/off 的判定在上面，resolve-flavor 只做映射。
+$biliWanted = [ordered]@{}
+$saveTokenWanted = [ordered]@{}
+$flavorOf = [ordered]@{}
+$bundleDirOf = [ordered]@{}
+$flavorResolveLog = Join-Path $root 'adg-resolve-flavor.log'
+foreach ($name in @($Profiles)) {
+  $wantBili = Resolve-GroupWanted -Mode $BillionContext -Probed ([bool]$biliMounts[[string]$name])
+  $wantSaveToken = Resolve-GroupWanted -Mode $SaveToken -Probed ([bool]$saveTokenMounts[[string]$name])
+  $biliWanted[[string]$name] = $wantBili
+  $saveTokenWanted[[string]$name] = $wantSaveToken
+  $groupFlags = @()
+  if ($wantBili) { $groupFlags += '--billion-context' }
+  if ($wantSaveToken) { $groupFlags += '--save-token' }
+  cmd /c "node `"$here\tools\resolve-flavor.mjs`" $($groupFlags -join ' ') > `"$flavorResolveLog`" 2>&1"
+  if ($LASTEXITCODE -ne 0) { throw "tools\resolve-flavor.mjs $($groupFlags -join ' ') 失败（exit $LASTEXITCODE）" }
+  $resolvedLines = @(Get-Content -LiteralPath $flavorResolveLog -Encoding UTF8)
+  Remove-Item -LiteralPath $flavorResolveLog -Force -ErrorAction SilentlyContinue
+  if ($resolvedLines.Count -eq 0) { throw "tools\resolve-flavor.mjs 没写出结果（$flavorResolveLog 是空的）" }
+  $resolvedParts = "$($resolvedLines[0])".Split("`t")
+  if ($resolvedParts.Length -lt 3) { throw "tools\resolve-flavor.mjs 的输出不是三列 TSV：$($resolvedLines[0])" }
+  $flavorOf[[string]$name] = [string]$resolvedParts[0]
+  $bundleDirOf[[string]$name] = [string]$resolvedParts[1]
+}
+
+# 探测名单（供日志与覆盖提醒用）。
+$biliOnProfiles = @($Profiles | Where-Object { $biliMounts[[string]$_] })
+$biliOffProfiles = @($Profiles | Where-Object { -not $biliMounts[[string]$_] })
+$saveTokenOnProfiles = @($Profiles | Where-Object { $saveTokenMounts[[string]$_] })
+$saveTokenOffProfiles = @($Profiles | Where-Object { -not $saveTokenMounts[[string]$_] })
 $biliOnText = $(if ($biliOnProfiles.Count -gt 0) { "已挂载 [$($biliOnProfiles -join ', ')]" } else { '没有任何目标 profile 挂载' })
 $biliOffText = $(if ($biliOffProfiles.Count -gt 0) { "[$($biliOffProfiles -join ', ')]" } else { '无' })
+$saveTokenOnText = $(if ($saveTokenOnProfiles.Count -gt 0) { "已挂载 [$($saveTokenOnProfiles -join ', ')]" } else { '没有任何目标 profile 挂载' })
+$saveTokenOffText = $(if ($saveTokenOffProfiles.Count -gt 0) { "[$($saveTokenOffProfiles -join ', ')]" } else { '无' })
 Write-Host "billion-context 探测：$biliOnText / 未挂载 $biliOffText"
+Write-Host "save-token 探测：$saveTokenOnText / 未挂载 $saveTokenOffText"
 foreach ($name in @($Profiles)) {
   $flavor = [string]$flavorOf[[string]$name]
-  $flavorNote = $(if ($flavor -eq 'bili') { '专家的 allow 里带 bili 的四个上下文工具' } else { '不带 bili 工具' })
+  $flavorNoteParts = @()
+  if ($biliWanted[[string]$name]) { $flavorNoteParts += 'bili 的四个上下文工具' }
+  if ($saveTokenWanted[[string]$name]) { $flavorNoteParts += 'save-token 的 save_token_expand' }
+  $flavorNote = $(if ($flavorNoteParts.Count -gt 0) { "专家的 allow 里带 $($flavorNoteParts -join ' + ')" } else { '不带任何注入的上下文工具' })
   Write-Host "  味道 -> $name : $flavor（$flavorNote）"
 }
 # 覆盖开关与探测结果对不上时必须明说：判断错的那一方不是少个能力就是每次委派都挂（红线 7）。
-$forcedOntoOff = @($biliFlavorProfiles | Where-Object { -not $biliMounts[[string]$_] })
-$forcedOffOfOn = @($plainFlavorProfiles | Where-Object { $biliMounts[[string]$_] })
-if ($BillionContext -eq 'on' -and $biliFlavorProfiles.Count -eq 0) {
-  Write-Host "billion-context：-BillionContext on 但没有任何目标 profile 挂着它 —— 仍按 on 装注入版，请确认这些 profile 之后会装上 billion-context（否则委派会抛 unknown global tool）" -ForegroundColor Yellow
-} elseif ($forcedOntoOff.Count -gt 0) {
-  Write-Host "billion-context：-BillionContext on 强制注入，但这些目标 profile 没挂 bili：$($forcedOntoOff -join ', ') —— 它们每一次委派都会抛 names unknown global tool `"compress`"（要么给它们装上 bili，要么改回 auto）" -ForegroundColor Yellow
+# 每组三档，与旧版 bili 那三条一一对应：on 但一个都没装 / on 被强制套到没装的 profile / off 把装着的关掉。
+$biliWantedProfiles = @($Profiles | Where-Object { $biliWanted[[string]$_] })
+$biliUnwantedProfiles = @($Profiles | Where-Object { -not $biliWanted[[string]$_] })
+$biliForcedOntoOff = @($biliWantedProfiles | Where-Object { -not $biliMounts[[string]$_] })
+$biliForcedOffOfOn = @($biliUnwantedProfiles | Where-Object { $biliMounts[[string]$_] })
+if ($BillionContext -eq 'on' -and $biliWantedProfiles.Count -eq 0) {
+  Write-Host "billion-context：-BillionContext on 但没有任何目标 profile 挂着它 —— 仍按 on 装带 bili 那一组的味道，请确认这些 profile 之后会装上 billion-context（否则委派会抛 unknown global tool）" -ForegroundColor Yellow
+} elseif ($biliForcedOntoOff.Count -gt 0) {
+  Write-Host "billion-context：-BillionContext on 强制注入，但这些目标 profile 没挂 bili：$($biliForcedOntoOff -join ', ') —— 它们每一次委派都会抛 names unknown global tool `"compress`"（要么给它们装上 bili，要么改回 auto）" -ForegroundColor Yellow
 }
-if ($BillionContext -eq 'off' -and $forcedOffOfOn.Count -gt 0) {
-  Write-Host "billion-context：-BillionContext off 强制不注入，但这些目标 profile 挂着 bili：$($forcedOffOfOn -join ', ') —— 它们的专家会收到 bili 的压缩指令却没有工具可调（改回 auto 才会按 profile 选味道）" -ForegroundColor Yellow
+if ($BillionContext -eq 'off' -and $biliForcedOffOfOn.Count -gt 0) {
+  Write-Host "billion-context：-BillionContext off 强制不注入，但这些目标 profile 挂着 bili：$($biliForcedOffOfOn -join ', ') —— 它们的专家会收到 bili 的压缩指令却没有工具可调（改回 auto 才会按 profile 选味道）" -ForegroundColor Yellow
+}
+$saveTokenWantedProfiles = @($Profiles | Where-Object { $saveTokenWanted[[string]$_] })
+$saveTokenUnwantedProfiles = @($Profiles | Where-Object { -not $saveTokenWanted[[string]$_] })
+$saveTokenForcedOntoOff = @($saveTokenWantedProfiles | Where-Object { -not $saveTokenMounts[[string]$_] })
+$saveTokenForcedOffOfOn = @($saveTokenUnwantedProfiles | Where-Object { $saveTokenMounts[[string]$_] })
+if ($SaveToken -eq 'on' -and $saveTokenWantedProfiles.Count -eq 0) {
+  Write-Host "save-token：-SaveToken on 但没有任何目标 profile 装着它 —— 仍按 on 装带 save-token 那一组的味道，请确认这些 profile 之后会装上 dsh-plugin-save-token（否则委派会抛 unknown global tool）" -ForegroundColor Yellow
+} elseif ($saveTokenForcedOntoOff.Count -gt 0) {
+  Write-Host "save-token：-SaveToken on 强制注入，但这些目标 profile 没装 dsh-plugin-save-token：$($saveTokenForcedOntoOff -join ', ') —— 它们每一次委派都会抛 names unknown global tool `"save_token_expand`"（要么给它们装上那个插件，要么改回 auto）" -ForegroundColor Yellow
+}
+if ($SaveToken -eq 'off' -and $saveTokenForcedOffOfOn.Count -gt 0) {
+  Write-Host "save-token：-SaveToken off 强制不注入，但这些目标 profile 装着 dsh-plugin-save-token：$($saveTokenForcedOffOfOn -join ', ') —— 它们的专家会收到 `"[save-token #id] … Call the save_token_expand tool`" 的通知却没有工具可调（改回 auto 才会按 profile 选味道）" -ForegroundColor Yellow
 }
 
 # ── 1. 用户技能 ────────────────────────────────────────────────────────────────
@@ -161,29 +227,57 @@ if (Test-Path -LiteralPath $browserSrc) {
   $browserNote = "未找到 $browserSrc，跳过 browser/ 工具链部署"
 }
 
-# ── 3. preset bundle：两种味道各生成 → 各落到自己的稳定位置（每 profile 只 link 一份）──
+# ── 3. preset bundle：四种味道全部生成 → 各自落到自己的稳定位置（每 profile 只 link 一份）──
 # 源文件永远只有 preset\preset.yml + preset\agent.cordis.yml；bundle\adg-*\ 是构建产物
 # （在 .gitignore 里），每次安装都重新生成，所以没有人需要手改 patch。
-# bili 的上下文工具**只进生成物**、不进源文件（见 tools\gen-preset-bundle.mjs 的注释），
-# 所以同一份源文件要生成两份：plain（不带旗标）与 bili（--with-billion-context）。
-# **两份都无条件生成**：省掉"这一跑要不要重建那一份"的判断，稳定目录里的形状永远等于它该有的形状。
+# 各注入组的工具名**只进生成物**、不进源文件（见 tools\gen-preset-bundle.mjs 与 tools\flavors.mjs 的注释），
+# 所以同一份源文件要生成四份（两个注入组的四种组合）。
+# **四份都无条件生成**：省掉"这一跑要不要重建那一份"的判断，稳定目录里的形状永远等于它该有的形状。
+# 表里只写"味道键 + 输出目录 + 它含哪几组"；**稳定目录名与 gen 旗标都问 tools\resolve-flavor.mjs**
+# （拼法只写在 tools\flavors.mjs，本脚本不重拼），并当场核对它给的味道键与表里一致。
 # outDir 传绝对路径：gen 脚本用的是 process.cwd()，不能跟着"用户从哪个目录调用本脚本"漂。
 $genFlavors = @(
-  [ordered]@{ flavor = 'plain'; out = (Join-Path $here 'bundle\adg-plain');  dest = $bundleStable;     args = @() },
-  [ordered]@{ flavor = 'bili';  out = (Join-Path $here 'bundle\adg-preset'); dest = $bundleBiliStable; args = @('--with-billion-context') }
+  [ordered]@{ flavor = 'plain';           out = (Join-Path $here 'bundle\adg-plain');           groups = @();                                     note = '不带任何注入的上下文工具（源文件原样）' },
+  [ordered]@{ flavor = 'bili';            out = (Join-Path $here 'bundle\adg-bili');            groups = @('--billion-context');                  note = '9 个专家的 allow 里带 bili 的四个上下文工具 + compaction-basic auto: false' },
+  [ordered]@{ flavor = 'save-token';      out = (Join-Path $here 'bundle\adg-save-token');      groups = @('--save-token');                       note = '9 个专家的 allow 里带 save-token 的 save_token_expand' },
+  [ordered]@{ flavor = 'bili+save-token'; out = (Join-Path $here 'bundle\adg-bili-save-token'); groups = @('--billion-context', '--save-token');  note = '上述两组的并集（bili 四个上下文工具 + save_token_expand + auto: false）' }
 )
+$genResolveLog = Join-Path $root 'adg-gen-flavor.log'
 foreach ($gen in $genFlavors) {
-  & node (Join-Path $here 'tools\gen-preset-bundle.mjs') $gen.out @($gen.args)
-  if ($LASTEXITCODE -ne 0) { throw "tools\gen-preset-bundle.mjs $($gen.args -join ' ') 失败（exit $LASTEXITCODE）" }
+  cmd /c "node `"$here\tools\resolve-flavor.mjs`" $($gen.groups -join ' ') > `"$genResolveLog`" 2>&1"
+  if ($LASTEXITCODE -ne 0) { throw "tools\resolve-flavor.mjs $($gen.groups -join ' ') 失败（exit $LASTEXITCODE）" }
+  $genLines = @(Get-Content -LiteralPath $genResolveLog -Encoding UTF8)
+  Remove-Item -LiteralPath $genResolveLog -Force -ErrorAction SilentlyContinue
+  if ($genLines.Count -eq 0) { throw "tools\resolve-flavor.mjs 没写出结果（$genResolveLog 是空的）" }
+  $genParts = "$($genLines[0])".Split("`t")
+  if ($genParts.Length -lt 3) { throw "tools\resolve-flavor.mjs 的输出不是三列 TSV：$($genLines[0])" }
+  if ([string]$genParts[0] -ne [string]$gen.flavor) { throw "味道键对不上：本脚本表里是 $($gen.flavor)，tools\resolve-flavor.mjs 给的是 $($genParts[0])" }
+  $gen.dest = Join-Path $root "bundles\$($genParts[1])"
+  $gen.flags = @(([string]$genParts[2] -split ' ') | Where-Object { $_ -ne '' })
+}
+foreach ($gen in $genFlavors) {
+  & node (Join-Path $here 'tools\gen-preset-bundle.mjs') $gen.out @($gen.flags)
+  if ($LASTEXITCODE -ne 0) { throw "tools\gen-preset-bundle.mjs $($gen.flags -join ' ') 失败（exit $LASTEXITCODE）" }
 }
 
 # $DSH_HOME\bundles\ 是稳定位置：profile 只引用这里，仓库可以随便挪/删。
+# 四种味道的 package.json 必须**逐字节相同、包名都叫 $bundleName**（profile 的 dsh.profile.bundles 那一行
+# 四种味道通用，差别只在 link 指向哪个目录），所以拷完当场用哈希验一遍。
+$bundlePkgHashes = [ordered]@{}
 foreach ($gen in $genFlavors) {
   $dest = $gen.dest
   if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
   Copy-Item -LiteralPath (Join-Path $gen.out 'cordis.patch.yml') -Destination $dest -Force
   Copy-Item -LiteralPath (Join-Path $gen.out 'package.json') -Destination $dest -Force
+  $bundlePkgHashes[[string]$gen.flavor] = (Get-FileHash -LiteralPath (Join-Path $dest 'package.json') -Algorithm SHA256).Hash
+}
+if (@($bundlePkgHashes.Values | Select-Object -Unique).Count -ne 1) {
+  throw "四种味道的 package.json 不是逐字节相同（$(($bundlePkgHashes.Keys | ForEach-Object { "$_=$($bundlePkgHashes[$_])" }) -join ' / ')）—— 包名与清单必须一致，profile 的 dsh.profile.bundles 才能四种味道通用"
+}
+$plainPkgName = "$((Get-Content -LiteralPath (Join-Path $genFlavors[0].dest 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).name)"
+if ($plainPkgName -ne $bundleName) {
+  throw "稳定目录里的包名是 $plainPkgName，期望 $bundleName（profile 的 dsh.profile.bundles 那一行按这个包名写）"
 }
 
 # ── 4. 插件：作为 bundle 拷到稳定位置（同上去掉仓库依赖）────────────────────────
@@ -209,10 +303,10 @@ foreach ($name in $Profiles) {
   # 4a. 依赖（等价于 `dsh plugin --profile <name> add link:<dir>`，那是一条 pnpm 直通命令）。
   # 用 link: 而不是把文件真拷进 node_modules：目标目录在 $DSH_HOME 下的稳定位置，
   # 重新生成 preset 之后不用重装就生效。
-  # 这个 profile 该拿哪一种味道的稳定目录（见上面第 0 节的 $flavorOf）。换味道也只在这一步发生：
-  # 同一个包名 `link:` 到另一个目录，profile 的 `dsh.profile.bundles` 一行都不用改（两种味道包名相同）。
+  # 这个 profile 该拿哪一种味道的稳定目录（见上面第 0 节的 $flavorOf / $bundleDirOf）。换味道也只在这一步发生：
+  # 同一个包名 `link:` 到另一个目录，profile 的 `dsh.profile.bundles` 一行都不用改（四种味道包名相同）。
   $flavor = [string]$flavorOf[[string]$name]
-  $wantBundle = $(if ($flavor -eq 'bili') { $bundleBiliStable } else { $bundleStable })
+  $wantBundle = Join-Path $root "bundles\$($bundleDirOf[[string]$name])"
   $pnpmFailed = $false
   if ($SkipPackages) {
     $installNotes += "$name : 跳过依赖安装（-SkipPackages）—— 这个 profile 期望的味道是 $flavor（$wantBundle）"
@@ -256,8 +350,9 @@ foreach ($name in $Profiles) {
     $installNotes += "$name : pnpm 那一步没成功，但 $bundleName / $pluginName 已在 node_modules 里 —— 本次安装不受影响"
   }
   # 4b-1. 断言**已经链接进去的那一份**的味道，正是这个 profile 该拿的味道。
-  # 判据不能是"包在不在"：两种味道的 package.json 逐字节相同、包名也一样，只有产物本体不同 ——
-  # 所以让 tools\check-bundle-flavor.mjs 逐行验 9 个专家行的 allow 与 compaction-basic 的 auto。
+  # 判据不能是"包在不在"：四种味道的 package.json 逐字节相同、包名也一样，只有产物本体不同 ——
+  # 所以让 tools\check-bundle-flavor.mjs 逐行验 9 个专家行的 allow 与 compaction-basic 的 auto
+  # （四种味道各按自己的注入组断言：该有的全有、不该有的一个都不能出现）。
   # 这一格是本缺陷的"静默失效"出口：味道换错时一切看起来都正常，只有专家的工具目录少四个名字
   # （2026-09-28 现场：web 链接的是 plain，子代理报 unknown tool compress）。
   $linkedPatch = Join-Path $profileDir "node_modules\$bundleName\cordis.patch.yml"
@@ -282,7 +377,7 @@ foreach ($name in $Profiles) {
   if ($flavorOk) {
     $installNotes += "$name : 落点味道 = $flavor（tools\check-bundle-flavor.mjs 通过）"
   } else {
-    $installNotes += "$name : 落点味道 ≠ $flavor —— 链接到的还是另一种味道（换味道那一步没成功；专家会看不到 / 看不见 bili 的上下文工具）"
+    $installNotes += "$name : 落点味道 ≠ $flavor —— 链接到的还是另一种味道（换味道那一步没成功；专家的 allow 会少该有的注入名字，或多出这个 profile 没装的那个插件的名字）"
     foreach ($flavorLine in $flavorReport) { Write-Host "      $flavorLine" }
     $packageFailed = $true
   }
@@ -380,8 +475,9 @@ if (Test-Path -LiteralPath $pluginLegacyStable) {
 
 Write-Host "已安装到 dsh 用户根：$root"
 Write-Host "  skill   -> $skillDest"
-Write-Host "  bundle  -> $bundleStable（plain：生成物来自 preset\preset.yml + preset\agent.cordis.yml，不带 bili 工具）"
-Write-Host "  bundle  -> $bundleBiliStable（注入版：9 个专家的 allow 里带 bili 的四个上下文工具 + compaction-basic auto: false）"
+foreach ($gen in $genFlavors) {
+  Write-Host "  bundle  -> $($gen.dest)（$($gen.flavor) 味道：$($gen.note)；生成物来自 preset\preset.yml + preset\agent.cordis.yml）"
+}
 Write-Host "  plugin  -> $pluginStable（bundle：挂载行来自它自己的 cordis.patch.yml）"
 Write-Host "  legacy  -> $legacyNote"
 Write-Host "  browser -> $browserNote"

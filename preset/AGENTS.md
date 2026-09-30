@@ -6,7 +6,9 @@
 
 ```sh
 node tools/check-preset.mjs      # 校验仓库里的 preset/（唯一真相源；exit 0 通过 / 1 有 ERROR / 2 读不到目标文件）
-node tools/gen-preset-bundle.mjs # 生成 bundle/adg-preset/{cordis.patch.yml,package.json}（构建产物，在 .gitignore 里）
+node tools/gen-preset-bundle.mjs # 生成 bundle 产物（不传位置参数时落缺省 bundle/adg-preset/{cordis.patch.yml,package.json}；构建产物，在 .gitignore 里）
+node tools/gen-preset-bundle.mjs --with-billion-context # 目标 profile 装了 billion-context 才用：给 9 个专家行的 allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 11）
+node tools/gen-preset-bundle.mjs --with-save-token      # 目标 profile 装了 dsh-plugin-save-token 才用：追加 save_token_expand；两个旗标可叠加（＝味道 bili+save-token）
 ```
 
 `check-preset.mjs` 零依赖、逐行文本扫描。exit 0 = 通过（WARN 不算失败）；exit 1 = 有 ERROR（含义只有一个：这次委派必然抛错）；exit 2 = 读不到目标文件。**已经没有"已安装的那一份文本"可以传路径了** —— 旧 `${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 目录发现机制在 dsh 0.1.7-rc.2 被整体移除（**实测**），仓库里的 `preset/agent.cordis.yml` 就是唯一真相源；`gen-preset-bundle.mjs` 的产物每次安装都会被覆盖，**不许手改**。

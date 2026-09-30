@@ -68,7 +68,7 @@ message 回到调度者 —— **不用递归也能交接回来**。
 
 | 仓库里的路径 | 安装到 |
 |---|---|
-| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（`bundle/adg-preset/`，构建产物、在 `.gitignore` 里），装到 `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`（挂 bili 的 profile 用注入版 `.../bundles/dsh-adg-preset-bili/`，见红线 11），再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles` |
+| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（四个构建产物 `bundle/adg-plain/`、`bundle/adg-bili/`、`bundle/adg-save-token/`、`bundle/adg-bili-save-token/`，都在 `.gitignore` 里），各装到它自己的稳定目录（`${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset` = plain，以及 `...-bili` / `...-save-token` / `...-bili-save-token`，见红线 11），再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles`（四份 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以那一行四种味道通用） |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
 | `plugin/dsh-adg-token-budget/` 的 `package.json` / **`cordis.patch.yml`** / `src/` / `examples/` / `README.md` / `LICENSE`（**六项**，与 `package.json` 的 `files` 一致；`cordis.patch.yml` 就是挂载行本身，缺了它这个包只是普通依赖；`test/` 与 `INSTALL.md` 不进部署） | `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-token-budget/`（**2026-09-28 起与 `dsh-adg-preset` 同一根**；旧落点 `${DSH_HOME:-~/.dsh}/plugins/dsh-adg-token-budget/` 已删除），再由目标 profile `pnpm add link:` 过去，**还要把包名写进该 profile 的 `dsh.profile.bundles`——光有依赖不算选中**（**不要再放 `profiles/node_modules/`**，那个共享根在本版 dsh 的解析里被排除了） |
 | `browser/`（浏览器工具链，零依赖） | `${DSH_HOME:-~/.dsh}/browser/`（**重新跑一次安装脚本即生效，不用重启 dsh**） |
@@ -80,6 +80,11 @@ message 回到调度者 —— **不用递归也能交接回来**。
 profile patch 里若还留着旧机制那条手贴行，脚本**只报告、不代删**，而它**必须被删掉**（理由见
 [挂载行住在哪一层](#挂载行住在哪一层为什么不放机器级)）。插件那一层是什么、怎么开、怎么确认已武装见
 [第二层：子代理的步数收敛检查点](#第二层子代理的步数收敛检查点插件-dsh-adg-token-budget)。
+
+**安装脚本的参数**：不带参数 = 对**每个"能装 preset 的 profile"**逐个注入组探测（判据与两组名字见
+[与构建期注入组协同](#与构建期注入组协同billion-context--save-token可选能力)）；位置参数（`sh install.sh web desktop`；
+PowerShell 用 `-Profiles`）指定 profile 子集；`--billion-context=on|off`（PowerShell：`-BillionContext on|off`）
+可**整体覆盖** bili 组的探测结果，覆盖与探测不一致时脚本会多打一行黄字警告。save-token 组与 bili 组一样走探测。
 
 ### 方式 A：把仓库地址交给 AI（推荐）
 
@@ -661,18 +666,40 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 
 **preset 的改动不会立即生效 —— 必须重启 dsh**（见「装完必须重启 dsh」）。
 
-## 与 billion-context 协同（可选能力）
+## 与构建期注入组协同（billion-context / save-token，可选能力）
 
-[billion-context](https://github.com/ranxianglei/billion-context)（下称 bili）是另一个 bundle：一个本机代理 +
-DSH 插件，把会话上下文折叠进 pack，并往**全局工具层**注册 `compress` / `decompress` / `search_context` /
-`acp_status` / `acp_cache`。它和本 preset 的交界有两处：**工具可见性**（硬的，见下）与**自动压缩的归属**
-（bili 自己的 `dsh.bundle.patch.yml` 就带 `- id: compaction-basic` / `config: {auto: false}`）。两处都由
-同一份探测、同一个旗标（`--with-billion-context`）一起决定，所以口径只有一条：**源文件中立、生成物按探测决定**。
+有两个外部插件往**全局工具层**注册工具，而它们给模型看的指令/通知只看自己的 config、不看这个请求有没有那些工具，
+所以本 preset 要按"这个 profile 到底装没装它"决定给不给专家那几个名字。这样的一组东西在仓库里叫
+**构建期注入组**（清单只有一份，写在 `tools/flavors.mjs` 的 `INJECTION_GROUPS`，见根 `AGENTS.md` 红线 11）：
+
+- **billion-context**（下称 bili）—— 另一个 bundle：一个本机代理 + DSH 插件，把会话上下文折叠进 pack，
+  往全局工具层注册 `compress` / `decompress` / `search_context` / `acp_status` / `acp_cache`。
+  它和本 preset 的交界有两处：**工具可见性**（硬的，见下）与**自动压缩的归属**
+  （bili 自己的 `dsh.bundle.patch.yml` 就带 `- id: compaction-basic` / `config: {auto: false}`）。
+- **save-token** —— `dsh-plugin-save-token`：在**工具结果进入历史的那一刻**把大输出换成
+  `[save-token #id] …` 通知，并注册 `save_token_expand` 让人把原文取回来。交界只有一处：**工具可见性**
+  （它不碰 `compaction-basic`，也就不该动任何体积旋钮，见下）。
+
+两组都由同一份探测、各自的旗标（`--with-billion-context` / `--with-save-token`，可叠加）决定，所以口径只有一条：
+**源文件中立、生成物按探测决定**。味道键 = 装着的组的集合：
+
+| 味道键 | 稳定目录（`$DSH_HOME/bundles/`） | 注入 9 个专家行的工具名 | `compaction-basic` 的 `config.auto` |
+|---|---|---|---|
+| `plain` | `dsh-adg-preset` | 无 | 不写（这些 profile 里 dsh 自带的自动压缩是唯一的压缩手段） |
+| `bili` | `dsh-adg-preset-bili` | `compress` / `decompress` / `search_context` / `acp_status` | `false` |
+| `save-token` | `dsh-adg-preset-save-token` | `save_token_expand` | 不写 |
+| `bili+save-token` | `dsh-adg-preset-bili-save-token` | 上面五个名字 | `false` |
+
+四份生成物的 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**（所以 `dsh.profile.bundles` 那一行四种味道通用），
+只有 `cordis.patch.yml` 不同；**目录名不要写死**，以 `tools/flavors.mjs` 的 `dirNameFor(key)` 为准
+（味道键里的 `+` 换成 `-`）。
 
 第一处交界，工具可见性：
 
 - `toolFilter.allow` 是**真白名单**（见「设计要点」），专家只看得见 allow 里列出的名字；
-- bili 注入给模型的压缩指令与 nudge **只看自己的 config，不看这个请求有没有那些工具**。
+- bili 注入给模型的压缩指令与 nudge **只看自己的 config，不看这个请求有没有那些工具**；save-token 同理 ——
+  它在**工具结果进入历史的那一刻**就把大输出换成 `[save-token #id] …` 通知，通知正文点名
+  `save_token_expand`（该插件 `lib/index.js:487`），也不看接话的那位调不调得动。
 
 两头凑起来的后果是：装了 bili 又不给专家那几个名字，专家会收到"去调 `compress` / `acp_status`"的指令，
 工具目录里却没有它们（实测：调度者自己看得见，因为它是全局层；被裁的是专家）。反过来，把这些名字
@@ -682,38 +709,63 @@ DSH 插件，把会话上下文折叠进 pack，并往**全局工具层**注册 
 所以口径是**源文件中立、生成物按探测决定**：
 
 ```bash
-node tools/gen-preset-bundle.mjs --with-billion-context   # 四个名字进 9 个专家行的 allow + compaction-basic 的 auto: false（只改生成物）
-node tools/has-billion-context.mjs ~/.dsh/profiles web    # 探测：每 profile 一行 "<name>\t<0|1>"
-sh install.sh                                              # 自动探测并决定旗标
+node tools/gen-preset-bundle.mjs bundle/adg-plain                      # plain：不注入任何组
+node tools/gen-preset-bundle.mjs --with-billion-context bundle/adg-bili
+node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token
+node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle/adg-bili-save-token
+node tools/has-bundle.mjs ~/.dsh/profiles web                          # 逐组探测：一个组问一次，每 profile 一行 "<name>\t<0|1>"
+node tools/has-bundle.mjs ~/.dsh/profiles web --package=dsh-plugin-save-token   # 换一组问同一个 profile
+node tools/resolve-flavor.mjs --billion-context --save-token          # "<味道键>\t<稳定目录名>\t<gen 旗标>"
+sh install.sh                                                          # 自动探测并决定旗标
 ```
 
-`install.ps1` / `install.sh` 会先探测每个目标 profile（判据 = bili 在 `dsh.profile.bundles` 里 **且** 装上的那份
-真的带 `dsh.bundle.patch.yml`），然后**逐个 profile** 决定它拿哪种味道：生成物分两份、各有自己的稳定目录 ——
-plain 在 `$DSH_HOME/bundles/dsh-adg-preset`，注入版在 `$DSH_HOME/bundles/dsh-adg-preset-bili`（两份的
-`package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以 `dsh.profile.bundles` 那一行两种味道通用），
+`install.ps1` / `install.sh` 对**每个目标 profile、每个注入组各探测一次**，探测的就是"这个环境里到底有没有装这个
+插件"：包名在该 profile 的 `dsh.profile.bundles` 里 **且** 装上的那份包里真有它自己的补丁文件（文件名从包自己
+`package.json` 的 `dsh.bundle.patch` 读：billion-context 是 `./dsh.bundle.patch.yml`、`dsh-plugin-save-token` 是
+`./cordis.patch.yml`；读不到才退回历史名 `dsh.bundle.patch.yml`）。**装了哪个组，才把这个组注册在全局层的工具名
+注入 9 个专家行的 `allow`；没装就不注入** —— 两组都走这个口径，不是只对 bili。探测结果用
+`tools/resolve-flavor.mjs` 翻成味道键，再决定这个 profile 拿哪一份：四个稳定目录
+`$DSH_HOME/bundles/dsh-adg-preset`（plain）、`...-bili`、`...-save-token`、`...-bili-save-token`（四份
+`package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以 `dsh.profile.bundles` 那一行四种味道通用），
 每个 profile 的 `node_modules/dsh-adg-preset` 只 `link:` 自己该拿的那一份。挂 bili 的拿注入版、没挂的拿
 plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不会猜。`--billion-context=on|off`
 （PowerShell：`-BillionContext on|off`）是**整体覆盖**，覆盖结果与探测不一致时会多打一行黄字警告；探测段在
 `install.sh` / `install.ps1` 的第 0 节，两份脚本共用同一份判据。装完脚本还用
 `tools/check-bundle-flavor.mjs` 断言**那个 profile 实际链接到的那一份**的味道（判据不能是"包在不在"——
-两种味道的 `package.json` 逐字节相同）。
-手动跑 `gen-preset-bundle.mjs` 默认**不注入**，忘带旗标 = 少个能力，不会装坏。
+四种味道的 `package.json` 逐字节相同）。
+手动跑 `gen-preset-bundle.mjs` 不带旗标 = plain，忘带旗标 = 少个能力，不会装坏。
 
-> **本机（2026-09-28 起由"两种味道"接管）：`web` 应该指向注入版、`desktop` 指向 plain。** 本机 `web` 挂着
-> bili、`desktop` 没挂，所以 `web` 的 `node_modules/dsh-adg-preset` 该链接 `$DSH_HOME/bundles/dsh-adg-preset-bili`，
-> `desktop` 的该链接 `$DSH_HOME/bundles/dsh-adg-preset` —— 重跑 `install.*` 就会按探测结果各给一份。
+> **本机（2026-09-30 复测）：`web` 两组都装着，正确味道是 `bili+save-token`（稳定目录
+> `dsh-adg-preset-bili-save-token`）；`desktop` / `headless` 两组都没挂 ⇒ plain（`dsh-adg-preset`）。**
+> 实测：`node tools/has-bundle.mjs C:\Users\cenqian\.dsh\profiles web` → `web<TAB>1`；同一条命令加
+> `--package=dsh-plugin-save-token` → `web<TAB>1`；`node tools/resolve-flavor.mjs --billion-context --save-token` →
+> `bili+save-token<TAB>dsh-adg-preset-bili-save-token<TAB>--with-billion-context --with-save-token`。`web` 现在链接的
+> 还是旧的 `$DSH_HOME/bundles/dsh-adg-preset-bili`，**重跑一次 `install.ps1` 就会迁到 `...-bili-save-token`**。
 > 这正是旧结构做不到的事：以前只有**一份**共享生成物，为了不让 `desktop` 每次委派撞
 > `names unknown global tool "compress"`，只能把 `web` 那份**改成实体目录**绕过"共享稳定目录 + 链接"模型，
 > 代价是重跑 `install.*` 会把它打平回 plain、而 `web` 的专家就再也调不动 `compress`（**2026-09-28 用户报告的
-> 就是这件事**）。现在那个特例**不需要了**：`web` 拿注入版、`desktop` 拿 plain，两者都是链接。
-> 复核：`node tools/has-billion-context.mjs "$DSH_HOME/profiles" web desktop`（应 `web` 1 / `desktop` 0）+ 看
-> `web` 的链接目标 + `node tools/check-bundle-flavor.mjs "$DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml" bili`。
-> 想彻底避开混装：给 `desktop` 也装上 bili（两个 profile 同味道，但仍然各拿各的那一份）。
+> 就是这件事**）。现在那个特例**不需要了**：`web` 拿它该拿的那一份、`desktop` 拿 plain，全都是链接。
+> 复核：`node tools/has-bundle.mjs "$DSH_HOME/profiles" web desktop`，再加 `--package=dsh-plugin-save-token` 问一次
+> （`web` 两个都是 1、`desktop` 两个都是 0）+ 看 `web` 的链接目标 +
+> `node tools/check-bundle-flavor.mjs "$DSH_HOME/bundles/dsh-adg-preset-bili-save-token/cordis.patch.yml" bili+save-token`。
+> **目录名不要写死**，以 `tools/flavors.mjs` 的 `dirNameFor(key)` 为准（味道键里的 `+` 换成 `-`）。
 
-注入的是四个名字，**不含 `acp_cache`**：那份工具只读缓存经济学账本，是调度者诊断"这轮折叠值不值"用的，
+注入的是 bili 的四个名字，**不含 `acp_cache`**：那份工具只读缓存经济学账本，是调度者诊断"这轮折叠值不值"用的，
 并且它能用 `conversation_id` 代读子代理的账；给每个专家只会加长它们每次请求的稳定 prefix。
 
-**第二处交界：挂着 bili 的 profile 要关掉 preset 里的自动压缩。** bili 自带
+**save-token 组的名字必须注入给专家**（理由不同于 bili）：`dsh-plugin-save-token` 在**工具结果进入历史的那一刻**
+把大输出换成 `[save-token #id] …` 通知，通知正文写着
+`Call the save_token_expand tool with id "…", or read the FULL ORIGINAL at: <locator>`（该插件 `lib/index.js:487`）。
+被委派的专家**确实会收到这种通知**：`tools/post-execute` 钩子只跳过 `exec.parent !== undefined` 的执行，而
+`exec.parent` 是 PTC/`run_code` 子派发的 token，普通子代理委派不设它。所以专家的 `allow` 里没有
+`save_token_expand`，它就会去调一个不存在的工具 —— 注入的理由是"通知已经发给它了"。
+
+**save-token 与体积旋钮的职责划分（与红线 3 同一口径）**：它的入历史改写与内置 `tool-result-pruner` 动的是
+**同一格**（都在"大结果进历史"这一步缩文本），两个都开等于在已经缩过的文本上再裁一道。但那三个体积旋钮
+（`compaction-basic` / `tool-result-pruner` / `tool-web`）归**插件出厂默认值**管 —— preset 不去关那一行，
+要不要把 pruner 行 `disabled` 是**宿主 profile 自己**的决定，生成物不管这件事。
+
+**第二处交界（只有 billion-context 组涉及；save-token 组不碰这个键）：挂着 bili 的 profile 要关掉 preset 里的自动压缩。** bili 自带
 `dsh.bundle.patch.yml`（`- insert: bili-native` 之后就是 `- id: compaction-basic` / `config: {auto: false}`），
 意思是"有 bili 在折叠上下文时，dsh 自带的自动压缩要让位"。但那一行打在 **profile 层**，而本 preset 的
 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在
@@ -723,8 +775,9 @@ plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不
 
 语义要说准：`auto: false` 是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（该插件的 `auto` 行：
 "set `false` for manual-only operation"；`lib/index.js:827` 用 `if (this.config.auto)` 决定要不要注册那两个
-listener），**不是**把这一行 `disabled` 掉。plain 味道里绝不能出现这个键 —— 没挂 bili 的 profile 里，
-dsh 自带的自动压缩是**唯一**的压缩手段，关掉等于让上下文无限增长。
+listener），**不是**把这一行 `disabled` 掉。**只有 billion-context 组激活的味道（`bili` / `bili+save-token`）才写这个键**；
+plain 与 save-token 味道里绝不能出现它 —— 这两类 profile 里，dsh 自带的自动压缩是**唯一**的压缩手段，
+关掉等于让上下文无限增长。
 
 **第三处交界：`dsh-adg-token-budget` 在挂着 bili 的 profile 上照样启用。**（2026-10 按用户要求推翻旧口径 ——
 此前是"挂着 bili 就不启用这个 bundle"，理由是那个插件按步数档位给子代理下收敛提醒，bili 的压缩/nudge
@@ -737,11 +790,14 @@ dsh 自带的自动压缩是**唯一**的压缩手段，关掉等于让上下文
 太容易丢别的键。这条按 profile 的**实际挂载状态**独立决定，不受 `--billion-context` 旗标影响（旗标只管工具注入）。
 
 自检：先看这个 profile 的 `node_modules/dsh-adg-preset` 链接的是哪一份，再断言**那一份** ——
-`node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml bili`（挂 bili 的 profile）
-或 `node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset/cordis.patch.yml plain`（没挂的）——
-它同时断言两件事：9 个 `agent-*` 行的 `toolFilter.allow` 末尾有没有那四个名字，以及 `compaction-basic` 行的
-`config.auto` 是不是恰好 `false`（plain 味道则断言这两个都不存在）。再到新会话里委派任一专家，让它报"工具目录里
-有没有 `acp_status`"，并确认它没有被 dsh 自带的自动压缩插过手（手动 `/compact` 仍应可用）。
+`node tools/check-bundle-flavor.mjs $DSH_HOME/bundles/dsh-adg-preset-bili/cordis.patch.yml bili`（挂 bili 的 profile）、
+`... dsh-adg-preset-save-token/cordis.patch.yml save-token`（挂了 save-token 的）、
+`... dsh-adg-preset-bili-save-token/cordis.patch.yml bili+save-token`（两组都挂的，本机 `web` 就是这档）
+或 `... dsh-adg-preset/cordis.patch.yml plain`（两组都没挂的）。它**逐组**断言：9 个 `agent-*` 行的
+`toolFilter.allow` 里**该在的组全有、不该在的组一个都不能出现**（并拒绝 `acp_cache`），以及 `compaction-basic`
+行的 `config.auto` **只在 billion-context 组激活时**恰好是 `false`（其余味道断言这个键不存在）。再到新会话里委派
+任一专家，让它报"工具目录里有没有 `acp_status`"（装了 save-token 的还该有 `save_token_expand`），并确认它没有
+被 dsh 自带的自动压缩插过手（手动 `/compact` 仍应可用）。
 两个方向都要测的完整口径见 `docs/evidence.md` §17「billion-context 的上下文工具对 ADG 专家可见吗」，
 按 profile 分味道的落点、这次真机缺陷与修法则见 §18。
 
@@ -1288,15 +1344,20 @@ tools/
   check-preset.mjs      # 静态自检：专家行字段、toolName 唯一、allow 合法性、
                         # 通用委派行、调度名册与专家行双向一致，以及三组
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
-  gen-preset-bundle.mjs   # 构建脚本：preset/ 三份源文件 → bundle/adg-preset/（生成物，gitignore）。
-                          # --with-billion-context = 四个上下文工具进 9 个专家行的 allow
-                          # + compaction-basic 注入 config.auto=false（都只改生成物，见红线 11）
-  check-bundle-flavor.mjs # 产物自检：按 plain|bili 断言两件事 —— 9 个专家行的 allow 里有没有那四个
-                          # 名字，compaction-basic 的 config.auto 是否为 false（plain 则断言都不存在）
+  gen-preset-bundle.mjs   # 构建脚本：preset/ 三份源文件 → bundle/adg-<味道>/（生成物，gitignore）。
+                          # --with-billion-context / --with-save-token（可叠加）= 把该组注册在全局层的名字
+                          # 追加进 9 个专家行的 allow；billion-context 组还要给 compaction-basic 注入
+                          # config.auto=false（都只改生成物，见红线 11）。不带旗标 = plain
+  check-bundle-flavor.mjs # 产物自检：按 plain|bili|save-token|bili+save-token 逐组断言 —— 9 个专家行的 allow
+                          # 里该在的组全有、不该在的组一个都没有（并拒绝 acp_cache），compaction-basic 的
+                          # config.auto 只在 bili 组激活时恰好为 false
                           # （check-preset.mjs 只看源文件，产物是它的盲区）
-  has-billion-context.mjs # 判据：某 profile 到底挂没挂 billion-context。install.* 用它决定该 profile
-                          # 拿哪份味道（plain / bili，判据单向）；与 dsh-adg-token-budget 启不启用无关
+  flavors.mjs             # 构建期注入组的单一事实来源：组表 / 组顺序 / 味道键与稳定目录名的拼法 / 探测判据
+  has-bundle.mjs          # 逐组探测：node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]
+                          # 每 profile 一行 "<name>\t<0|1>"；一个组问一次（缺省 billion-context，换组用 --package），
+                          # install.* 用它决定该 profile 拿哪份味道；与 dsh-adg-token-budget 启不启用无关
                           # （2026-10 起挂着 bili 也一律启用，见 AGENTS.md 红线 11）
+  resolve-flavor.mjs      # 映射（不探测）：--<组> → "<味道键>\t<稳定目录名>\t<gen 旗标>"
 browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
   cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
   lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
@@ -1384,19 +1445,25 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
 > 见第 5、6 步与 `docs/evidence.md` §16。
 
 1. `git clone <repo-url> <tempdir>`
-2. **生成 bundle**：`node <tempdir>/tools/gen-preset-bundle.mjs`。
-   它读 `preset/preset.yml`（显示元数据）+ `preset/agent.cordis.yml`（整个插件条目列表）+
-   `preset/bundle.package.json`（包清单模板），写 `<tempdir>/bundle/adg-preset/{cordis.patch.yml,package.json}`。
+2. **生成 bundle（四种味道都生成，或只生成这个 profile 该拿的那一份）**：`node <tempdir>/tools/gen-preset-bundle.mjs
+   bundle/adg-plain`（plain；`--with-billion-context` = bili、`--with-save-token` = save-token、两个旗标叠加 =
+   `bili+save-token`，见红线 11），输出目录是位置参数；**不传位置参数才**落到缺省
+   `<tempdir>/bundle/adg-preset/`，两种写法别混。它读 `preset/preset.yml`（显示元数据）+
+   `preset/agent.cordis.yml`（整个插件条目列表）+ `preset/bundle.package.json`（包清单模板），写
+   `{cordis.patch.yml,package.json}`。
    **`bundle/` 是构建产物（在 `.gitignore` 里），任何情况下都不要手改生成物** —— 要改就改
-   `preset/` 下的源文件再重跑；`install.ps1` / `install.sh` 每次安装都会把两种味道都重跑一遍。
-   **目标 profile 挂着 billion-context 时还要生成注入版**：`node <tempdir>/tools/gen-preset-bundle.mjs
-   --with-billion-context`（同一份源文件的第二种味道，见红线 11）；手工装的时候别只装 plain。
+   `preset/` 下的源文件再重跑；`install.ps1` / `install.sh` 每次安装都会按探测结果把需要的味道重跑一遍。
+   目标 profile 装着哪个注入组，就装哪个味道的产物（**手工装的时候别只装 plain**）；生成完顺手
+   `node <tempdir>/tools/check-bundle-flavor.mjs <那份文件> <味道键>` 验一遍。
 3. **装 bundle**：用 `plugin_manager` 的 `install_bundle`，`target` 给 bundle 目录的绝对路径 ——
    包安装与 `dsh.profile.bundles` 选中由它自己完成，**不要**用 shell 命令复刻这两步。
    想让"仓库被删/被挪也不影响已装好的 dsh"，先把生成物整个拷到**它自己的稳定目录**（plain →
-   `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，注入版 → `.../bundles/dsh-adg-preset-bili/`），再拿那个
+   `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`，注入版 → `.../dsh-adg-preset-bili/` / `...-save-token/` /
+   `...-bili-save-token/`；**目录名不要写死**，以 `tools/flavors.mjs` 的 `dirNameFor(key)` 为准），再拿那个
    **稳定目录**当 `target`（`install.ps1` / `install.sh` 就是这么做的）。**每个 profile 只装它该拿的那一份**
-   （挂 bili = 注入版，没挂 = plain），不要把两份都 `link:` 进同一个 profile。装完 `list_bundles` 里应能看到
+   （拿不准就先跑 `node <tempdir>/tools/has-bundle.mjs "$DSH_HOME/profiles" <profile>` 逐组问一遍，再用
+   `node <tempdir>/tools/resolve-flavor.mjs --<组> …` 翻成味道键），不要把多份都 `link:` 进同一个 profile。
+   装完 `list_bundles` 里应能看到
    `dsh-adg-preset`。
 4. 复制 `<tempdir>/skills/adg-add-agent/SKILL.md`
    → `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md`

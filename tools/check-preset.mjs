@@ -27,6 +27,8 @@
 //      除外：`compaction-basic` 的 `auto` 是**构建期注入**的键（红线 11）—— 源文件里出现就报错，
 //      指向 `node tools/gen-preset-bundle.mjs --with-billion-context`（它按 bili 自己的
 //      `dsh.bundle.patch.yml` 往生成物里写 `auto: false`，见 README「与 billion-context 协同」）。
+//      同理，别的 bundle 注册到全局层的工具名（billion-context 的四个上下文工具、save-token 的
+//      `save_token_expand`）也只能出现在生成物里：清单来自 tools/flavors.mjs，本脚本**不另抄一份**。
 //
 // 用法：
 //   node tools/check-preset.mjs                                  # 校验仓库里的 preset/
@@ -44,6 +46,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
+import { GROUP_ORDER, INJECTION_GROUPS } from './flavors.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const target = resolve(process.argv[2] ?? join(here, '..', 'preset', 'agent.cordis.yml'))
@@ -107,17 +110,26 @@ const SCHEDULER_ONLY = new Set(['workflow', 'ralph'])
  * 由**构建期**注入、不该出现在源文件里的名字：别的 bundle 注册到全局层的工具。
  * 本文件（preset/agent.cordis.yml）是单一事实来源，必须对"没装那个 bundle"的机器也成立 ——
  * 那些名字在未挂载时**不存在**，写进 allow 会让每一次委派当场抛 `names unknown global tool`。
- * 要它们生效请走生成那一步：`node tools/gen-preset-bundle.mjs --with-billion-context`
- * （install.ps1 / install.sh 会探测目标 profile 有没有挂 billion-context 自动带上）。
- * 名字清单与 tools/gen-preset-bundle.mjs 的 BILLION_CONTEXT_TOOLS 一致。
+ * 要它们生效请走生成那一步：`node tools/gen-preset-bundle.mjs <该组的旗标>`
+ * （install.ps1 / install.sh 会探测目标 profile 挂了哪些组，自动带上对应旗标）。
+ * 清单**从 tools/flavors.mjs 推导**，不在这里另抄一份 —— 抄了就会漂，漂了就是"委派全失败"或"漏注入"。
+ * 值里的 `notInjected` 是那组里**故意不注入**的名字（例如 bili 的 acp_cache）：同样算红线 11 违规，
+ * 提示语不同（它的修法是改清单，不是加旗标）。
  */
-const BUILD_TIME_INJECTED_TOOLS = new Map([
-  ['compress', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
-  ['decompress', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
-  ['search_context', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
-  ['acp_status', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在'],
-  ['acp_cache', 'billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 BILLION_CONTEXT_TOOLS）'],
-])
+const BUILD_TIME_INJECTED_TOOLS = new Map()
+for (const group of GROUP_ORDER) {
+  const spec = INJECTION_GROUPS[group]
+  for (const tool of spec.tools) {
+    BUILD_TIME_INJECTED_TOOLS.set(tool, { flag: spec.flag, reason: spec.sourceReason, notInjected: false })
+  }
+  for (const tool of spec.notInjected) {
+    BUILD_TIME_INJECTED_TOOLS.set(tool, {
+      flag: spec.flag,
+      reason: `${spec.sourceReason}（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 ${group} 组的 tools）`,
+      notInjected: true,
+    })
+  }
+}
 
 const errors = []
 const warnings = []
@@ -220,7 +232,8 @@ for (const row of rows) {
   if (row.allow.length === 0) fail(`第 ${row.line} 行 ${row.id}：toolFilter.allow 为空`)
   for (const tool of row.allow) {
     if (BUILD_TIME_INJECTED_TOOLS.has(tool)) {
-      fail(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是构建期注入的名字（${BUILD_TIME_INJECTED_TOOLS.get(tool)}）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`)
+      const injected = BUILD_TIME_INJECTED_TOOLS.get(tool)
+      fail(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 是构建期注入的名字（${injected.reason}）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs ${injected.flag} 生成`)
       continue
     }
     if (SCHEDULER_ONLY.has(tool)) {

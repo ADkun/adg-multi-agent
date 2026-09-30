@@ -14,7 +14,9 @@
 // 用法：
 //   node tools/gen-preset-bundle.mjs                 # 生成到 bundle/adg-preset（.gitignore 已忽略 bundle/）
 //   node tools/gen-preset-bundle.mjs <outDir>        # 生成到指定目录
-//   node tools/gen-preset-bundle.mjs --with-billion-context   # 追加 bili 的上下文工具（见下）
+//   node tools/gen-preset-bundle.mjs --with-billion-context   # 追加 bili 的上下文工具 + 关 preset realm 自动压缩
+//   node tools/gen-preset-bundle.mjs --with-save-token        # 追加 save-token 的取回工具（见下）
+//   （两个旗标可叠加；味道键/目录名/清单的单一事实来源是 tools/flavors.mjs）
 //
 // `--with-billion-context`（构建期条件化，2026-10 加）：
 //   挂了 billion-context 的 profile 里，专家需要看见它注册在全局层的上下文工具：allow 是真白名单
@@ -40,6 +42,17 @@
 //   源文件（preset/agent.cordis.yml）同样保持中立：没挂 bili 的 profile 里，dsh 自带的自动压缩
 //   是**唯一**的压缩手段，关掉等于让上下文无限增长。
 //
+// `--with-save-token`（构建期条件化，2026-10 加）：
+//   与上面同一类问题、同一个修法。装了 `dsh-plugin-save-token` 的 profile 里，工具结果在**进入历史的
+//   那一刻**就被换成 `[save-token #id] …` 通知（插件的 `tools/post-execute` 前置钩子），而通知正文
+//   直接点名 "Call the save_token_expand tool with id …"（`dsh-plugin-save-token/lib/index.js:487`）。
+//   allow 是真白名单，专家没有这个名字就会去调一个不存在的工具；剩下的退路只有通知里那个 locator
+//   让模型自己 `read`。所以挂了该 bundle 的 profile 要用本旗标重新生成。
+//   对照组：没挂的 profile 里 `save_token_expand` **不存在**，写进 allow 会让每次委派当场抛
+//   `names unknown global tool "save_token_expand"`（AGENTS.md 红线 7）。
+//   本组**不改** compaction：插件自带的自动压缩由它自己的 `compactAssistEnabled: false` 关着。
+//   两个旗标可以叠加（"味道"与目录名由 tools/flavors.mjs 统一定义），默认两个都不追加。
+//
 // 输入（相对仓库根）：
 //   preset/preset.yml           name / description /（可选）order —— 只按 `key: value` 取顶层标量
 //   preset/agent.cordis.yml     子插件条目列表，**原样**缩进进 config.plugins（单一事实来源）
@@ -61,19 +74,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
+import { GROUP_ORDER, INJECTION_GROUPS, autoCompactionOffFor } from './flavors.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
 
 /** 已知旗标：拼错就报错退出，不要静默生成一份"其实没生效"的产物。 */
-const KNOWN_FLAGS = new Set(['--with-billion-context'])
+const KNOWN_FLAGS = new Set(GROUP_ORDER.map((group) => INJECTION_GROUPS[group].flag))
 const argv = process.argv.slice(2)
 const flags = new Set(argv.filter((arg) => arg.startsWith('--')))
 const positional = argv.filter((arg) => !arg.startsWith('--'))
 for (const flag of flags) {
   if (!KNOWN_FLAGS.has(flag)) fail(`不认识的旗标 ${flag}；可用：${[...KNOWN_FLAGS].join(' ')}`)
 }
-const WITH_BILLION_CONTEXT = flags.has('--with-billion-context')
+/** 本次要注入的组，恒按 GROUP_ORDER 顺序 —— 它决定 allow 里追加名字的次序，必须可复现。 */
+const ACTIVE_GROUPS = GROUP_ORDER.filter((group) => flags.has(INJECTION_GROUPS[group].flag))
 const outDir = resolve(positional[0] ?? join(repo, 'bundle', 'adg-preset'))
 
 /** Loader 行 id 与 preset 身份。改 id 会同时改掉插件 `presets: ['adg']` 的筛选口径。 */
@@ -95,12 +110,9 @@ function fail(message) {
 }
 
 /**
- * billion-context 注册在**全局层**的上下文工具（`billion-context/dsh` 插件从代理的
- * `/__bili/plugin/manifest` 拿到清单后 `ctx.tools.register(...)`，见 `src/agent/dsh-native.ts:329-353`）。
- * 只取这 4 个：`acp_cache` 是纯缓存经济性诊断（调度者可以用 conversation_id 代读），
- * 给每个专家多挂一个 schema 只是白付 prefix。
+ * 注入清单**不写在这里**：组表、工具名、味道键、目录名都在 `tools/flavors.mjs`（单一事实来源），
+ * 本脚本只按旗标挑组、按组注入。想知道某个名字为什么必须由构建期注入，看那个文件里的 `sourceReason`。
  */
-const BILLION_CONTEXT_TOOLS = Object.freeze(['compress', 'decompress', 'search_context', 'acp_status'])
 
 /**
  * 给每个专家行的 `toolFilter.allow` 追加名字。只认本仓库自己固定的形状：
@@ -236,25 +248,30 @@ if (!firstEntry || !firstEntry.startsWith('- ')) {
 if (agentList.includes('\t')) fail('preset/agent.cordis.yml 里出现了制表符：YAML 缩进不允许 tab，请换空格')
 if (agentList.includes('\r')) fail('preset/agent.cordis.yml 含 CR 行尾：本仓库要求 LF（见 .gitattributes），否则生成的缩进块会带 \\r')
 
-// 构建期条件化：--with-billion-context 时
-//   （1）把 bili 的上下文工具追加进每个专家行的 allow 名单；
-//   （2）给 compaction 组的 compaction-basic 注入 config.auto=false（关掉 preset realm 的自动压缩）。
-// 源文件（preset/agent.cordis.yml）两件事都不写、保持中立 —— 它必须对没装 billion-context 的人也成立：
+// 构建期条件化：每个 `--with-<组>` 旗标做两件事
+//   （1）把该组注册在全局层的工具名追加进每个专家行的 allow 名单；
+//   （2）若该组要求，则给 compaction 组的 compaction-basic 注入 config.auto=false。
+// 源文件（preset/agent.cordis.yml）这些事一件都不写、保持中立 —— 它必须对没装那些插件的 profile 也成立：
 // 那些工具名在未挂载时**不存在**（写进 allow 会让每一次委派当场抛 unknown global tool），
-// 而 dsh 自带的自动压缩是那些 profile 里唯一的压缩手段（关掉等于让上下文无限增长）。
+// 而 dsh 自带的自动压缩是没挂 bili 的 profile 里唯一的压缩手段（关掉等于让上下文无限增长）。
 let entrySource = agentList
-let biliTouched = 0
-if (WITH_BILLION_CONTEXT) {
-  const result = addToolsToExpertAllows(agentList, [...BILLION_CONTEXT_TOOLS])
+/** 已注入的组：`{ group, spec, touched }`，顺序与 GROUP_ORDER 一致（也与 allow 里的名字次序一致）。 */
+const injected = []
+for (const group of ACTIVE_GROUPS) {
+  const spec = INJECTION_GROUPS[group]
+  const result = addToolsToExpertAllows(entrySource, [...spec.tools])
   if (result.skipped.length > 0) {
-    fail(`这些专家行没有 \`          allow:\` 块，追加无处可插：${result.skipped.join(', ')}。先给它们写 allow 名单，或去掉 --with-billion-context。`)
+    fail(`这些专家行没有 \`          allow:\` 块，追加无处可插：${result.skipped.join(', ')}。先给它们写 allow 名单，或去掉 ${spec.flag}。`)
   }
   if (result.touched.length === 0) {
-    fail('一个专家行都没找到（形如 `    - id: agent-xxx` 且带 `          allow:`），--with-billion-context 无意义：检查是否喂错了文件')
+    fail(`一个专家行都没找到（形如 \`    - id: agent-xxx\` 且带 \`          allow:\`），${spec.flag} 无意义：检查是否喂错了文件`)
   }
-  biliTouched = result.touched.length
-  entrySource = disableAutoCompaction(result.text)
+  entrySource = result.text
+  injected.push({ group, spec, touched: result.touched.length })
 }
+/** 关掉 preset realm 的自动压缩：任一组要求就关（目前只有 billion-context 组要求）。 */
+const autoCompactionOff = autoCompactionOffFor(ACTIVE_GROUPS)
+if (autoCompactionOff) entrySource = disableAutoCompaction(entrySource)
 
 const patch = [
   '# 由 tools/gen-preset-bundle.mjs 从 preset/preset.yml + preset/agent.cordis.yml 生成。',
@@ -262,13 +279,17 @@ const patch = [
   '#',
   '# 它为什么长这样：dsh 0.1.7-rc.2 起不再发现 $DSH_HOME/.agent-presets/<id>/，一个 agent preset',
   '# 只能由某个 patch 层里的这一行声明；config.plugins 就是旧的 agent.cordis.yml 原样缩进。',
-  ...(WITH_BILLION_CONTEXT
+  ...injected.flatMap(({ spec, touched }) => [
+    '#',
+    `# 本次生成带了 ${spec.flag}：${touched} 个专家行的 toolFilter.allow 追加了 ${spec.tools.join(' / ')}`,
+    `# （${spec.package} 把这几个名字注册在全局层，allow 是白名单，不写专家就看不见；`,
+    `#  没挂 ${spec.package} 的 profile 要用**不带**这个旗标的生成物，否则委派会抛 unknown global tool。）`,
+    ...spec.artifactNotes,
+  ]),
+  ...(autoCompactionOff
     ? [
         '#',
-        `# 本次生成带了 --with-billion-context：${biliTouched} 个专家行的 toolFilter.allow 追加了 ${BILLION_CONTEXT_TOOLS.join(' / ')}`,
-        '# （billion-context 的 DSH 插件把这几个名字注册在全局层，allow 是白名单，不写专家就看不见；',
-        '#  没挂 billion-context 的 profile 要用**不带**这个旗标的生成物，否则委派会抛 unknown global tool。）',
-        '# 同一个旗标还给 compaction 组那行 compaction-basic 注入了 config.auto=false —— 与',
+        '# 本次生成还给 compaction 组那行 compaction-basic 注入了 config.auto=false —— 与',
         '# billion-context 自己的 dsh.bundle.patch.yml 同键同值：挂 bili 时关掉 dsh 自带的自动压缩',
         '# （免得两套压缩各自折叠同一段历史）；手动 /compact 仍然可用。',
       ]
@@ -297,10 +318,15 @@ writeFileSync(join(outDir, 'package.json'), packageTemplate.endsWith('\n') ? pac
 const rows = patch.split('\n').filter((line) => /^\s{10}- id: /.test(line)).length
 process.stdout.write(`gen-preset-bundle: ${outDir}\n`)
 process.stdout.write(`  cordis.patch.yml  ${Buffer.byteLength(patch, 'utf8')} 字节 / ${rows} 个顶层子插件条目（preset id=${PRESET_ID}, order=${order}）\n`)
-process.stdout.write(
-  WITH_BILLION_CONTEXT
-    ? `  billion-context   已注入：${biliTouched} 个专家行 + ${BILLION_CONTEXT_TOOLS.length} 个工具名（${BILLION_CONTEXT_TOOLS.join(' / ')}），并把 compaction-basic 的 auto 设为 false\n`
-    : '  billion-context   未注入（缺省）。挂了该 bundle 的 profile 要用 --with-billion-context 重新生成，否则专家看不见 compress / acp_status 等工具，dsh 自带的自动压缩也会和 bili 抢着折叠同一段历史。\n',
-)
+for (const group of GROUP_ORDER) {
+  const spec = INJECTION_GROUPS[group]
+  const hit = injected.find((entry) => entry.group === group)
+  if (hit !== undefined) {
+    const tail = spec.autoCompactionOff ? '，并把 compaction-basic 的 auto 设为 false' : ''
+    process.stdout.write(`  ${group.padEnd(19)}已注入：${hit.touched} 个专家行 + ${spec.tools.length} 个工具名（${spec.tools.join(' / ')}）${tail}\n`)
+  } else {
+    process.stdout.write(`  ${group.padEnd(19)}未注入（缺省）。${spec.missingHint}\n`)
+  }
+}
 process.stdout.write('  package.json      来自 preset/bundle.package.json\n')
 process.stdout.write('下一步：把该目录装进 profile（plugin_manager install_bundle，或 dsh plugin --profile <p> add file:<tgz> + 选入 dsh.profile.bundles）。\n')
