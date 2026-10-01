@@ -2,17 +2,17 @@
 title: browser 模块测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-27
+last_reviewed: 2026-10-01
 ---
 
 # browser 模块测试指南
 
-不变量编号见 `design.md`（I1..I10 一一对应，本文不重复定义）。类型三种：**单元测试**（`node --test test`，本机实测 **36 个用例全通过**，不需要浏览器）、**真机实测**（要有本机 Chrome，有日志为证）、**人工 review**（脚本抓不到）。
+不变量编号见 `design.md`（I1..I10 一一对应，本文不重复定义）。类型三种：**单元测试**（`node --test test`，本机实测 **37 个用例全通过**，不需要浏览器）、**真机实测**（要有本机 Chromium 系浏览器，有日志为证）、**人工 review**（脚本抓不到）。
 
 ## 命令（可直接照抄）
 
 ```sh
-cd browser && node --test test                       # 36 个用例
+cd browser && node --test test                       # 37 个用例
 cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-write）里必须加这个 flag
 ```
 
@@ -28,7 +28,7 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 | I4 非法端口不静默回落 | A11 `I4 非法端口一律抛错`；A12 `I4 合法端口接受数字与数字串，并遵循优先级` | 单元测试 | 已实现 |
 | I5 页面选择确定性、不可猜测 | A13 `I5 只认有 ws 端点、非 devtools:// 的 page 目标`；A14 `I5 --match 命中 url 或 title；未命中必须报错而不是随便挑一页`；A15 `I5 --tab 越界与负数必须报错`；A16 `I5 刚创建的标签按 id 定位（站内跳转也能找回来）`；A17 `I5 空目标列表报「没有可用页面目标」` | 单元测试 | 已实现 |
 | I6 零第三方依赖 | A18 `I6 只允许 node: 内建与相对路径的 import（零依赖）`；A19 `I6 本机 Node 满足运行时要求（>= 22 的全局 WebSocket）` | 单元测试 | 已实现 |
-| I6（同上，Chrome 探测） | A20 `I6 ADG_CHROME 永远排第一，win32 候选含 Chrome 与 Edge`；A21 `I6 findChrome 取第一个真实存在的候选；都没有则 null` | 单元测试 | 已实现 |
+| I6（同上，浏览器探测） | A20 `I6 ADG_CHROME 永远排第一，win32 候选含 Chrome / Brave / Edge 且 Brave 在 Edge 前`；A20b `I6 只有 Brave 与 Edge 时选中 Brave（不静默换成系统自带的 Edge）`；A21 `I6 findChrome 取第一个真实存在的候选；都没有则 null` | 单元测试 | 已实现 |
 | I7 CDP 通道的四条协议行为 | A22 `I7 id 关联：乱序返回也能各归各位`；A23 `I7 错误映射成 Error，并带上方法名`；A24 `I7 事件通知与未知 id 被忽略，不炸掉连接`；A25 `I7 关闭后 send 拒绝，在途请求也被拒绝`；A26 `I7 连不上时报错，不静默返回半个客户端` | 单元测试 | 已实现（用可注入的假 socket，不需要浏览器） |
 | I8 只有 `close` 能关浏览器 | A27 `I8 关浏览器只有一个入口：closeBrowser 发 Browser.close` | 单元测试（源码级断言） | 已实现（断言 `Browser.close` 全文只出现 1 次、`pageSession` 的 `close` 是 `cdp.close()`） |
 | I8（同上，行为侧） | A28 真实会话里 `text` / `eval` / `shot` 跑完后浏览器**仍在**（`status` 报 `ALIVE=true`），只有 `close` 能让它变 `false` | 真机实测 | 已实现（2026-09-27 冒烟：`status` → `ALIVE=true`，`close` → `ALIVE=false`） |
@@ -45,7 +45,7 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 
 起始状态为行，事件为列。**自环**=合法但状态不变。
 
-| 起始 \ 事件 | `launch` 探测到端口可达 | `launch` 探测不到且找到 Chrome | `launch` 等待超时 | `close` | 手工 kill 进程 | `text` / `eval` / `shot` |
+| 起始 \ 事件 | `launch` 探测到端口可达 | `launch` 探测不到且找到浏览器 | `launch` 等待超时 | `close` | 手工 kill 进程 | `text` / `eval` / `shot` |
 |---|---|---|---|---|---|---|
 | `absent` | → `live`（`STATE=REUSED`） | → `starting` → `live`（`STATE=STARTED`） | 禁止：报 `ERROR=启动后 Ns 内 … 没有起来`，停在 `starting` | 自环（打印 `CLOSED=already`） | 自环 | 禁止：`ERROR=端口 N 上没有运行中的浏览器` |
 | `starting` | 自环 | 禁止：并发第二次 `launch` 会撞端口，由超时分支报错 | → `starting`（保持，调用方拿到非 0 退出码） | 自环 | → `absent`（无落盘） | 禁止：同上 |
@@ -87,7 +87,7 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 
 - **真实站点的登录墙端到端没有跑过**：本模块实测的是**机制**（有头启动 / 实例复用 / 优雅关闭后 cookie 落盘并跨重启存活，见 `docs/evidence.md` §8），**不是**「用户在某个真实网站上登录、专家接着抓到了登录后的内容」。量法：让一次真实 Adg 会话在需要登录的站点上走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 的调用；出现「现场手写 CDP 脚本」即 persona 未被遵守。
-- **macOS / Linux 上的 Chrome 探测与有头启动**：候选路径写进了代码（A20 只测了 win32 的候选形状），**没有**在那两个平台上跑过。
+- **macOS / Linux 上的 Chromium 系探测与有头启动**：候选路径写进了代码（A20 只测了 win32 的候选形状），**没有**在那两个平台上跑过。
 - **多实例并发**：两个 Adg 会话同时 `launch` 同一端口的行为没有观测（矩阵里按「第二次 launch 撞端口 → 超时分支报错」登记为**推断**，不是实测）。
 - **无头（`--headless`）路径**：本模块**不提供**，也不打算提供 —— 卡在有头窗口正是「让人来登录 / 过验证」的载体（`preset/design.md` I12）。
 - **「哪一页已经不需要了」这个判断没有自动化**：本模块只有两条确定规则（自己开的临时页自己收；调用方点名的页才关）。专家收尾时是否真的会点名清理、以及会不会把该留的页关掉，没有真实 Adg 会话为证。量法：转写里检索 `close-tab` 的调用与 `TABS=` 的变化；一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
@@ -96,8 +96,8 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 ## 5. 交付前的最小闭环
 
 ```sh
-cd browser && node --test --test-isolation=none test     # 须 36/36 通过
-node cli.mjs profile                                     # 须报出 profile / 端口 / Chrome
+cd browser && node --test --test-isolation=none test     # 须 37/37 通过
+node cli.mjs profile                                     # 须报出 profile / 端口 / 浏览器可执行文件（CHROME= 行是路径）
 node cli.mjs launch --url https://example.com            # 须 STATE=STARTED 或 STATE=REUSED
 node cli.mjs launch                                      # 须 STATE=REUSED（I3）
 node cli.mjs text --url https://example.com/            # 须打 TAB_CLOSED=、正文非空（BYTES>0）、tabs 数不变（I10）

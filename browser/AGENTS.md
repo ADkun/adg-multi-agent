@@ -1,6 +1,6 @@
 # AGENTS.md — browser（Adg 浏览器工具链）
 
-本模块 = 一份**有头 Chrome 驱动**：规范 profile 的解析、实例的复用/启动决策、一条最小 CDP 通道（navigate / evaluate / screenshot）、**标签页卫生**（自己开的临时页自己收、存量靠 `close-tab` 点名清理），以及唯一命令行入口 `cli.mjs`。设计与不变量见 `design.md`（I1..I10）。
+本模块 = 一份**有头 Chromium 系浏览器驱动**（候选次序 Chrome → Brave → Edge）：规范 profile 的解析、实例的复用/启动决策、一条最小 CDP 通道（navigate / evaluate / screenshot）、**标签页卫生**（自己开的临时页自己收、存量靠 `close-tab` 点名清理），以及唯一命令行入口 `cli.mjs`。设计与不变量见 `design.md`（I1..I10）。
 
 **为什么本模块需要独立文档**（三样信号都在）：有独立于仓库根的命令（`node cli.mjs …`）；有模块特有红线（禁止第三方依赖、禁止把 profile 放进工作区、禁止代填密码 / 验证码自动化）；有跨模块路由要求（`preset/agent.cordis.yml` 的 `agent-browser` persona 消费它的命令行契约，`install.ps1` / `install.sh` 部署它）。
 
@@ -8,14 +8,14 @@
 
 ```sh
 node cli.mjs help        # 命令行契约：**选项与退出码以它为准**，本文不复制
-node cli.mjs profile     # 报解析出来的 profile / 端口 / Chrome（排错第一站）
+node cli.mjs profile     # 报解析出来的 profile / 端口 / 浏览器可执行文件（排错第一站；`CHROME=` 那一行是路径，可能是 Chrome / Brave / Edge）
 node cli.mjs status      # 端口是否活着、浏览器版本、当前标签页
 node cli.mjs tabs        # 只列标签页（清理存量前先看这个）
 node cli.mjs launch      # 开有头窗口；**实例活着就复用，不重启**
 node cli.mjs close-tab   # 关标签页：--match <子串> 关所有匹配的，--tab <n> 关那一个
 node cli.mjs close       # 优雅关闭 —— 唯一让登录态落盘的动作
 
-cd browser && node --test test                                  # 单元测试（36 个用例，不需要浏览器）
+cd browser && node --test test                                  # 单元测试（37 个用例，不需要浏览器）
 cd browser && node --test --test-isolation=none test            # DSH 沙箱（workspace-write）里必须加这个 flag
 ```
 
@@ -30,7 +30,7 @@ cd browser && node --test --test-isolation=none test            # DSH 沙箱（w
 - 禁止重启一个活着的实例（I3）；禁止用 `PageSession.close()` 关浏览器（I8，只有 `cli.mjs close` 能关）。
 - 禁止关掉**不是本任务开的**标签页，也禁止用 `close-tab` 把页面关到 0 个（I9 / I10）：不点名不关、不关到 0 个、自己开的临时页自己收（`--keep` 才留）。用户窗口里的页既有登录态，也可能是他正在用的。
 - 禁止代填账号密码、读取 profile 的 cookie 库、验证码识别或指纹伪装：登录永远由人在有头窗口里完成。
-- 禁止把「浏览器起不来」写成重试题：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）就停手如实报（`preset/design.md` I11）。
+- 禁止把「浏览器起不来」写成重试题：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）就停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**——不许把它写成这两条中的任何一条（量法见 `testing-guide.md` 第 4 节）。
 - 部署落点与仓库路径同名（`browser/` → `${DSH_HOME:-~/.dsh}/browser/`）；改目录名要同步改 `install.ps1` / `install.sh` 与 `agent-browser` 的 persona。
 
 ## 跨模块路由

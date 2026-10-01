@@ -1,13 +1,12 @@
 # Adg 多智能体模式（DSH agent preset）
 
-一个 DSH 自建 agent preset：**一个调度智能体 + 九个专家智能体名册**。
+一个 DSH 自建 agent preset：**一个调度智能体 + 八个专家智能体名册**。
 任务由调度智能体判断范围后分派给对应专家；专家之间不能直接互相转交，越界时由调度智能体再派发下一步。
 
-九个专家各一行职责：
+八个专家各一行职责：
 
 - `agent_file`｜文件管家：文件与文档的检索定位、阅读理解与问答、批量整理归类、格式转换与文档生成
-- `agent_computer`｜系统运维专员：系统与硬件信息查询、系统设置修改、优化清理、故障排查、进程与服务控制
-- `agent_app`｜应用操作专家：桌面软件启停/安装卸载与命令行接口调用、Android 模拟器上的手机 App、微信小程序
+- `agent_computer`｜系统与应用运维专员：系统与硬件信息查询、系统设置修改、优化清理、故障排查、进程与服务控制；桌面软件启停/安装卸载与命令行接口调用、Android 模拟器上的手机 App、微信小程序
 - `agent_browser`｜网页交互专员：需要登录、多步表单、点击选择、多页跳转抓取的网页操作
 - `agent_search`｜全网搜索专员：多轮联网检索与多源资料综述，结论带来源链接；只联网，不碰本地文件与系统
 - `agent_researcher`｜代码与仓库事实检索员：在本仓库/本机文件里定位实现、配置与出处，只读、必须带行号
@@ -15,7 +14,7 @@
 - `agent_reviewer`｜审查验证员：对已有改动做对抗性审查，只报告不修改
 - `agent_general`｜**全功能智能体（交接专用）**：把一整件工作交接给一个独立上下文里的通用智能体，由它独自做完（读写文件、跑命令、联网检索、整理产出都在范围内）；**只在用户显式要求「交给子代理 / 另开一个上下文 / 换个智能体接手」时才派**，它是**叶子**、不会再往下委派
 
-第 9 个专家与前 8 个有本质区别：它不是"某个专项的专家"，而是**用户点名要"交接"时**才派的全功能
+第 8 个专家与前 7 个有本质区别：它不是"某个专项的专家"，而是**用户点名要"交接"时**才派的全功能
 角色，用途是**上下文隔离**（上层把活交给下一个智能体、另开一个上下文）。它拿的是本 preset 里最全的
 **叶子**工具集（文件 / 命令 / 后台任务 / 联网 / 技能 / 待办 / 交付物 + `send_message`），但**刻意不含
 任何 `agent_*` 名册行与通用 `subagent` / `subagent_fork` / `workflow` / `ralph`** —— 即它不会再往下
@@ -100,17 +99,16 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 
 ## 专家名册
 
-名册分两组：前五个（`agent_file` / `agent_computer` / `agent_app` / `agent_browser` /
-`agent_search`）覆盖文档、系统、应用、网页、检索五类外围能力，后三个（`agent_researcher` /
+名册分两组：前四个（`agent_file` / `agent_computer` / `agent_browser` /
+`agent_search`）覆盖文档、系统与应用、网页、检索四类外围能力，后三个（`agent_researcher` /
 `agent_coder` / `agent_reviewer`）是代码向专家。缺口一栏写的是本环境的**真实**实现口径，
 不是宣传语：
 
 | 专家（toolName） | 覆盖的能力 | 本环境的实现口径 / 缺口 |
 |---|---|---|
 | `agent_file` | 文件与文档的检索定位、深入阅读与问答、复制/移动/重命名/批量归类、格式转换与文档生成 | 图片内容理解走 `read_image`（把图片交给模型看，需要模型路由支持图像输入，调用报错就如实说明）；文本类文档（PDF/Word/Excel/PPT）用 `pwsh` 调本机已有工具提文本。OCR（图片里的文字）、人像/场景检索、跨设备传输**取决于本机工具链**（Python 库、Office、同步盘目录等）：persona 要求先用 `pwsh` 探测可用工具，缺什么就直说「本机缺少 X，无法完成」并给替代方案，不允许假装完成 |
-| `agent_computer` | 系统与硬件信息查询、系统设置修改、优化清理、故障排查、窗口与桌面管理、进程/服务/计划任务控制 | 不依赖模拟点击的 **Windows API 路线可用**（PowerShell / CIM / P-Invoke）。会改变系统状态的操作要先说明影响与回退；不可逆或高风险操作必须先停下、写明「需要用户确认后才能执行」 |
-| `agent_app` | 桌面软件启停/安装卸载与内部功能调用、Android 模拟器上的 App、微信小程序 | **GUI 视觉识别 + 模拟点击在 DSH 没有对应工具**：只能走 CLI / adb / winget / 软件自带接口。凡是「看界面点按钮」类需求**必须明说不具备**，并给出替代（应用 CLI、adb 命令、官方 API、或请用户手动完成） |
-| `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | **本会话必须是「完全权限」（`danger-full-access`）—— 硬约束，理由与源码依据见下一节「浏览器专家需要完全权限」**：在 `workspace-write` / `read-only` 下本机 Chrome / Edge **根本起不来**（受限令牌禁止创建 Chromium 内部 IPC 必需的有名管道），所以调度者会先停下来问用户。能跑起来时走仓库里的 **`browser/` 工具链**（`cli.mjs` 一个入口、零依赖、有头、profile 固定在 `<DSH_HOME>/browser-profile`，见「浏览器工具链与登录态资产」）；工具链不可用、或目标本来就静态可取时**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证按「登录墙与验证码：人工介入协议」办：专家开好有头窗口后停手并如实报，由调度者转达用户 |
+| `agent_computer` | 系统与硬件信息查询、系统设置修改、优化清理、故障排查、窗口与桌面管理、进程/服务/计划任务控制；桌面软件启停/安装卸载与内部功能调用、Android 模拟器上的 App、微信小程序（**2026-10-01 起并入原 `agent_app`**） | 不依赖模拟点击的 **Windows API 路线可用**（PowerShell / CIM / P-Invoke）；软件侧只能走 CLI / adb / winget / 软件自带接口 —— **GUI 视觉识别 + 模拟点击在 DSH 没有对应工具**，凡是「看界面点按钮」类需求**必须明说不具备**，并给出替代（应用 CLI、adb 命令、官方 API、或请用户手动完成）。会改变系统状态的操作要先说明影响与回退；不可逆或高风险操作必须先停下、写明「需要用户确认后才能执行」 |
+| `agent_browser` | 登录态下的站点操作、多步表单、点击与下拉选择、多页跳转抓取 | **本会话必须是「完全权限」（`danger-full-access`）—— 硬约束，理由与源码依据见下一节「浏览器专家需要完全权限」**：在 `workspace-write` / `read-only` 下本机 Chrome / Edge **根本起不来**（受限令牌禁止创建 Chromium 内部 IPC 必需的有名管道；**Brave 同一机制但未实测**），所以调度者会先停下来问用户。能跑起来时走仓库里的 **`browser/` 工具链**（`cli.mjs` 一个入口、零依赖、有头、profile 固定在 `<DSH_HOME>/browser-profile`，见「浏览器工具链与登录态资产」）；工具链不可用、或目标本来就静态可取时**降级**成 `web_fetch` 单次抓取（只能取静态内容、**不能交互**），并在回答里说明是降级执行。遇到登录墙 / 验证码 / 二次验证按「登录墙与验证码：人工介入协议」办：专家开好有头窗口后停手并如实报，由调度者转达用户。`shot --out` 拍下的截图可以用 `read_image` 自己看（视觉校验，2026-10-01 起） |
 | `agent_search` | 多轮联网检索与多源资料综述、关键信息引用溯源 | **只联网**：`allow` 里只有 `web_search` / `web_fetch`，本地文件与系统级请求被硬性排除（这不是偏好）。天气、汇率、股价这类简单事实查询、以及一两次抓取就能答完的已知 URL 定点核对由调度智能体**直接回答**，不派给它 |
 | `agent_researcher` | 在本仓库/本机文件里定位实现、配置与出处，只读、带行号 | **硬只读** —— `allow` 里没有 `write` / `edit` / `pwsh`，真的改不动东西；公网发现式调研归 `agent_search`，它自己的 `web_search` / `web_fetch` 只用于已知 URL 的定点核对 |
 | `agent_coder` | 按已确定的方案改工作区代码，并运行编译/测试自证 | 只在当前工作区内改动文件；不做需求解读、方案设计与系统级运维 |
@@ -122,7 +120,7 @@ powershell -ExecutionPolicy Bypass -File $HOME\adg-multi-agent\install.ps1   # W
 
 **结论先说：**`agent_browser` 要做真正的浏览器自动化，**必须**让本会话处于 `danger-full-access`
 （界面 Permissions 选择器里 id 为 `danger-full-access` 的那一项，或 `/permission danger-full-access`）。
-在 `workspace-write` / `read-only` 下，本机的 Chrome 与 Edge **根本起不来** —— 这不是配置问题，
+在 `workspace-write` / `read-only` 下，本机的 Chrome 与 Edge **根本起不来**（Brave 走同一机制、但未实测）—— 这不是配置问题，
 也不是 persona 能绕过去的偏好，是 Windows 沙箱后端的机制。这条约束**无法从 preset 侧修掉**
 （下一节逐条给源码依据），所以本 preset 的处置是把它做成**调度侧的前置闸门**：派发 `agent_browser` 之前，
 调度智能体先读自己上下文里那行 `Current DSH file policy:`，不是 `danger-full-access` 就先
@@ -147,9 +145,10 @@ libuv 的管道 stdio 用有名管道，其 client 端打开所请求的写访�
 
 也就是说：**换 stdio 救不了浏览器**（它要的是进程内部 IPC，不是它自己的 stdout），
 `--no-sandbox` / `--single-process` / `--no-zygote`、profile 放工作区或临时目录**都试过，全部无效**；
-**同一批命令在 `danger-full-access` 下全部转绿**。本机没装 Firefox（只装了 Chrome 与 Edge），
+**同一批命令在 `danger-full-access` 下全部转绿**。本机没装 Firefox，且当时（2026-09-26）机器上只装了 Chrome 与 Edge，
 **其它浏览器未测试**；全访问那一列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回文本」，
-Edge 只做到 `--dump-dom` 退出码 0。
+Edge 只做到 `--dump-dom` 退出码 0。**2026-10-01 补注**：候选次序改为 **Chrome → Brave → Edge** 并新增 Brave（`browser/design.md`「非功能红线」）；
+本表是 2026-09-26 的读数、**不回改**，而 **Brave 在受限令牌下如何失败属于未观测**（量法见 `browser/testing-guide.md` 第 4 节）。
 
 ### 为什么不能从 preset 侧修（四个问题的答案）
 
@@ -215,7 +214,7 @@ Edge 只做到 `--dump-dom` 退出码 0。
 
 ```powershell
 node "$env:DSH_HOME\browser\cli.mjs" help        # 契约以它为准（选项、输出行、退出码）
-node "$env:DSH_HOME\browser\cli.mjs" profile     # 排错第一站：profile / 端口 / Chrome
+node "$env:DSH_HOME\browser\cli.mjs" profile     # 排错第一站：profile / 端口 / 浏览器可执行文件（CHROME= 行是路径，可能是 Chrome / Brave / Edge）
 node "$env:DSH_HOME\browser\cli.mjs" launch --url "https://example.com/login"
 node "$env:DSH_HOME\browser\cli.mjs" text --url "https://example.com/a" --out page.txt
 node "$env:DSH_HOME\browser\cli.mjs" eval --file probe.js --match example.com
@@ -257,13 +256,12 @@ node "$env:DSH_HOME\browser\cli.mjs" close       # 唯一让登录态落盘的�
 ## 怎么用
 
 1. 新对话选择 **Adg 多智能体模式**，直接说需求。
-2. 调度智能体自己负责意图理解、任务拆解、调度与汇总，先判断范围再按 9 个专家的范围派发：
+2. 调度智能体自己负责意图理解、任务拆解、调度与汇总，先判断范围再按 8 个专家的范围派发：
 
 | 需求范围 | 派给 |
 |---|---|
 | 文件与文档（检索、整理、转换、生成） | `agent_file` |
-| 系统 / 硬件 / 设置 / 清理 / 故障排查 | `agent_computer` |
-| 软件与 App 操作（CLI、adb、winget、小程序） | `agent_app` |
+| 系统 / 硬件 / 设置 / 清理 / 故障排查；软件与 App 操作（CLI、adb、winget、小程序） | `agent_computer` |
 | 网页登录 / 填表 / 点击 / 多页抓取 | `agent_browser`（**需本会话为完全权限**；不是的话调度者会先停下来问你 —— 见「浏览器专家需要完全权限」；走 `browser/` 工具链：有头窗口 + 登录态跨会话复用） |
 | 全网检索与综述（只搜不点） | `agent_search` |
 | 在本地代码库与文件里定位事实与出处 | `agent_researcher` |
@@ -347,7 +345,9 @@ node tools/check-preset.mjs
   越界会被报出来**，不是权限隔离。按工具面看，**硬边界**（`toolFilter` 强制、越界直接调不动）
   是 `agent_researcher`（无 write/edit/pwsh）、`agent_search`（只有联网工具）、`agent_reviewer`
   （无 write/edit）；`agent_file` 与 `agent_coder`（只差一个 `read_image`）、`agent_computer` 与
-  `agent_app`（完全相同）的工具面几乎一样，它们的边界靠 persona 与调度规则维持。
+  `agent_reviewer`（后者多 `web_search` / `web_fetch`）的工具面相近，它们的边界靠 persona 与调度
+  规则维持 —— **2026-10-01 起 `agent_app` 已并入 `agent_computer`**（两行的 `allow` 原来逐字符相同），
+  名册里不再有单独的 App 操作专家。
 - **`allow` 里只能写已注册的工具名。** `dsh-tools` 的 `restrict()` 遇到未知名会直接抛
   `names unknown global tool ...`。改 composition 的 tool 行时要同步
   `tools/check-preset.mjs` 里的 `KNOWN_TOOLS`，并用它提前拦下拼错的名字。条件性注册的名字
@@ -517,7 +517,7 @@ YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 
 | **必要性闸门 + 强制挂号**（规则 15）：三问任一"否"就不派；不做的旁路必须在最终交付里挂号 | **已落地** | 四条编排层规则解决的是"**不重复**读"，这一条解决"**少读不该读的**"。来源是一次真实任务：要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理 —— 那次调研只服务同一条选购需求（同实体同性质），且不在验收标准里 | **主指标是子代理个数**（少开一个就是少买一份材料）。代价是规则 15 的 300 字符（≈75 token/步），**少开一个子代理就值回票价**（单个子代理实测均值 ≈1.73M）。质量侧靠**挂号抽查**：最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」、转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被静默丢掉（比不做这条规则更糟） |
 | 委派 prompt **分字段写** + **输出／交接去冗余纪律**（规则 5 / 10） | **已落地** | 输出只占总花费 **1%**（0.9M / 94.1M），压它本身毫无意义；真正的杠杆是**写下的字会变成上下文** —— 每个字都在后续每一步作为 cache-read 重发（cache-read 85.1M = 90.4%）。所以被乘数最大的是两件**交接件**：委派 prompt（专家每一步都读）与专家返回结果（调度者余下每一步都读、还会成为最终答复的素材）；反过来最终答复的措辞后面没有更多步，省不到钱、只影响可读性 | 四条**禁止式**判据：① 不回贴工具输出原文（给位置就够）② 同一结论只说一次，后文用"见上 / 第 N 条"引用 ③ 不转述中间过程 ④ **"未验证 / 未纳入"必填块不许为求简短省略**。**没有字数上限** —— 一写成"N 字符内"就精确退化成已撤销的那层。观测量：`adg` 行的 `output` + 同口径重跑后的 **cache-read 增速** + 三个抽查（回贴重合 / 重复率 / **未验证块是否仍齐全**）。规则 5 加 106 字符、规则 10 加 130 字符（prefix 块 4584 → 4820） |
 | **交付形态 + 截断接续**（规则 5 / 7 / 10，2026-09-29 按用户要求追加；2026-09-30 补父级侧触发信号） | **已落地（机制实测 + 只读扫描量到 6 条 / 285 会话；收益未量）** | 截断是 **`{kind:"max-tokens"}` 的正常结局**：provider 把 API 结束原因映射过来、agent 循环据此**正常 return**（不抛错、也不走 `agent/request-error`，所以**没有内建重试**），已产出的文本照常落进会话，只是**未完成的 tool-call 块被整体丢弃**（`@deepseek-ai/dsh-llm/lib/index.js:1053`）。触发只可能来自子代理**自己**：用户能从界面点/发"继续"，而**被委派的子代理发不了**、GUI 里也只有一条客户端合成的提示（无按钮），所以"谁去接"只能落在调度者身上 —— 不接，这次委派就停在半句上 | 三处：① 规则 5 的**期望产出**写明"产出大时分段交付"（先给结论 / 证据位置 / 未验证的梗概，再分段给大正文）② 规则 7 补**接续**半条并钉死死顺序 —— 被截断**立刻** `send_message` 接给**同一个它**、请它从断点续写（截断不改变可续性，同一 child session 可直接续跑）；"换人"只留给"它已无法接续"或"整段驻留期已厚、要结轮"**（2026-09-30 补：父级那侧的触发信号逐字是结算通知开场白 `Background subagent <id> ran out of room before it finished.` —— `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支，`completed` / `aborted` / `refusal` / `error` 各有一句、只有 `max-tokens` 是这句；被截断 ≠ 被终止，回一条继续消息它就能接着做）**③ 规则 10 ⑤ 改写成**预防式**："输出上限不可预测，所以大产出按规则 5 分段交付、不要憋到单条回答里" —— ⑤ 不再是"被截断后自己接着写"那个恢复动作（恢复归规则 7）。**没有**任何字数 / 产出量上限（`design.md` I13 / I15）。观测量：转录里截断后**有没有**指向同一个子代理的 `send_message`（有 = 接住；没有、且它之后再无产出的那截内容 = 停在半句）。代价 **+1346 字符**（prefix 正文 7736 → **9082**，≈320 token/步）—— 本仓库历次规则改动里最大的一笔，换"一次截断不必从头重做"。**已量到**（只读扫描 285 个会话档案）：`turn/end` 的 `reason.kind` 分布 `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2，6 条全部落在 `agentPreset:"adg"` + `origin:"subagent"` 的**被委派子代理**里（3 条是长产出：51233 字符的长文断在半句上等）；而这 6 个会话在截断后**记录数为 0**（无 `assistant/message`、无 `user/message`）⇒ "截断后就地接续"在本机**完全没有先例**，正因如此才必须写成调度者的动作。读档案的坑：`session.v*.jsonl.zstd` 是**多帧 zstd 拼接**，必须先按 magic `28 b5 2f fd` 切帧（Node v26 的 `node:zlib` 自带 `zstdDecompressSync`，不需要外部 zstd）。本机单条输出上限 ≈ **32768**（pi-ai 适配器默认；与上下文窗口 262144 是**两件事**）|
-| 9 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 9 行 | 调度者系统提示里约 330 字符 × 9 ≈ 2.9 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.7k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
+| 8 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 8 行 | 调度者系统提示里约 330 字符 × 8 ≈ 2.6 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.66k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
 | 压三组体积旋钮 / 设 `maxTokens` / 写"结论 N 字符内" | **不建议（已撤销的口径）** | 截断会把工具**已经取到**的事实切掉；输出只占账单 1%，压它只损伤质量并招来返工 | 见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门) |
 
 **persona 的体积账**：prefix 正文（`|-` 之后的正文行、**不含换行**）现在 **8005 字符**。最新一轮
@@ -607,7 +607,7 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 两组都由同一份探测、各自的旗标（`--with-billion-context` / `--with-save-token`，可叠加）决定，所以口径只有一条：
 **源文件中立、生成物按探测决定**。味道键 = 装着的组的集合：
 
-| 味道键 | 稳定目录（`$DSH_HOME/bundles/`） | 注入 9 个专家行的工具名 | `compaction-basic` 的 `config.auto` |
+| 味道键 | 稳定目录（`$DSH_HOME/bundles/`） | 注入 8 个专家行的工具名 | `compaction-basic` 的 `config.auto` |
 |---|---|---|---|
 | `plain` | `dsh-adg-preset` | 无 | 不写（这些 profile 里 dsh 自带的自动压缩是唯一的压缩手段） |
 | `bili` | `dsh-adg-preset-bili` | `compress` / `decompress` / `search_context` / `acp_status` | `false` |
@@ -647,7 +647,7 @@ sh install.sh                                                          # 自动�
 插件"：包名在该 profile 的 `dsh.profile.bundles` 里 **且** 装上的那份包里真有它自己的补丁文件（文件名从包自己
 `package.json` 的 `dsh.bundle.patch` 读：billion-context 是 `./dsh.bundle.patch.yml`、`dsh-plugin-save-token` 是
 `./cordis.patch.yml`；读不到才退回历史名 `dsh.bundle.patch.yml`）。**装了哪个组，才把这个组注册在全局层的工具名
-注入 9 个专家行的 `allow`；没装就不注入** —— 两组都走这个口径，不是只对 bili。探测结果用
+注入 8 个专家行的 `allow`；没装就不注入** —— 两组都走这个口径，不是只对 bili。探测结果用
 `tools/resolve-flavor.mjs` 翻成味道键，再决定这个 profile 拿哪一份：四个稳定目录
 `$DSH_HOME/bundles/dsh-adg-preset`（plain）、`...-bili`、`...-save-token`、`...-bili-save-token`（四份
 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以 `dsh.profile.bundles` 那一行四种味道通用），
@@ -720,7 +720,7 @@ plain 与 save-token 味道里绝不能出现它 —— 这两类 profile 里，
 ```
 preset/
   preset.yml            # 在模式选择器里显示的名称与简介
-  agent.cordis.yml      # 调度智能体 persona + 九个专家智能体行
+  agent.cordis.yml      # 调度智能体 persona + 八个专家智能体行
 skills/
   adg-add-agent/
     SKILL.md            # 「给 Adg 加一个智能体」的操作手册
@@ -730,9 +730,9 @@ tools/
                         # 体积旋钮所在行的结构与"被写回时的合法性"（不钉死取值）
   gen-preset-bundle.mjs   # 构建脚本：preset/ 三份源文件 → bundle/adg-<味道>/（生成物，gitignore）。
                           # --with-billion-context / --with-save-token（可叠加）= 把该组注册在全局层的名字
-                          # 追加进 9 个专家行的 allow；billion-context 组还要给 compaction-basic 注入
+                          # 追加进 8 个专家行的 allow；billion-context 组还要给 compaction-basic 注入
                           # config.auto=false（都只改生成物，见红线 10）。不带旗标 = plain
-  check-bundle-flavor.mjs # 产物自检：按 plain|bili|save-token|bili+save-token 逐组断言 —— 9 个专家行的 allow
+  check-bundle-flavor.mjs # 产物自检：按 plain|bili|save-token|bili+save-token 逐组断言 —— 8 个专家行的 allow
                           # 里该在的组全有、不该在的组一个都没有（并拒绝 acp_cache），compaction-basic 的
                           # config.auto 只在 bili 组激活时恰好为 false
                           # （check-preset.mjs 只看源文件，产物是它的盲区）
@@ -741,11 +741,11 @@ tools/
                           # 每 profile 一行 "<name>\t<0|1>"；一个组问一次（缺省 billion-context，换组用 --package），
                           # install.* 用它决定该 profile 拿哪份味道
   resolve-flavor.mjs      # 映射（不探测）：--<组> → "<味道键>\t<稳定目录名>\t<gen 旗标>"
-browser/                # 浏览器工具链（有头 Chrome + 最小 CDP 驱动，零依赖，Node >= 22）
+browser/                # 浏览器工具链（有头 Chromium 系浏览器 + 最小 CDP 驱动，零依赖，Node >= 22）
   cli.mjs               # 唯一入口：launch / status / tabs / profile / open / text / eval / shot / close-tab / close
-  lib/target.mjs        # 纯函数：profile / 端口 / Chrome 探测 / 启动参数 / 复用决策
+  lib/target.mjs        # 纯函数：profile / 端口 / 浏览器探测（Chrome → Brave → Edge）/ 启动参数 / 复用决策
   lib/cdp.mjs           # 最小 CDP 通道 + 会话便捷层（socketFactory 可注入，便于无浏览器测试）
-  test/browser.test.mjs # 36 个单元用例（不需要浏览器）
+  test/browser.test.mjs # 37 个单元用例（不需要浏览器）
   AGENTS.md             # 模块路由：命令、模块特有红线、跨模块路由、生效方式
   design.md             # 对象设计：BrowserTarget / BrowserInstance / PageSession / PageTab 与 I1..I10
   testing-guide.md      # 不变量→用例全表、三个状态机迁移矩阵、消费侧契约、未观测清单
@@ -844,15 +844,18 @@ install.sh              # macOS / Linux 安装脚本（同上，行为等价）
      报的是具体哪一行起不来（例如 `workflow-ptc (@deepseek-ai/dsh-workflow-ptc): never started`）；
    - `await agentPresets.list()` 里应能看到 `adg`（**`standingKeyFor` 在本版 dsh 里已经不存在**，
      别照旧文档调它）；
-   - `await agentPresets.compositionInventory()` 里 `adg` 必须出现 **9 条启用的专家行**：`agent-file`、
-     `agent-computer`、`agent-app`、`agent-browser`、`agent-search`、`agent-researcher`、`agent-coder`、
+   - `await agentPresets.compositionInventory()` 里 `adg` 必须出现 **8 条启用的专家行**：`agent-file`、
+     `agent-computer`、`agent-browser`、`agent-search`、`agent-researcher`、`agent-coder`、
      `agent-reviewer`、`agent-general`，且**没有** `tool-subagent-fork` 行。判据要写准：
-     `compositionInventory()` 报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **11 次**
-     （上面 9 条 + `tool-subagent-codex` / `tool-subagent-claude-code` 这两条 `enabled: false` 的），
-     按"模块名出现 9 次"去断言会误报失败 —— 本机实测就是这个 11/9/0 的形状
-     （加第 9 个专家之前是 10/8/0）。**2026-09-28 实测的完整形状**：`broken` 为空、`adg` 共 **35 行**、
-     **32 行启用且 `fiberState === 2`（真挂载）**、3 行关闭（`tool-bash` 与两条 codex/claude-code）、
-     9 条 `@deepseek-ai/dsh-tool-subagent` 启用、fork **0** 条、引擎行 `workflow-ptc` 处于挂载态。
+     `compositionInventory()` 报的是**模块名**，所以 `@deepseek-ai/dsh-tool-subagent` 会出现 **10 次**
+     （上面 8 条 + `tool-subagent-codex` / `tool-subagent-claude-code` 这两条 `enabled: false` 的），
+     按"模块名出现 8 次"去断言会误报失败 —— 名册 9 行时本机实测就是这个 11/9/0 的形状
+     （加第 9 个专家之前是 10/8/0）。**2026-09-28 实测的完整形状**（当时名册 9 行）：`broken` 为空、
+     `adg` 共 **35 行**、**32 行启用且 `fiberState === 2`（真挂载）**、3 行关闭
+     （`tool-bash` 与两条 codex/claude-code）、9 条 `@deepseek-ai/dsh-tool-subagent` 启用、
+     fork **0** 条、引擎行 `workflow-ptc` 处于挂载态。**2026-10-01 `agent_app` 并入 `agent_computer`
+     后未重测行数**：按算术应各少一行 ⇒ 34 行 / 31 行启用 / 3 行关闭、模块名 10 次；
+     引用行数前请先重测，`resolve('adg').broken` 为空这一条与名册行数无关、仍必须成立。
    - 也可以直接 `node tools/check-preset.mjs`（零依赖，exit 0 表示通过；**现在只有仓库这一份文本**，
      不再有"已安装的第二份"可以传路径）。注意它只是**文本扫描器**：exit 0 不等于"文件能解析、
      插件已挂载"，所以上面那条真实挂载的校验不能省。

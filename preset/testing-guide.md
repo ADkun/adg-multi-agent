@@ -2,7 +2,7 @@
 title: preset 模块测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 ---
 
 # preset 模块测试指南
@@ -29,7 +29,7 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 | I1 `validated` ≠ `mounted` | A1 `node tools/check-preset.mjs` 退出码 0 后，**不得**据此宣称已挂载；必须做一次真实挂载（判据：`agentPresets.resolve('adg')` 的 `.broken` 为空） | 真实挂载 | 未实现（脚本无挂载能力）；人工 review 兜底 |
 | I1（同上） | A2 对脚本源码提断言：它没有挂载能力——只 import `node:fs` / `node:path` / `node:url`，且不含挂载调用 | 静态自检 | 已实现（本次实测）：`Select-String -Path tools\check-preset.mjs -Pattern 'ctx\.load\|agentPresets\|compositionInventory'` → 0 命中；`^import` 只命中上述三个内建模块。**注意**：该文件的注释里提到过 `standingKeyFor`（说明它在本版 dsh 里**已不存在**、别调），那不是挂载判据，本身也只是注释层 —— 2026-09-28 已把它同步成"按 README 第 6 步 + `agentPresets.resolve('adg')` 的 `.broken` 为空"（见「过期检测」） |
 | I3c 生成物不许手改、也不许当真相源 | A3 `node tools/gen-preset-bundle.mjs` 重跑一次后：`bundle/adg-preset/cordis.patch.yml` 的 `plugins:` 段必须与 `preset/agent.cordis.yml` 逐行一致（只差一层缩进），且**四个稳定落点** `${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset/`（plain）、`…-bili/`、`…-save-token/`、`…-bili-save-token/` 下的那一份**分别**与 `bundle/adg-plain/`、`bundle/adg-bili/`、`bundle/adg-save-token/`、`bundle/adg-bili-save-token/` 逐字节一致（哪个 profile 拿哪一份由**逐组探测**决定：`tools/has-bundle.mjs` 一次问一组，`tools/resolve-flavor.mjs` 把结果翻成键/目录/旗标） | 构建 | 已实现（重跑即覆盖，手改必被抹掉）。**判违例看语义**：有人拿 `$DSH_HOME/bundles/` 或 `bundle/` 下的文件当"源文件"改 |
-| I3c / 构建期注入（根 `AGENTS.md` 红线 10） | A4 **专家 `allow` 里的构建期注入名怎么验证**：① **产物侧** —— 拿该 profile 实际链接的那一份生成物，跑 `node tools/check-bundle-flavor.mjs <那份 cordis.patch.yml> <plain\|bili\|save-token\|bili+save-token>`，逐组断言"该在的组必须全有 / 不该在的组一个都不能有 / 该组 `notInjected`（`acp_cache`）出现即错"，并断言 `compaction-basic` 的 `auto` 只在 bili 味道为 `false`；② **源文件侧** —— `node tools/check-preset.mjs` 把源文件里**手写**的注入名判成 **ERROR**（`save_token_expand` 指回 `--with-save-token`；`compress` / `decompress` / `search_context` / `acp_status` 指回 `--with-billion-context`；`acp_cache` 另注明"gen 的注入清单里**没有**这个"）。**两边都要验**：产物侧证明"该注的注进去了"，源文件侧证明"没手写进源文件" | 构建 + 静态自检 | 已实现（2026-09-30 实测：四种味道断言各 exit 0；负例两个方向 exit 1（10 / 9 个错误）、未知味道键 exit 2；三条手写探针各 exit 1）。完整命令、逐字输出与探针做法见 `tools/testing-guide.md` 5.1。**判违例看语义**：源文件里出现这些名字，或产物里出现了不该有的组 |
+| I3c / 构建期注入（根 `AGENTS.md` 红线 10） | A4 **专家 `allow` 里的构建期注入名怎么验证**：① **产物侧** —— 拿该 profile 实际链接的那一份生成物，跑 `node tools/check-bundle-flavor.mjs <那份 cordis.patch.yml> <plain\|bili\|save-token\|bili+save-token>`，逐组断言"该在的组必须全有 / 不该在的组一个都不能有 / 该组 `notInjected`（`acp_cache`）出现即错"，并断言 `compaction-basic` 的 `auto` 只在 bili 味道为 `false`；② **源文件侧** —— `node tools/check-preset.mjs` 把源文件里**手写**的注入名判成 **ERROR**（`save_token_expand` 指回 `--with-save-token`；`compress` / `decompress` / `search_context` / `acp_status` 指回 `--with-billion-context`；`acp_cache` 另注明"gen 的注入清单里**没有**这个"）。**两边都要验**：产物侧证明"该注的注进去了"，源文件侧证明"没手写进源文件" | 构建 + 静态自检 | 已实现（2026-09-30 首测：四种味道断言各 exit 0；负例两个方向 exit 1（10 / 9 个错误）、未知味道键 exit 2；三条手写探针各 exit 1。**2026-10-01 名册 9 行→8 行后复测**：四味道仍各 exit 0，负例变成 **9 / 8** 个错误、报告行 10 → 9，源文件侧警告 2 → 3）。完整命令、逐字输出与探针做法见 `tools/testing-guide.md` 5.1。**判违例看语义**：源文件里出现这些名字，或产物里出现了不该有的组 |
 | I2 未重启不得宣称生效 | B1 改完只跑自检 + 不重启，然后**明确记录**此时不得引导用户进入 Adg 模式 | 人工 review | 未实现（脚本无法观测重启）。依据：`docs/evidence.md` §3「热重载边界（真机实测）」 |
 | I2（同上） | B2 改完重启，在**新对话**里选择「Adg 多智能体模式」，核对模型可见的 `agent_*` 工具面等于当前名册 | 真实挂载 | 未实现（需 Host 侧调用）；人工 review 兜底 |
 | I2（同上） | B3 登记新的触发口径（2026-09-28 实测）：profile 的 `cordis.patch.yml` 或 profile 清单变动会让整份 patch 栈重读（`dsh-hmr` 的 `refresh()` 走 `readProfilePatches`），重读后声明会重新注册；**但「已挂载的会话不会中途换组合」不变**，所以操作口径仍是"重启 dsh + 新对话验收"。**禁止**在文档或回复里宣称「不重启也会生效」；**未观测**的是：不重启时新开的会话会不会直接加入重注册后的声明（没有实测，不许写成会） | 人工 review | 未实现（冲突属文档层事实，无脚本可判） |
@@ -129,7 +129,7 @@ node tools/gen-preset-bundle.mjs   # 生成/刷新 bundle：须 exit 0（产物�
 
 其后必须做一次真实挂载（根 `README.md`「给 AI 的安装指令」第 6 步：`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()` 的形状），再做一次重启 + 新对话验收。静态自检通过 ≠ 生效；生成物形状正确也 ≠ 挂载。
 
-当前仓库实测基线（2026-09-28 复核）：`node tools/check-preset.mjs` → `通过：0 个错误，2 个警告`（两条 WARN 都是 `read_image` 属条件性注册：`agent-file` 与 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。
+当前仓库实测基线（**2026-10-01 复核**）：`node tools/check-preset.mjs` → `通过：0 个错误，3 个警告`（三条 WARN 都是 `read_image` 属条件性注册：第 526 行 `agent-file`、第 575 行 `agent-browser`、第 715 行 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。（2026-09-28 复核时是 0 / 2，第三处随 2026-10-01 给 `agent-browser` 的 `allow` 加 `read_image` 而来。）
 
 ## 6. 过期检测（踩坑登记）
 

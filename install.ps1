@@ -226,8 +226,8 @@ if (Test-Path -LiteralPath $browserSrc) {
 # outDir 传绝对路径：gen 脚本用的是 process.cwd()，不能跟着"用户从哪个目录调用本脚本"漂。
 $genFlavors = @(
   [ordered]@{ flavor = 'plain';           out = (Join-Path $here 'bundle\adg-plain');           groups = @();                                     note = '不带任何注入的上下文工具（源文件原样）' },
-  [ordered]@{ flavor = 'bili';            out = (Join-Path $here 'bundle\adg-bili');            groups = @('--billion-context');                  note = '9 个专家的 allow 里带 bili 的四个上下文工具 + compaction-basic auto: false' },
-  [ordered]@{ flavor = 'save-token';      out = (Join-Path $here 'bundle\adg-save-token');      groups = @('--save-token');                       note = '9 个专家的 allow 里带 save-token 的 save_token_expand' },
+  [ordered]@{ flavor = 'bili';            out = (Join-Path $here 'bundle\adg-bili');            groups = @('--billion-context');                  note = '8 个专家的 allow 里带 bili 的四个上下文工具 + compaction-basic auto: false' },
+  [ordered]@{ flavor = 'save-token';      out = (Join-Path $here 'bundle\adg-save-token');      groups = @('--save-token');                       note = '8 个专家的 allow 里带 save-token 的 save_token_expand' },
   [ordered]@{ flavor = 'bili+save-token'; out = (Join-Path $here 'bundle\adg-bili-save-token'); groups = @('--billion-context', '--save-token');  note = '上述两组的并集（bili 四个上下文工具 + save_token_expand + auto: false）' }
 )
 $genResolveLog = Join-Path $root 'adg-gen-flavor.log'
@@ -327,7 +327,7 @@ foreach ($name in $Profiles) {
   }
   # 4b-1. 断言**已经链接进去的那一份**的味道，正是这个 profile 该拿的味道。
   # 判据不能是"包在不在"：四种味道的 package.json 逐字节相同、包名也一样，只有产物本体不同 ——
-  # 所以让 tools\check-bundle-flavor.mjs 逐行验 9 个专家行的 allow 与 compaction-basic 的 auto
+  # 所以让 tools\check-bundle-flavor.mjs 逐行验 8 个专家行的 allow 与 compaction-basic 的 auto
   # （四种味道各按自己的注入组断言：该有的全有、不该有的一个都不能出现）。
   # 这一格是本缺陷的"静默失效"出口：味道换错时一切看起来都正常，只有专家的工具目录少四个名字
   # （2026-09-28 现场：web 链接的是 plain，子代理报 unknown tool compress）。

@@ -226,11 +226,27 @@ test('I6 本机 Node 满足运行时要求（>= 22 的全局 WebSocket）', () =
   assert.doesNotThrow(() => assertRuntime());
 });
 
-test('I6 ADG_CHROME 永远排第一，win32 候选含 Chrome 与 Edge', () => {
+test('I6 ADG_CHROME 永远排第一，win32 候选含 Chrome / Brave / Edge 且 Brave 在 Edge 前', () => {
   const cands = chromeCandidates({ ADG_CHROME: 'D:\\my-chrome.exe', PROGRAMFILES: 'C:\\Program Files' }, 'win32');
   assert.equal(cands[0], 'D:\\my-chrome.exe');
-  assert.ok(cands.some((p) => p.endsWith(path.join('Google', 'Chrome', 'Application', 'chrome.exe'))));
-  assert.ok(cands.some((p) => p.endsWith(path.join('Microsoft', 'Edge', 'Application', 'msedge.exe'))));
+  const at = (parts) => cands.findIndex((p) => p.endsWith(path.join(...parts)));
+  const chrome = at(['Google', 'Chrome', 'Application', 'chrome.exe']);
+  const brave = at(['BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe']);
+  const edge = at(['Microsoft', 'Edge', 'Application', 'msedge.exe']);
+  assert.ok(chrome > 0, 'win32 候选里应当有 Chrome');
+  assert.ok(brave > 0, 'win32 候选里应当有 Brave');
+  assert.ok(edge > 0, 'win32 候选里应当有 Edge');
+  assert.ok(
+    brave < edge,
+    'Brave 必须排在 Edge 前面：Edge 随 Windows 出厂就在，排前面会让"只装了别的浏览器"的人被迫用它',
+  );
+});
+
+test('I6 只有 Brave 与 Edge 时选中 Brave（不静默换成系统自带的 Edge）', () => {
+  const env = { PROGRAMFILES: 'C:\\Program Files', 'PROGRAMFILES(X86)': 'C:\\Program Files (x86)' };
+  const brave = path.join('C:\\Program Files', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe');
+  const edge = path.join('C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe');
+  assert.equal(findChrome({ env, platform: 'win32', exists: (p) => p === brave || p === edge }), brave);
 });
 
 test('I6 findChrome 取第一个真实存在的候选；都没有则 null', () => {

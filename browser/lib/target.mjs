@@ -1,5 +1,5 @@
 // `browser/` 的纯函数层：把「这次要驱动哪个浏览器」解析成确定的值 ——
-// profile 目录、调试端口、Chrome 可执行文件、启动参数，以及「该复用还是该启动」的决策。
+// profile 目录、调试端口、浏览器可执行文件、启动参数，以及「该复用还是该启动」的决策。
 //
 // 本文件不 spawn、不联网、不读真实文件系统（`exists` / `fsImpl` 都是可注入的），
 // 所以 `test/browser.test.mjs` 能零依赖、零副作用地钉住 design.md 的 I1..I6。
@@ -73,7 +73,15 @@ export function launchArgs(opts = {}) {
   return args;
 }
 
-/** 候选 Chrome/Edge 路径，按优先级。`ADG_CHROME` 永远排第一。 */
+/**
+ * 候选 Chromium 系浏览器路径，按优先级。`ADG_CHROME` 永远排第一。
+ *
+ * 次序是 **Chrome → Brave → Edge**。Edge 之所以排最后：它随 Windows 出厂就在，
+ * 把系统自带的那个排在用户主动装的浏览器前面，会让"我机器上只有别的浏览器"的人
+ * 被迫用它（2026-10 本机实测：只装了 Brave 与 Edge，旧次序选中 Edge）。Brave 与 Chrome
+ * 同属"用户主动安装的 Chromium 系浏览器"，两者都只用标准位置探测，不写死任何本机路径。
+ * 要指定别的可执行文件（或压过这个次序）就用 `ADG_CHROME=<绝对路径>`。
+ */
 export function chromeCandidates(env = process.env, platform = process.platform) {
   const out = [];
   const override = envGet(env, 'ADG_CHROME');
@@ -83,10 +91,12 @@ export function chromeCandidates(env = process.env, platform = process.platform)
       const base = envGet(env, key);
       if (!base) continue;
       out.push(path.join(base, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+      out.push(path.join(base, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'));
       out.push(path.join(base, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
     }
   } else if (platform === 'darwin') {
     out.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    out.push('/Applications/Brave Browser.app/Contents/MacOS/Brave Browser');
     out.push('/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge');
   } else {
     out.push(
@@ -94,6 +104,9 @@ export function chromeCandidates(env = process.env, platform = process.platform)
       '/usr/bin/google-chrome-stable',
       '/usr/bin/chromium',
       '/usr/bin/chromium-browser',
+      '/usr/bin/brave-browser',
+      '/usr/bin/brave-browser-stable',
+      '/opt/brave.com/brave/brave-browser',
       '/usr/bin/microsoft-edge',
     );
   }

@@ -10,6 +10,8 @@
 //      （bash / read_image）与策略越界（workflow / ralph）只给提示 —— 判错只留给
 //      "这次委派必然抛错"的情形；
 //   5. 不存在通用 `subagent` / `subagent_fork` 委派行；
+//   5b. 技能面口径：除 `agent_general` 外，专家行的 allow 里不出现 `skill`（只给提示 ——
+//      它不是"必然抛错"，越过它只是把技能面的维护成本摊到每个专家行上；理由见 preset/design.md）；
 //   6. 文件顶部调度 persona 的名册与专家行一一对应（双向，不能只加行不改名册）；
 //   7. 三组体积旋钮（共 8 个键）**刻意不被覆盖**，且承载它们的三行结构完好：
 //      `compaction-basic` 的 thresholdRatio / retainRatio、`tool-result-pruner` 的
@@ -249,6 +251,12 @@ for (const row of rows) {
     // 允许把别的专家的 `agent_*` 名字写进 allow：这是"让某个专家能直接转交"的官方开关。
     if (seen.has(tool)) continue
     fail(`第 ${row.line} 行 ${row.id}：allow 里的 "${tool}" 不是本组合注册过的工具名——restrict() 会抛 "names unknown global tool"`)
+  }
+  // 技能面口径（2026-10-01 用户要求）：`skill` 只留给 `agent_general`。理由：toolFilter 只有
+  // allow / deny 两种形态、preset 侧没有"给所有子代理默认加一个工具"的开关，逐行写 allow
+  // 就是"每加一个专家都要维护一遍仓库"。要用技能的工作留在调度者手上，或按 I16 派 agent_general。
+  if (row.toolName !== 'agent_general' && row.allow.includes('skill')) {
+    warn(`第 ${row.line} 行 ${row.id}：allow 里的 "skill" 只留给 agent_general（技能面口径，见 preset/design.md）——别逐行给专家加 skill；专家要用技能就让调度者把技能内容写进委派 prompt`)
   }
 }
 

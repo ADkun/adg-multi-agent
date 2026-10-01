@@ -1,6 +1,6 @@
 # AGENTS.md — adg-multi-agent
 
-Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 九个专家智能体**，其中第 9 个 `agent_general` 是交接专用的**叶子**），外加一个浏览器工具链（有头 Chrome 启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本与一个把 preset 源文件生成成 bundle 的构建脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
+Adg 多智能体模式：一份 DSH agent preset（**一个调度智能体 + 八个专家智能体**，其中第 8 个 `agent_general` 是交接专用的**叶子**），外加一个浏览器工具链（有头 Chromium 系浏览器启动器 + 最小 CDP 驱动）、一个「给 Adg 加一个智能体」的用户技能、一个静态自检脚本与一个把 preset 源文件生成成 bundle 的构建脚本、两个安装脚本。本文只做路由，不做百科——细节一律下沉到按需文档。
 
 人向手册与全部实测依据：`README.md`（**改任何东西之前先读它对应的小节**）。
 
@@ -17,7 +17,7 @@ node tools/check-preset.mjs
 # 生成 preset bundle（构建产物，落在 .gitignore 忽略的 bundle/adg-<味道>/；install.* 每次都会按探测结果重跑它）
 # 不带旗标 = plain；不传位置参数时才落到缺省出海目录 bundle/adg-preset/（install.* 每次都显式传位置参数）
 node tools/gen-preset-bundle.mjs
-node tools/gen-preset-bundle.mjs --with-billion-context   # 目标 profile 装了 billion-context 才用：给 9 个专家的 toolFilter.allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 10）
+node tools/gen-preset-bundle.mjs --with-billion-context   # 目标 profile 装了 billion-context 才用：给 8 个专家的 toolFilter.allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 10）
 node tools/gen-preset-bundle.mjs --with-save-token        # 目标 profile 装了 dsh-plugin-save-token 才用：追加 save_token_expand（红线 10）
 # 两个旗标可叠加（叠加后就是味道 bili+save-token）。口径是"装了什么才注入什么"：安装脚本先探测、再决定传哪些旗标。
 # 味道键 / 稳定目录名 / 注入清单**只有一份**，写在 tools/flavors.mjs，别在别处拼这些字符串。
@@ -82,9 +82,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profi
 
 | 模块 | 一句话职责 | 规则见 |
 |---|---|---|
-| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 9 个专家行（第 9 行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
+| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 8 个专家行（第 8 行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
 | `tools/` | `check-preset.mjs`（preset 的零依赖静态校验器，**不是 YAML 解析器**）+ `gen-preset-bundle.mjs`（从 `preset/` 源文件生成 bundle 的构建脚本，**产物不许手改**） | `tools/AGENTS.md` |
-| `browser/` | 有头 Chrome 启动器 + 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
+| `browser/` | 有头 Chromium 系浏览器启动器（Chrome / Brave / Edge 探测）+ 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
 
 不在模块地图里、也不需要模块 `AGENTS.md` 的（三样信号都没有，建了就是噪音）：`skills/adg-add-agent/SKILL.md`（用户技能文档，位于 `${DSH_HOME:-~/.dsh}/skills/`，无独立命令）、`install.ps1` / `install.sh`（部署脚本，无模块红线）、仓库根 `README.md`。`docs/` 是文档层而非模块：`docs/evidence.md`（实测证据台账 / 未观测清单）、`docs/docs-guide.md`（写作规范与文档分层契约）、`docs/registry.md`（索引与冷启动三问的答题路径）。
 
@@ -105,11 +105,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profi
 
 ## Quality Gates
 
-1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 2 警告**（`agent-file` 与 `agent-general` 的 `read_image` 是条件性注册；2026-09-28 加第 9 个专家之前是 0 / 1）。
-1b. **改了 `tools/gen-preset-bundle.mjs`、`tools/flavors.mjs` 或 `preset/agent.cordis.yml` → 四种味道的产物都要生成、并各自通过自检**（红线 10）：plain / bili / save-token / bili+save-token 各一条（`node tools/gen-preset-bundle.mjs [--with-billion-context] [--with-save-token] bundle/adg-<味道> && node tools/check-bundle-flavor.mjs bundle/adg-<味道>/cordis.patch.yml <味道键>`，完整四条见「命令」章），四条都必须 **exit 0**。`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列 —— **产物是它的盲区**，只跑 plain 那一条证明不了注入有没有生效。本仓库实测（四份生成物都是 18 个顶层子插件条目 / 9 个专家行）：plain 95631 B = 9 行全 `NONE`（`10/7/7/10/2/5/9/7/16`）+ `compaction-basic[auto=未写]`；bili 97640 B = 9 行全 `billion-context:ALL`（`14/11/11/14/6/9/13/11/20`，每行正好 +4）+ `auto=false`；save-token 97112 B = 9 行全 `save-token:ALL`（`11/8/8/11/3/6/10/8/17`，每行 +1）+ `auto=未写`；bili+save-token 99121 B = 9 行全 `billion-context:ALL save-token:ALL`（`15/12/12/15/7/10/14/12/21`，每行 +5）+ `auto=false`。（四份字节数是 2026-09-30 移除那段 persona 末行后重测的现值；再改 `preset/agent.cordis.yml` 的正文就会变，它是读数不是判据。）交叉断言两个方向都 exit 1（拿 bili 产物按 plain 断、拿 plain 产物按 bili 断，各报 10 个错误，其中一条正是 `config.auto` 的方向错 —— `味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`），所以这个门**不会假绿**。源文件侧的**反向**守卫另测一次：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时插 `config: {auto: false}` ⇒ `check-preset.mjs` exit 1（报「构建期注入的键」）且 `gen-preset-bundle.mjs --with-billion-context` 也 exit 1（拒绝叠加第二份 config）；还原后 exit 0。手写注入名字同样被拦：写 `save_token_expand` ⇒ ERROR 提示 `用 node tools/gen-preset-bundle.mjs --with-save-token 生成`，写 `acp_cache` ⇒ 提示 `改 tools/flavors.mjs 里 billion-context 组的 tools`（清单从 `tools/flavors.mjs` 推导，不在 `check-preset.mjs` 里另抄）。
+1. `node tools/check-preset.mjs` → **exit 0**（允许 WARN；WARN 不是失败，ERROR 的含义只有一个：**这次委派必然抛错**）。本仓库当前实测：**0 错误 / 3 警告**（`agent-file`、`agent-browser` 与 `agent-general` 三处的 `read_image` 是条件性注册；2026-09-28 名册还在 9 行时是 0 / 2，加 `agent-general` 之前是 0 / 1）。
+1b. **改了 `tools/gen-preset-bundle.mjs`、`tools/flavors.mjs` 或 `preset/agent.cordis.yml` → 四种味道的产物都要生成、并各自通过自检**（红线 10）：plain / bili / save-token / bili+save-token 各一条（`node tools/gen-preset-bundle.mjs [--with-billion-context] [--with-save-token] bundle/adg-<味道> && node tools/check-bundle-flavor.mjs bundle/adg-<味道>/cordis.patch.yml <味道键>`，完整四条见「命令」章），四条都必须 **exit 0**。`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列 —— **产物是它的盲区**，只跑 plain 那一条证明不了注入有没有生效。本仓库实测（四份生成物都是 18 个顶层子插件条目 / 8 个专家行）：plain 97787 B = 8 行全 `NONE`（`10/7/11/2/5/9/9/16`）+ `compaction-basic[auto=未写]`；bili 99654 B = 8 行全 `billion-context:ALL`（`14/11/15/6/9/13/13/20`，每行正好 +4）+ `auto=false`；save-token 99226 B = 8 行全 `save-token:ALL`（`11/8/12/3/6/10/10/17`，每行 +1）+ `auto=未写`；bili+save-token 101093 B = 8 行全 `billion-context:ALL save-token:ALL`（`15/12/16/7/10/14/14/21`，每行 +5）+ `auto=false`。（四份字节数是 2026-10-01 名册 9 行→8 行（`agent-app` 并入 `agent-computer`）并调整浏览器 / 审查专家工具面之后的现值；上一轮 96120 / 98129 / 97601 / 99610 是同日给 `agent-browser` persona 加 Brave 段落后的值；再改 `preset/agent.cordis.yml` 的正文就会变，它是读数不是判据。）交叉断言两个方向都 exit 1（拿 bili 产物按 plain 断、拿 plain 产物按 bili 断，各报 9 个错误，其中一条正是 `config.auto` 的方向错 —— `味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`），所以这个门**不会假绿**。源文件侧的**反向**守卫另测一次：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时插 `config: {auto: false}` ⇒ `check-preset.mjs` exit 1（报「构建期注入的键」）且 `gen-preset-bundle.mjs --with-billion-context` 也 exit 1（拒绝叠加第二份 config）；还原后 exit 0。手写注入名字同样被拦：写 `save_token_expand` ⇒ ERROR 提示 `用 node tools/gen-preset-bundle.mjs --with-save-token 生成`，写 `acp_cache` ⇒ 提示 `改 tools/flavors.mjs 里 billion-context 组的 tools`（清单从 `tools/flavors.mjs` 推导，不在 `check-preset.mjs` 里另抄）。
 2. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 6 步做**真实挂载**（静态自检证明不了挂载）。
 3. 交付前逐条对照 `docs/docs-guide.md` 的写作规范与附件规范的「质量红线清单」。
 4. 引用任何实测数字前先读 `docs/evidence.md` 的**未观测清单**与各节的**状态分层**：人向手册里若干"未观测"条目的**依据**可能已被本机日志更新，处置权在人类 —— 但**未观测的结论不许写成实测**，也不许把"日志证明的机制"读成"那一件事本身已被观测"（例：`subagent/end` 对"结束"与"被恢复"发同一事件，所以"某个子代理是被恢复的"无从判定）。
-5. `cd browser && node --test test` → 全绿（本仓库实测 **36 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md` 第 5 节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留且正文非空** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
+5. `cd browser && node --test test` → 全绿（本仓库实测 **37 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md` 第 5 节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留且正文非空** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
 
 **能力的边界（不许越界宣称）**：`tools/check-preset.mjs` 是**逐行文本扫描器，不是 YAML 解析器**；它证明不了文件能被 YAML 解析，也证明不了 preset 真的挂载。`README.md` 与 `docs/evidence.md` 里的实测都带状态分层（源码级事实 / 检验 / 真机实测 / 未观测）——引用时必须保留该分层，**未观测的结论不许写成实测**。

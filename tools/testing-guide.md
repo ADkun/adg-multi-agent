@@ -2,7 +2,7 @@
 title: check-preset.mjs 校验器 测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 ---
 
 # check-preset.mjs 测试指南
@@ -164,16 +164,16 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle/adg-bili-save-token && node tools/check-bundle-flavor.mjs bundle/adg-bili-save-token/cordis.patch.yml bili+save-token
 ```
 
-| 用例 | 类型 | 判据（2026-09-30 本机实测值） |
+| 用例 | 类型 | 判据（2026-10-01 本机实测值） |
 |---|---|---|
-| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `95631` / `97640` / `97112` / `99121`（各 18 个顶层子插件条目、9 个专家行；字节数随 persona 正文改动而变，别当判据）；断言末行逐字 `通过：10 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
-| 专家行报告行（`<toolName>[<项数>]=<组>:<ALL\|NONE\|PARTIAL\|LEAK>`） | CLI 冒烟 | `allow` 计数 plain `10/7/7/10/2/5/9/7/16`；bili `14/11/11/14/6/9/13/11/20`（每行 +4）；save-token `11/8/8/11/3/6/10/8/17`（每行 +1）；两旗标 `15/12/12/15/7/10/14/12/21`（每行 +5） |
+| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `97787` / `99654` / `99226` / `101093`（各 18 个顶层子插件条目、8 个专家行；字节数随 persona 正文改动而变，别当判据）；断言末行逐字 `通过：9 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
+| 专家行报告行（`<toolName>[<项数>]=<组>:<ALL\|NONE\|PARTIAL\|LEAK>`） | CLI 冒烟 | `allow` 计数 plain `10/7/11/2/5/9/9/16`；bili `14/11/15/6/9/13/13/20`（每行 +4）；save-token `11/8/12/3/6/10/10/17`（每行 +1）；两旗标 `15/12/16/7/10/14/14/21`（每行 +5） |
 | `compaction-basic` 那一行 | CLI 冒烟 | plain / save-token 报 `compaction-basic[auto=未写]`；bili / bili+save-token 报 `auto=false`（这个键只在 bili 组激活时注入） |
-| **负例 1：错味道**（拿 bili 产物按 `plain` 判） | CLI 冒烟 | exit `1`、末行 `不通过：10 个错误（plain 味道 / 10 行报告）`；9 条 `ERROR agent-<id>（agent_<id>）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status` + `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK` |
-| **负例 2：漏注入**（拿 plain 产物按 `save-token` 判） | CLI 冒烟 | exit `1`、末行 `不通过：9 个错误（save-token 味道 / 10 行报告）`；9 条 `ERROR agent-<id>（agent_<id>）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`；报告行全 `save-token:NONE` |
+| **负例 1：错味道**（拿 bili 产物按 `plain` 判） | CLI 冒烟 | exit `1`、末行 `不通过：9 个错误（plain 味道 / 9 行报告）`；8 条 `ERROR agent-<id>（agent_<id>）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status` + `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK` |
+| **负例 2：漏注入**（拿 plain 产物按 `save-token` 判） | CLI 冒烟 | exit `1`、末行 `不通过：8 个错误（save-token 味道 / 9 行报告）`；8 条 `ERROR agent-<id>（agent_<id>）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`；报告行全 `save-token:NONE` |
 | **负例 3：未知味道键**（`… bundle/adg-plain/cordis.patch.yml nope`） | CLI 冒烟 | exit `2`，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）` |
 | `acp_cache`（`notInjected`）出现在任何味道里 | 人工 review（读脚本源码，本轮未单独造产物） | `NEVER_INJECTED = notInjectedFor(GROUP_ORDER)` ⇒ `ERROR …：acp_cache 不在任何注入清单里（gen 脚本与 tools/flavors.mjs 的清单需对齐）` |
-| **手写注入名字进源文件**（夹具 A 的某个专家行 `allow:` 块末尾插一行） | CLI 冒烟 | 三条都 exit `1`、末行 `不通过：1 个错误，2 个警告`：插 `save_token_expand` ⇒ `ERROR 第 528 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`；插 `acp_cache` ⇒ 同一形状，括注里多一句 `（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools）`；插 `compress` ⇒ 与 bili 组同形、指回 `--with-billion-context`。名字清单由校验器从 `tools/flavors.mjs` **推导**、不另抄一份 |
+| **手写注入名字进源文件**（夹具 A 的某个专家行 `allow:` 块末尾插一行） | CLI 冒烟 | 三条都 exit `1`、末行 `不通过：1 个错误，3 个警告`：插 `save_token_expand` ⇒ `ERROR 第 526 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`；插 `acp_cache` ⇒ 同一形状，括注里多一句 `（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools）`；插 `compress` ⇒ 与 bili 组同形、指回 `--with-billion-context`。名字清单由校验器从 `tools/flavors.mjs` **推导**、不另抄一份 |
 | 探针做法本身（怎么造夹具） | 人工 review | 复制 `preset/agent.cordis.yml` 到临时文件 → 在某个专家行的 `allow:` 块末尾插一行 → `node tools/check-preset.mjs <临时文件>`。**别用 Windows PowerShell 的 `Get-Content` / `Set-Content` 读写这些文件**（UTF-8 **无 BOM**，会被按 ANSI 误读成乱码并改变行数，本轮踩过）；用 UTF-8 感知的读写（node 的 `fs.readFileSync(p,'utf8')`，或本仓库的 read 工具） |
 
 **探测与味道映射（安装侧的判据，两个独立入口）**：

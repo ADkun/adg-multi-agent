@@ -7,7 +7,7 @@ whenToUse: 用户要求为 Adg 多智能体模式增加、调整或删除一个�
 # 在 Adg preset 里增删一个智能体
 
 Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `delegation` 组里的一行
-`@deepseek-ai/dsh-tool-subagent`。一行 = 一个可委派的专家（当前名册 9 行）：
+`@deepseek-ai/dsh-tool-subagent`。一行 = 一个可委派的专家（当前名册 8 行）：
 
 | 字段 | 含义 |
 |---|---|
@@ -17,11 +17,11 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 | `config.toolFilter.allow` | 它被允许使用的工具白名单 —— 这是**真实的能力边界**，不是提示 |
 | `config.backgroundMode` | 保持 `continuable`（后台接续干活，结果以通知回到调度者） |
 
-第 9 行 `agent-general`（`agent_general`）是**特殊的一行**，不是普通的专项专家：它**只在用户显式要求
+第 8 行 `agent-general`（`agent_general`）是**特殊的一行**，不是普通的专项专家：它**只在用户显式要求
 "交接"时**才被派发（调度 persona 规则 17），拿的是本 preset 里最全的**叶子**工具集，用途是**上下文
 隔离**。给它加 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph` 都是**反例**
 （`preset/design.md` I16）；它的 `send_message` 也不能删（运行时的"回报上级"指引靠它才注入）。
-新增普通专家时**不要**照抄它的 allow 名单与 persona，照抄前 8 行里最近的那个。
+新增普通专家时**不要**照抄它的 allow 名单与 persona，照抄前 7 行里最近的那个。
 
 ## 先确认用户意图（一次问清）
 
@@ -113,6 +113,12 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
     所以 `check-preset.mjs` 见到源文件里手写这些名字直接判 ERROR。要给专家补上它们就用生成命令，不要改源文件：
     `node tools/gen-preset-bundle.mjs --with-billion-context` / `--with-save-token`（两个旗标可叠加）。
 - **有 `pwsh` 的专家要同时给 `job_list` / `job_output` / `job_kill`**，否则后台跑起来的任务取不回来。
+- **除 `agent-general` 外，别给专家的 `allow` 里写 `skill`**（技能面口径，2026-10-01 按用户要求；理由见
+  `preset/design.md` 非功能红线）：`toolFilter` 只有 `allow` / `deny` 两种形态，preset 侧**没有**
+  "给所有子代理默认加一个工具"的开关，而**不写 `allow`** 的专家会继承调度者整套目录（连名册行一起
+  继承 ⇒ 违反一跳可达红线），所以"让所有专家都能用技能"只能逐行写 `allow` —— 那正是"每加一个专家
+  都要维护一遍仓库"。默认口径＝专家不用技能面：要用技能的工作由调度者把技能内容写进委派 prompt，
+  或按 I16 派 `agent-general`（它的 `allow` 里有 `skill`）。自检对该情形只给 WARN（提示级）。
 - **不要**再往 persona 里写 token／读取预算（"委派 prompt 必须自带读取预算"、
   "结论控制在 N 字符内"、"禁止整读大文件"之类）：那一层纪律已整体撤销 —— 截断与提前压缩会把
   工具已经取到的事实切掉，写在 persona 里的预算提示会把注意力从"把事情做对"挪到"别写太多"，

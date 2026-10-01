@@ -2,14 +2,37 @@
 title: 变更记录
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 ---
 
 # 变更记录
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-09-30（最新）— 移除 host-plane 的会话提醒插件：仓库、环境、文档、证据一并清除
+## 2026-10-01（最新）— 名册 9 → 8：`agent_app` 并入 `agent_computer`，浏览器 / 审查专家的工具面各补一件，技能面收紧到只剩 general
+
+- 依据（用户要求，本轮裁定）：合并 `agent_app` + `agent_computer`、给 `agent_reviewer` 加 `web_search` / `web_fetch`、给 `agent_browser` 加 `read_image` 三项**采纳**；**不做按专家的 token 用量账**（原话要点「每个任务都不一样」）；`browser` 的 `edit` **保留**（脚本出错还要就地改）；人工介入协议在专家 persona 里**保留**、不算冗余（调度 persona 里那份主要是让用户设完全权限）；技能面**二选一**里选「除 `agent_general` 外所有专家都不许用 skill」（原话「以后每加一个专家都要维护一遍仓库吗？」）。
+- `preset/agent.cordis.yml`：删掉 `- id: agent-app` 整行；`agent-computer` 的 persona 改成「系统与应用运维专员」双线（① 系统 / 设备层 ② 应用层，含 winget / adb / 小程序），安全要求追加「卸载软件」；调度 persona 的名册由 9 项改 8 项（`agent_computer` 合并描述），规则 4 补「需要跑 `git` / 测试命令的只读核对（`git log -S` / `git blame` / `node --test` 等）→ `agent_reviewer`（它带 pwsh 且只报告不改；researcher 没有 pwsh）」；顶注新增第 15 条（名册 9→8、三处工具面调整、技能面口径）。
+- `agent-browser` 的 `allow` 加 `read_image`（persona 加一行「截图核验：`shot --out <png>` 拍下的图用 `read_image` 自己看」），**`edit` 保留**；`agent-reviewer` 的 `allow` 加 `web_search` / `web_fetch`（职责行补只读核对、输出要求补「上游 API / 规范 / 版本这类可查证的事用 web_search / web_fetch 去核」）。
+- 技能面口径（用户二选一里的第二项）：`skill` 只留给 `agent_general`，其余专家一律不给 —— 理由写进 `preset/agent.cordis.yml` 顶注第 15 条、`preset/design.md` 与 `preset/AGENTS.md` 的红线：`toolFilter` 只有 allow / deny、preset 侧没有"给所有子代理默认加工具"的开关，逐行写 allow 就是"每加一个专家都要维护一遍仓库"。
+- `tools/check-preset.mjs`：新增**提示级**守卫 —— 除 `agent_general` 外 `allow` 里出现 `skill` 即 **WARN**（不是 ERROR；ERROR 只留"这次委派必然抛错"的情形）。
+- 名册与计数同步：`preset/preset.yml` description、`preset/bundle.package.json` description、`preset/design.md`（ExpertRow「当前 8 行」+ I16「第 8 个专家行」+ 非功能红线新增技能面一条，含源码依据 `@deepseek-ai/dsh-tool-subagent/lib/index.js:265` 解析、`:370` 要求 allow / deny 至少其一）、`preset/AGENTS.md`（8 行 + 技能面红线）、`README.md`（顶部九个→八个、名册表与分派表合并 `agent_computer` 行、token 账「9 份重复的后台委派提示段」→8 份、目录树与生成描述 9→8）、`skills/adg-add-agent/SKILL.md`（名册 8 行 + 技能面硬约束）、`docs/registry.md`（「八个专家的分工与缺口」）、`install.ps1` / `install.sh`（note 文案与注释里的「9 个专家」→「8 个专家」）。
+- 四种味道产物随名册与 persona 变化：`plain` 96120 → **97787**、`bili` 98129 → **99654**、`save-token` 97601 → **99226**、`bili+save-token` 99610 → **101093** B；**这一次数值形状也变了** —— 专家 `allow` 计数由 9 位变 8 位（`agent_app` 位消失、`agent-browser` +1），报告行 10 → 9。
+- 文档数字刷新：`tools/testing-guide.md`（用例判据行）、`tools/AGENTS.md`（专家行数、`check-bundle-flavor.mjs` 退出码段）、`docs/evidence.md`（§10.1 第 5/6 条加口径注、§15 的表头 / 四行读数 / 复测链 / 生成器 stdout / 负例条数 / 警告行号）、根 `AGENTS.md`（质量门 1b 与第 1 条；交叉断言 10 → **9** 个错误）、`preset/testing-guide.md`（基线 0 错误 / 2 警告 → **0 错误 / 3 警告**）、`README.md`（第 6 步挂载判据 9 条专家行→8 条、模块名 11 次→**10 次**）。带日期的历史条目（`docs/changelog.md` 旧条目、`docs/evidence.md` §11、`preset/agent.cordis.yml` 顶注里那两笔 2026-09-30 台账、`README.md` 的 2026-09-28 实测段）一律**保留原值**、就地加口径注。
+- 检验：`node tools/check-preset.mjs` **exit 0（0 错误 / 3 警告** —— 三处条件性注册的 `read_image`：第 526 行 `agent-file`、第 575 行 `agent-browser`、第 715 行 `agent-general`）；四味道生成 + 四条 `node tools/check-bundle-flavor.mjs` **全 exit 0**；负例两个方向 exit 1（**9 / 8** 个错误）、未知味道键 exit 2；源文件侧探针手写 `save_token_expand` ⇒ exit 1（`不通过：1 个错误，3 个警告`）；`cd browser && node --test test` **37/37**；`install.ps1` 前三个字节 `EF BB BF`（编辑工具会抹掉它，本轮已复原并复核）。
+- 未观测：**重启 dsh 后的真实挂载本轮没做** —— 第 6 步的 `compositionInventory()` 行数（按算术应为 34 行 / 31 行启用 / 3 行关闭、`@deepseek-ai/dsh-tool-subagent` 10 次）以及对新专家行的真实委派（`read_image` / `web_search` / `web_fetch` 是否真在子代理可见目录里）都没有证据。
+
+## 2026-10-01 — 浏览器工具链支持 Brave：候选次序改为 Chrome → Brave → Edge
+
+- `browser/lib/target.mjs`：`chromeCandidates` 的 win32 / darwin / linux 三处候选各**新增 Brave**（win32 `BraveSoftware\Brave-Browser\Application\brave.exe`；darwin `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`；linux `/usr/bin/brave-browser`、`/usr/bin/brave-browser-stable`、`/opt/brave.com/brave/brave-browser`），次序固定为 **Chrome → Brave → Edge**（`ADG_CHROME` 仍排第一）；函数名与 `CHROME=` 输出键不变。
+- `browser/test/browser.test.mjs`：36 → **37 个用例**。A20 扩为断言 Chrome / Brave / Edge 三种候选形状齐全、且 Brave 的位次在 Edge 之前；新增 A20b（只有 Brave 与 Edge 时选中 Brave）。
+- `browser/AGENTS.md` / `browser/design.md` / `browser/testing-guide.md` / `browser/package.json` / 根 `AGENTS.md` / `README.md` / `docs/registry.md`：Chrome 措辞改为 Chromium 系浏览器（Chrome / Brave / Edge）；用例数 36 → 37；`profile` 那一行改称「浏览器可执行文件」；`browser/design.md`「非功能红线」新增一条（候选次序 + 不写死本机路径，判据 A20 / A20b），该节条数 6 → 7。
+- `preset/agent.cordis.yml:591` 的 `agent-browser` persona：「确认工具与 Chrome 都在」改成「确认工具与浏览器都在」；降级条件由「没有可用 Chrome」改成「探测不到任何可用浏览器（`profile` 报不出 `CHROME=`、`launch` 报 `CHROME_NOT_FOUND`）」；新增「本机没有 Chrome 不算故障」（`CHROME=` 报 Brave / Edge 都照样 `launch`）；Brave 的受限令牌失败签名标注为**未观测**。
+- 四种味道产物随 persona 变大：`plain` 95631 → **96120**、`bili` 97640 → **98129**、`save-token` 97112 → **97601**、`bili+save-token` 99121 → **99610** B（每份 +489）；`allow` 计数、报告行与断言行不变。
+- `docs/evidence.md` §8：新增「Brave 支持与真机闭环（2026-10-01）」一节（`profile` / `launch` / `REUSED` / 同 URL 与异 URL 两次 `text` / `close-tab` 护栏 / 点名清理 / `close` 的逐条读数），§8 的单元测试读数 36/36 → 37/37；未观测清单新增一条 **Brave 在受限令牌下的失败签名未观测**（含量法）。§15 四份生成物字节数复测刷新。
+- `README.md`：「浏览器专家需要完全权限」与 2026-09-26 A/B 那两处补上 Brave 未实测的边界注；目录树里 `lib/target.mjs` 一行写明候选次序、`test/browser.test.mjs` 一行 36 → 37、`profile` 那行改称浏览器可执行文件。
+
+## 2026-09-30 — 移除 host-plane 的会话提醒插件：仓库、环境、文档、证据一并清除
 
 - 依据（用户要求，原话）：「根据你提供的信息，我判断这个插件其实作用不大，把该插件从当前DSH环境中移除，并且从adg-multi-agent仓库里移除，提交推送。」；清理口径（用户选择）：**彻底清除所有提及** —— 连 `docs/changelog.md` 里记过它的历史条目、`docs/evidence.md` 里量过它的实测读数一并删除（**本行是该组件唯一的残留记录**，且只用通用描述、不写它的包名与代码字面量）。
 - 仓库：`plugin/` 下的插件模块（13 个文件）与产物 `bundle/dist/*.tgz` 整体删除，`plugin/` 目录随之消失 —— 仓库里不再有任何插件模块。

@@ -2,16 +2,16 @@
 title: browser 模块设计
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-27
+last_reviewed: 2026-10-01
 ---
 
 ## 职责与边界
 
-负责：把「用有头 Chrome 做一次需要登录态的网页交互」收敛成**确定性的一组值和一个命令行契约** —— 规范 profile 路径、调试端口、Chrome 可执行文件、启动参数、实例的复用/启动决策，以及一条最小 CDP 通道（navigate / evaluate / screenshot）。
+负责：把「用有头 Chromium 系浏览器（Chrome / Brave / Edge）做一次需要登录态的网页交互」收敛成**确定性的一组值和一个命令行契约** —— 规范 profile 路径、调试端口、浏览器可执行文件、启动参数、实例的复用/启动决策，以及一条最小 CDP 通道（navigate / evaluate / screenshot）。
 
 不负责（逐条防越权）：
 
-- 不拥有 Chrome：用的是**系统已装的** Chrome / Edge（标准位置探测 + `ADG_CHROME` 覆盖），不下载、不安装、不打包浏览器；
+- 不拥有浏览器：用的是**系统已装的** Chromium 系浏览器（Chrome / Brave / Edge，标准位置探测 + `ADG_CHROME` 覆盖，次序见「非功能红线」），不下载、不安装、不打包浏览器；
 - 不拥有用户浏览器里**既有的**标签页：本模块只关它自己刚开的临时页、以及调用方用 `--match` / `--tab` 明确点名的页（I9 / I10）。「哪一页已经不需要了」这种语义判断不在本模块 —— 它只在工具侧留护栏（不点名不关、不关到 0 个）；
 - 不拥有 profile 里的登录态：本模块只**指向**一个目录，从不在其中读写 cookie 库、不导出凭据、不给任何站点代填账号密码 —— 登录永远由人**在有头窗口里**完成；
 - 不拥有沙箱与权限：本机沙箱（`workspace-write` / `read-only`）下浏览器起不来是 host-plane 的事实，本模块只能在失败时**如实报错**，不做降级、不重试换参数（闸门本身在 preset 侧，见 `preset/design.md` I11）；
@@ -45,7 +45,7 @@ last_reviewed: 2026-09-27
 
 - 属性：`port`、`profile`、`chrome`、`browser`（CDP 报回的版本串，absent 时未知）。
 - 状态机：`absent` → `starting` → `live` → `closed`
-  - `absent`：端口上没有任何 CDP 端点。**它不是**「没有 Chrome 在跑」——用户日常的 Chrome 就在跑，只是没有调试端口。
+  - `absent`：端口上没有任何 CDP 端点。**它不是**「没有浏览器在跑」——用户日常的浏览器就在跑，只是没有调试端口。
   - `starting`：已 spawn，正在等 `/json/version` 起来。**它不是**「可用」：这期间任何页面操作都必须先失败。
   - `live`：`/json/version` 可达。**它不是**「当前页已登录」——登录是与站点之间的事，本模块无从判断。
   - `closed`：`Browser.close` 之后端口不再可达。**它不是**「数据丢了」：优雅关闭正是登录态落盘的时刻（§8 实测）。
@@ -83,16 +83,17 @@ last_reviewed: 2026-09-27
 
 - 禁止引入第三方依赖（playwright / puppeteer / ws 等一律不许）。来源：旧形态为驱动浏览器装了 `playwright-core`，它启动时自带 `--remote-debugging-pipe` 与 `Page.addScriptToEvaluateOnNewDocument` 注入、并自带 `--disable-blink-features=AutomationControlled`；本模块要的只是三个方法，不值得换那套注入面。I6 由测试钉住。
 - 禁止把 profile 写进会话工作区、或写死任何本机绝对路径（`D:\dsh\…`、`C:\Users\<某人>\…`）。来源：旧 persona 写的是「放工作区里一个固定目录」，工作区一换 profile 就换，登录态当场清零 —— 这正是「浏览器代理经常被登录拦住」的直接成因。
+- 浏览器候选次序是 **Chrome → Brave → Edge**，且只用「环境变量给出的标准安装位置」探测，禁止写死本机路径。来源：2026-10-01 本机实测——该机只装了 Brave 与 Edge，旧次序（Chrome → Edge）因此选中系统自带的 Edge，而用户要的是他主动装的 Brave。由 A20（次序、三种候选形状）与 A20b（只有 Brave + Edge 时选中 Brave）钉住。
 - 禁止在人不在场的情况下关闭有头窗口。来源：`live → closed` 会丢内存会话态；用户可能正登录到一半。要用 `close` 必须先确认本轮交互已完成。
 - 禁止代填账号密码、禁止导出/读取 profile 的 cookie 库、禁止验证码识别或指纹伪装。来源：旧形态的 `start-chrome-headed.ps1` 带了伪装旗标与伪 UA；这三件事既不稳定（站点风控升级比脚本快），也越过了「登录由人完成」的边界（`preset/design.md` I12）。
-- 禁止把「浏览器起不来」写成需要重试的情形：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）时必须停手如实报（`preset/design.md` I11）。
+- 禁止把「浏览器起不来」写成需要重试的情形：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）时必须停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**：受限令牌下它是否同样失败、以什么签名失败都没有量过（量法见 `testing-guide.md` 第 4 节），禁止把上面两条签名套到它头上。
 - 禁止关掉**不是本任务开的**标签页（尤其用户正在登录 / 正在看的那个），也禁止用 `close-tab` 把页面关到 0 个来间接关浏览器（I9 / I10）。来源：用户窗口里既有登录态也有人正在用的页 —— 一个"清理得干净"的动作如果关掉了用户登录到一半的表单，代价远大于多留几个标签页。
 
 ## For Agents
 
 动手前先读：`browser/AGENTS.md` → 本文件 → 改命令行契约再读 `preset/agent.cordis.yml` 的 `agent-browser` persona。
 
-绝不能做：上面 6 条非功能红线；I3（重启活着的实例）；I8（用 `PageSession.close()` 关浏览器）；I9 / I10（关掉别人开的页、把页面关到 0 个、抢在页面加载之前就读、失败后把自己开的临时页留在窗口里）。
+绝不能做：上面 7 条非功能红线；I3（重启活着的实例）；I8（用 `PageSession.close()` 关浏览器）；I9 / I10（关掉别人开的页、把页面关到 0 个、抢在页面加载之前就读、失败后把自己开的临时页留在窗口里）。
 
 停止并升级人类：要推翻「登录由人完成」这条边界；要改 profile 的规范默认路径；要引入第三方依赖；要增加任何形式的验证码自动化。
 

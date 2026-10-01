@@ -2,7 +2,7 @@
 title: 实测证据台账
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 ---
 
 # 实测证据台账（docs/evidence.md）
@@ -313,7 +313,28 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 （同一份信息默认只在一个站点取，见 `preset/design.md` I13 ① 与 `docs/changelog.md` 同日条目）的成本依据：
 浏览器一轮的**下限**是 0.8–2.0 秒（工具侧，还不含每一个模型步），真实站点上「等到内容可取」通常更久（未测）。
 
-**单元测试**：`cd browser && node --test --test-isolation=none test` → **36/36 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
+**Brave 支持与真机闭环（2026-10-01，本机只装了 Brave 与 Edge、没有 Chrome）**
+
+旧候选次序是 Chrome → Edge（**没有 Brave**），所以在本机上 `profile` 报出的是 Edge。2026-10-01 把次序改成
+**Chrome → Brave → Edge**（只用环境变量给出的标准安装位置探测，不写死路径；顺序理由见 `browser/design.md`「非功能红线」），
+并在 **`danger-full-access`** 会话里用**部署后的副本**（`C:\Users\adkun\.dsh\browser\`，Node v26.10.0）跑完整闭环：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 解析 | `node cli.mjs profile` | `PORT=9333`、`CHROME=C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe`、`PROFILE_EXISTS=false` |
+| 有头启动 | `node cli.mjs launch --url https://example.com` | `STATE=STARTED`、`BROWSER=Chrome/154.0.8037.58`（Brave 在 CDP 里自报 `Chrome/…`）、`TABS=1` |
+| **幂等复用** | 再跑一次 `launch` | `STATE=REUSED`、`BROWSER=Chrome/154.0.8037.58`、`TABS=1` |
+| 读页（同 URL 已开着） | `text --url https://example.com/` | `BYTES=1301`、**不打 `TAB_CLOSED=`** —— `sessionFor` 对**完全相同的 URL** 是「精确命中则复用」（`cli.mjs:129-144`），根本不新开临时页 |
+| 读页（当前没开的 URL） | `text --url "https://example.com/?adg=brave"` | `BYTES=1301`、`TAB_CLOSED=8DAB610499F9A803E5B53B8F18BC897F`、`TABS` **1 → 1**（零残留） |
+| 护栏（I9，只剩 1 页） | `close-tab --match example.com` | **退出码 1**、`ERROR=关掉它（们）会剩 0 个页面，那等于关浏览器；要关浏览器请用 node cli.mjs close`、浏览器仍活着 |
+| 点名清理 | `open --url https://www.iana.org/help/example-domains` → `close-tab --match example.com` | 前者 `TAB_OPENED=`、`TABS=2`；后者 `TAB_CLOSED=Example Domain \| https://example.com/`、`CLOSED_TABS=1`、`TABS` **2 → 1** |
+| 优雅关闭 | `node cli.mjs close` → `status` | `ALIVE=false`、`CLOSED=true`；随后 `status` 报 `ALIVE=false` |
+
+→ 状态分层：**真机实测（2026-10-01，本机 `danger-full-access`）**。Brave 的启动参数集、复用与标签页清理行为与 Chrome 观测一致；
+`BROWSER=Chrome/…` 只是 CDP 的版本串，**不代表**选中的是 Chrome —— 选中哪个可执行文件只看 `CHROME=` 那一行。
+Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单。
+
+**单元测试**：`cd browser && node --test --test-isolation=none test` → **37/37 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
 
 **部署实测**：`install.ps1` 把 `browser/` 拷到 `C:\Users\cenqian\.dsh\browser\`；用**部署后的副本**重跑了一遍
 `profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
@@ -326,7 +347,8 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
   走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 调用；
   出现「现场手写 CDP 脚本」即 persona 未被遵守。
-- **macOS / Linux**：Chrome 候选路径与有头启动**没有**在那两个平台上跑过（单元测试只钉了 win32 的候选形状）。
+- **macOS / Linux**：Chromium 系候选路径（Chrome / Brave / Edge）与有头启动**没有**在那两个平台上跑过（单元测试只钉了 win32 的候选形状）。
+- **Brave 在受限令牌下的失败签名**：2026-10-01 加 Brave 支持那次**只在 `danger-full-access` 下跑过**（闭环见上）；它在 `workspace-write` / `read-only` 下是否同样起不来、以退出码 21 还是 Mojo `拒绝访问 (0x5)` 失败，**都没有量过**。量法：在 `workspace-write` 会话里 `ADG_CHROME="C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" node cli.mjs launch`，记下退出码与 stderr 首行，再与本节的 Chrome / Edge 两行对照。
 - **多实例并发同一端口**：没有观测 —— `browser/testing-guide.md` 的迁移矩阵里按「第二次 `launch` 撞端口 → 超时分支报错」
   登记为**推断**，不是实测。
 - **`install.sh` 未在 Windows 上执行过**：本机没有 `sh` / `bash`，改动只做了人工核对（`install.ps1` 那一侧是真跑过的）。
@@ -341,7 +363,8 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 **怎么重测**（逐条照抄）：
 
 ```sh
-cd browser && node --test --test-isolation=none test          # 须 36/36
+cd browser && node --test --test-isolation=none test          # 须 37/37
+node cli.mjs profile                                          # 须报出 CHROME=<本机实际装着的那个浏览器路径>（Chrome / Brave / Edge）
 node cli.mjs launch                                           # 须 STATE=STARTED
 node cli.mjs launch                                           # 须 STATE=REUSED
 node cli.mjs eval --js "document.cookie='adg_probe=1; path=/; max-age=3600'; document.cookie"
@@ -481,16 +504,17 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
    - plain 产物（`node tools/gen-preset-bundle.mjs bundle/adg-plain`）→ 9 个专家行全 `NONE`，allow 计数 `agent_file[10] agent_computer[7] agent_app[7] agent_browser[10] agent_search[2] agent_researcher[5] agent_coder[9] agent_reviewer[7] agent_general[16]`，`通过：9 个专家行，plain 模式断言成立`，**exit 0**。
    - bili 产物（`node tools/gen-preset-bundle.mjs --with-billion-context`）→ 全 `ALL`，计数 `14 / 11 / 11 / 14 / 6 / 9 / 13 / 11 / 20`（**每行正好 +4**），**exit 0**。
    - 交叉断言（钉"假绿"）：bili 产物按 `plain` 断 → 9 个 ERROR、exit 1；plain 产物按 `bili` 断 → 9 个 ERROR、exit 1。
+   - **口径更新（2026-10-01，防误引）**：上面这一组是名册 **9 行**时代（含 `agent_app`）的读数。`agent_app` 并入 `agent_computer` 后名册 **8 行**、报告 **9 行**，`agent-browser` 的 `allow` 又多了 `read_image` ⇒ 当前字节数、allow 计数、负例条数与警告行号**一律以 §15 为准**（本节保留的是当时的事实）。
    - 零回归证据：**不带旗标重跑生成物，去掉注释行后与改动前已装的稳定产物逐行相同**（非注释行 `278 = 278`、diff `0`）。整体 SHA256 从 `8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`（1.1.0 的 plain）变成 `8FD4D6A5B0C9D64AF33E5E3A9A6B2C65EE506FEC37FBCB91834904A8B1F78289`（1.2.0 的 plain）：**13 行差异全是注释**（生成物头部的 flavor 说明 + 源文件注释块新增的 `auto` 段）**加上 `package.json` 的版本号** ⇒ 行、键、取值一个都没动，改的是说明文字。
    - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
-6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。
+6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。（**2026-10-01 现状是 0 / 3** —— 第三处是 `agent-browser` 的 `read_image`，见 §15；本条保留 2026-09-28 当时的事实。）
 7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。**（该脚本 2026-10 起由 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]` 取代 —— 逐组问，补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读；口径与四味道实测见 §15。上面这次读取本身仍是 2026-09-28 的历史事实。）**
 8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 等稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 10 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分多种味道、多个稳定目录，按 profile 各拿一份 —— 见 §11。）**
 9. **挂 bili 的 profile 要关掉 preset realm 里的自动压缩**，依据分四层：
     - **源码级事实（bili 官方就是这么做的）**：`C:\Users\cenqian\.dsh\profiles\web\node_modules\billion-context\dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
     - **源码级事实（键存在，且语义就是"只留手动"）**：`@deepseek-ai/dsh-compaction-basic` 的 `lib/index.js:62` `if (config.auto !== void 0 && typeof config.auto !== "boolean") throw new Error("BasicCompactionConfig: auto must be a boolean")`；`:85` `auto: config.auto ?? true`；`:817` zod `auto: z.boolean()`；`:827` `if (this.config.auto) this._registerAutomaticCompaction()`；该包 `README.md:76` 表格 `| auto | true | Enable automatic condensation and overflow recovery; set false for manual-only operation. |` ⇒ `auto: false` = 关自动折叠与溢出恢复，**手动 `/compact` 仍可用**（`command-compact` 那行不动）。
     - **设计依据（为什么写在 preset 自己的组里，而不是依赖 profile 层那份）**：本 preset 的 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是**另一份实例**；bili 的补丁打在 **profile 层**，"同 id 能不能命中 realm 那行"从未被观测（见本节未观测 ③）⇒ 生成物直接往 preset 的 `compaction` 组里写**同键同值**：两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套折叠各自抢阈值、压同一段历史。
-    - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 9 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 9 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **10** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 \`config:\` —— \`auto: false\` 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
+    - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 8 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 8 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **9** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 \`config:\` —— \`auto: false\` 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
     - **踩过的坑（登记，防重踩）**：`auto` 本来就在该插件的 `spec.allowedKeys` 里 ⇒ "未知键"那条检查**拦不住手写**，必须单加一条"这个键只允许出现在产物里"的规则，否则有人手写 `false` 就会让没挂 bili 的 profile 静默失去唯一的压缩手段（那才是真正的洞）。零回归仍以第 5 条的 SHA256 为准。
 
 ### 10.2 未观测（已照 §4 登记，引用本节时不许抹平）
@@ -603,29 +627,29 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 - `dsh-plugin-save-token/lib/index.js:487` 的通知正文直接点名工具：`… Need any omitted detail? Call the save_token_expand tool with id "…"`；该插件**只注册这一个工具**（同文件 `:957` `name: "save_token_expand"`）。它把工具结果**进入历史的那一刻**换成 `[save-token #id] …` 通知。
 - `ctx.on("tools/post-execute", …)` 在同文件 `:722`；`:726` `if (exec.parent !== void 0) comp.nestedCalls++;`、`:728` `if (exec.parent !== void 0) return decision;` ⇒ 它只跳过**设了 `parent`** 的派发。`parent` 是 PTC / `run_code` 子派发的 token（`@deepseek-ai/dsh-tools/lib/types/ptc.js:438` 逐字 `parent: exec.token,`，`C:\Users\cenqian\AppData\Local\npm-cache\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\dsh-tools`），**普通子代理委派不设它** ⇒ 被委派的专家会收到"去调 `save_token_expand`"的通知。
 
-**真机实测（2026-09-30，Windows / Node v26.9.0 / 仓库根 `D:\dsh\adg-multi-agent`）**：四条命令各生成一份 `cordis.patch.yml`（每份都 **18 个顶层子插件条目 / 10 行报告 = 9 个专家行 + 1 行 `compaction-basic`**），再各按自己的味道断言：
+**真机实测（首测 2026-09-30，Windows / Node v26.9.0 / 仓库根 `D:\dsh\adg-multi-agent`；下表数字随后续改动复测刷新，链条见下）**：四条命令各生成一份 `cordis.patch.yml`（每份都 **18 个顶层子插件条目 / 9 行报告 = 8 个专家行 + 1 行 `compaction-basic`**），再各按自己的味道断言：
 
-| 味道 | 生成命令 | `cordis.patch.yml` | 专家 `allow` 计数（file / computer / app / browser / search / researcher / coder / reviewer / general） | `compaction-basic` | 断言 |
+| 味道 | 生成命令 | `cordis.patch.yml` | 专家 `allow` 计数（file / computer / browser / search / researcher / coder / reviewer / general） | `compaction-basic` | 断言 |
 |---|---|---|---|---|---|
-| `plain` | `node tools/gen-preset-bundle.mjs bundle/adg-plain` | **95631 B** | `10/7/7/10/2/5/9/7/16` | `auto=未写` | exit 0 |
-| `bili` | `… --with-billion-context bundle/adg-bili` | **97640 B** | `14/11/11/14/6/9/13/11/20`（每行 +4） | `auto=false` | exit 0 |
-| `save-token` | `… --with-save-token bundle/adg-save-token` | **97112 B** | `11/8/8/11/3/6/10/8/17`（每行 +1） | `auto=未写` | exit 0 |
-| `bili+save-token` | `… --with-billion-context --with-save-token bundle/adg-bili-save-token` | **99121 B** | `15/12/12/15/7/10/14/12/21`（每行 +5） | `auto=false` | exit 0 |
+| `plain` | `node tools/gen-preset-bundle.mjs bundle/adg-plain` | **97787 B** | `10/7/11/2/5/9/9/16` | `auto=未写` | exit 0 |
+| `bili` | `… --with-billion-context bundle/adg-bili` | **99654 B** | `14/11/15/6/9/13/13/20`（每行 +4） | `auto=false` | exit 0 |
+| `save-token` | `… --with-save-token bundle/adg-save-token` | **99226 B** | `11/8/12/3/6/10/10/17`（每行 +1） | `auto=未写` | exit 0 |
+| `bili+save-token` | `… --with-billion-context --with-save-token bundle/adg-bili-save-token` | **101093 B** | `15/12/16/7/10/14/14/21`（每行 +5） | `auto=false` | exit 0 |
 
-- 上表四份字节数已按 2026-09-30 移除 persona 末行后的源文件**复测**刷新：`99623` / `101632` / `101104` / `103113` → `95631` / `97640` / `97112` / `99121` B；`allow` 计数、报告行与断言不受影响（产物体积不是稳定判据）。
-- 生成器 stdout 逐字：`  cordis.patch.yml  <字节数> 字节 / 18 个顶层子插件条目（preset id=adg, order=20）`；激活的组打 `  billion-context    已注入：9 个专家行 + 4 个工具名（compress / decompress / search_context / acp_status），并把 compaction-basic 的 auto 设为 false` / `  save-token         已注入：9 个专家行 + 1 个工具名（save_token_expand）`；未激活的组打 `  <组名>  未注入（缺省）。…`（并给出后果提示语）。四份都 exit 0。
-- 断言通过行逐字（`node tools/check-bundle-flavor.mjs <那份文件> <味道键>`）：`通过：10 行报告，plain 味道断言成立（注入组：无）` / `…，bili 味道断言成立（注入组：billion-context）` / `…，save-token 味道断言成立（注入组：save-token）` / `…，bili+save-token 味道断言成立（注入组：billion-context + save-token）`；报告里 `plain` / `save-token` 打 `compaction-basic[auto=未写]`，另两个打 `compaction-basic[auto=false]`。
+- 上表四份字节数**是读数、不是判据**，已三次复测刷新：① 2026-09-30 移除 persona 末行 —— `99623` / `101632` / `101104` / `103113` → `95631` / `97640` / `97112` / `99121` B；② 2026-10-01 给 `agent-browser` persona 加 Brave 段落 —— `95631` / `97640` / `97112` / `99121` → `96120` / `98129` / `97601` / `99610` B（每份 +489）；③ 2026-10-01 本轮把 `agent_app` 并入 `agent_computer`、给 `agent-browser` 的 `allow` 加 `read_image`、给 `agent-reviewer` 的 `allow` 加 `web_search` / `web_fetch`（并同步 persona 与顶注）—— `96120` / `98129` / `97601` / `99610` → `97787` / `99654` / `99226` / `101093` B。前两次复测里 `allow` 计数、报告行与断言**都不受影响**；**第三次不是** —— 专家列由 9 位变 8 位（`agent_app` 位消失）、`agent-browser` 计数 +1，报告行由 10 行变 9 行。
+- 生成器 stdout 逐字：`  cordis.patch.yml  <字节数> 字节 / 18 个顶层子插件条目（preset id=adg, order=20）`；激活的组打 `  billion-context    已注入：8 个专家行 + 4 个工具名（compress / decompress / search_context / acp_status），并把 compaction-basic 的 auto 设为 false` / `  save-token         已注入：8 个专家行 + 1 个工具名（save_token_expand）`；未激活的组打 `  <组名>  未注入（缺省）。…`（并给出后果提示语）。四份都 exit 0。
+- 断言通过行逐字（`node tools/check-bundle-flavor.mjs <那份文件> <味道键>`）：`通过：9 行报告，plain 味道断言成立（注入组：无）` / `…，bili 味道断言成立（注入组：billion-context）` / `…，save-token 味道断言成立（注入组：save-token）` / `…，bili+save-token 味道断言成立（注入组：billion-context + save-token）`；报告里 `plain` / `save-token` 打 `compaction-basic[auto=未写]`，另两个打 `compaction-basic[auto=false]`。
 
 **检验（负例，脚本不会假绿）**：
-- 拿 **bili 产物按 `plain` 断** → **exit 1、10 个错误**：9 条逐字 `ERROR agent-file（agent_file）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status`（其余 8 条同形，只换 id），外加 `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK`，末行 `不通过：10 个错误（plain 味道 / 10 行报告）`。
-- 拿 **plain 产物按 `save-token` 断** → **exit 1、9 个错误**：逐字 `ERROR agent-file（agent_file）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`（其余 8 条同形）；报告行全 `save-token:NONE`，末行 `不通过：9 个错误（save-token 味道 / 10 行报告）`。
+- 拿 **bili 产物按 `plain` 断** → **exit 1、9 个错误**：8 条逐字 `ERROR agent-file（agent_file）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status`（其余 7 条同形，只换 id），外加 `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK`，末行 `不通过：9 个错误（plain 味道 / 9 行报告）`。
+- 拿 **plain 产物按 `save-token` 断** → **exit 1、8 个错误**：逐字 `ERROR agent-file（agent_file）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`（其余 7 条同形）；报告行全 `save-token:NONE`，末行 `不通过：8 个错误（save-token 味道 / 9 行报告）`。
 - **未知味道键** → **exit 2**，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）`。
 - **踩过的坑（登记，防重踩）**：`resolve-flavor.mjs` 的旗标与 `gen-preset-bundle.mjs` 的旗标**不是一套** —— 前者收 `--billion-context` / `--save-token`（含义是"这个 profile **装着**该组"，由探测得来），传 gen 的 `--with-save-token` → **exit 2**、stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）`。
 
-**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 2 警告**，exit 0；两条警告是条件性注册的 `read_image`（`第 528 行 agent-file`、`第 742 行 agent-general`）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，2 个警告`**：
-- 插 `- save_token_expand` → `ERROR 第 528 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`
-- 插 `- acp_cache` → `ERROR 第 528 行 agent-file：allow 里的 "acp_cache" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools））——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
-- 插 `- compress` → `ERROR 第 528 行 agent-file：allow 里的 "compress" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
+**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 3 警告**，exit 0；三条警告是条件性注册的 `read_image`（`第 526 行 agent-file`、`第 575 行 agent-browser`、`第 715 行 agent-general`）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，3 个警告`**：
+- 插 `- save_token_expand` → `ERROR 第 526 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`
+- 插 `- acp_cache` → `ERROR 第 526 行 agent-file：allow 里的 "acp_cache" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools））——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
+- 插 `- compress` → `ERROR 第 526 行 agent-file：allow 里的 "compress" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
   名字清单由 `check-preset.mjs` 从 `tools/flavors.mjs` **推导**、不另抄一份 ⇒ 加一个注入组只需改组表。`acp_cache` 的 `notInjected` 那半也被注明成"gen 的注入清单里没有这个"。
 - **踩过的坑（登记，防重踩）**：`preset/agent.cordis.yml` 这类文件是 UTF-8 **无 BOM**，用 Windows PowerShell 的 `Get-Content` / `Set-Content` 读写会按 ANSI 误读成乱码、并**改变行数**（本轮 `check-preset` 一度报出 8 个专家行、`allow` 为空、11 个错误、0 个警告）；读写一律走 UTF-8 感知的工具（本仓库的 read 工具，或 node 的 `fs.readFileSync(p, 'utf8')`）。
 

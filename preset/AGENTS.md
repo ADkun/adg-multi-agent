@@ -1,13 +1,13 @@
 # AGENTS.md — preset（Adg preset 的定义）
 
-本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 9 个专家行（其中第 9 行 `agent-general` 是交接专用的**叶子**），外加三个交给 `tools/gen-preset-bundle.mjs` 生成 bundle 的源文件（`agent.cordis.yml` / `preset.yml` / `bundle.package.json`）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
+本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 8 个专家行（其中第 8 行 `agent-general` 是交接专用的**叶子**），外加三个交给 `tools/gen-preset-bundle.mjs` 生成 bundle 的源文件（`agent.cordis.yml` / `preset.yml` / `bundle.package.json`）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
 
 ## 独立命令
 
 ```sh
 node tools/check-preset.mjs      # 校验仓库里的 preset/（唯一真相源；exit 0 通过 / 1 有 ERROR / 2 读不到目标文件）
 node tools/gen-preset-bundle.mjs # 生成 bundle 产物（不传位置参数时落缺省 bundle/adg-preset/{cordis.patch.yml,package.json}；构建产物，在 .gitignore 里）
-node tools/gen-preset-bundle.mjs --with-billion-context # 目标 profile 装了 billion-context 才用：给 9 个专家行的 allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 10）
+node tools/gen-preset-bundle.mjs --with-billion-context # 目标 profile 装了 billion-context 才用：给 8 个专家行的 allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 10）
 node tools/gen-preset-bundle.mjs --with-save-token      # 目标 profile 装了 dsh-plugin-save-token 才用：追加 save_token_expand；两个旗标可叠加（＝味道 bili+save-token）
 ```
 
@@ -32,6 +32,7 @@ node tools/gen-preset-bundle.mjs --with-save-token      # 目标 profile 装了 
 - 禁止给人工介入设**次数上限**（I12）：默认不设上限，且这条口径对**所有专家、所有任务**适用（不只浏览器 —— 登录／验证码／二次验证／切会话权限／需要用户拍板都算）。唯一例外是**用户自己**要求「不要打扰」或「只介入一轮」，那就按用户口径停手、并如实报出因此拿不到的部分。原先的「同一条路径人工介入每任务至多一轮」已于 2026-09-27 按用户要求删除：它会把「还能请用户帮忙」误判成「已经没救了」，并诱导调度者**事前**就禁掉某条路径（上一版「要求不登录」的成因之一）。
 - 禁止把「请用户手动登录」写成失败路径、或让调度者在**派发前**就预先禁止专家登录（**I12 下半**）：需要登录态才能拿到目标时，人工介入就是正常入口，只有用户明确说过不想登录／不想验证时才预先禁止（也别把「不登录」写进委派 prompt 的「本次不做」）。来源：用户实测上一版调度者会给 `browser` 下「不登录」的要求 —— 把「代理不许代填密码 / 不许绕过登录墙」误读成了「不许请用户登录」。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`（`design.md` 红线 4）。
+- 禁止在除 `agent-general` 外的专家行 `allow` 里写 `skill`（**技能面口径**，`design.md` 非功能红线，2026-10-01 按用户要求）：`toolFilter` 只有 `allow` / `deny` 两种形态、preset 侧**没有**"给所有子代理默认加一个工具"的开关，而**不写 `allow`** 的专家会继承调度者整套目录（连名册行一起继承 ⇒ 违反一跳可达红线 1）；于是"让所有专家都能用技能"只能逐行写 `allow`，那正是"每加一个专家都要维护一遍仓库"。默认口径＝专家不用技能面：要用技能的工作留在调度者手上，或按 I16 派 `agent-general`。判据＝`tools/check-preset.mjs` 对该情形给 **WARN**。
 - **composition 里写的每个 `@deepseek-ai/*` 包名必须对着当前这台安装核对**（实例：引擎行的 `@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`，2026-09-28 实测）：沿用旧名**不会**让 preset 挂载失败，而是让 registry 判**整份 preset `broken`**（`workflow-worker-thread (@deepseek-ai/dsh-workflow-worker-thread): never started`），该模式在新会话里直接不可用。来源与后果见 `design.md`「非功能红线」最后一条与 `docs/evidence.md` §9。
 
 根 `AGENTS.md`「关键红线」里的其余各条同样适用于本模块，此处不重复。
@@ -41,7 +42,7 @@ node tools/gen-preset-bundle.mjs --with-save-token      # 目标 profile 装了 
 | 你要改什么 | 先读 |
 |---|---|
 | 专家名册 / 调度分派规则 | `design.md` → `skills/adg-add-agent/SKILL.md` → 改完 `node tools/check-preset.mjs` |
-| 交接专用叶子 `agent_general`（触发条件 / allow 名单 / 回报协议） | `design.md` I16 → 根 `README.md` 顶部「第 9 个专家」一段 → `@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance`（只在子代理看得见 `send_message` 时注入） |
+| 交接专用叶子 `agent_general`（触发条件 / allow 名单 / 回报协议） | `design.md` I16 → 根 `README.md` 顶部「第 8 个专家」一段 → `@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance`（只在子代理看得见 `send_message` 时注入） |
 | 调度 persona 的编排层规则（同实体合并 / 先定位再改 / 复用既有专家 / digest 中转 / 必要性闸门 + 挂号） | `design.md` I13 / I14 → 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I13 / I14 用例 |
 | 输出／交接纪律（分字段写 / 不回贴原文 / 不重复 / 未验证块必填） | `design.md` I15（边界：**不是**字数上限，I10 管预算）→ 根 `README.md`「多智能体的 token 消耗：已落地与可选手段」→ `testing-guide.md` 的 I15 用例（O1 / O2） |
 | 承载体积旋钮的那三行 | `docs/evidence.md` §1 / §2 / §4 / §5（重测口径照抄 §5） |

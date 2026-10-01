@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Adg 浏览器工具链：有头 Chrome 启动器 + 最小 CDP 驱动（零依赖）",
+  "description": "Adg 浏览器工具链：有头 Chromium 系浏览器启动器（Chrome / Brave / Edge 探测）+ 最小 CDP 驱动（零依赖）",
   "engines": {
     "node": ">=22"
   },
