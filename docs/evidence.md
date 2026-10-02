@@ -2,7 +2,7 @@
 title: 实测证据台账
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-03
 ---
 
 # 实测证据台账（docs/evidence.md）
@@ -66,6 +66,8 @@ last_reviewed: 2026-10-02
 
 ## 4. 未观测清单（引用本仓库任何结论前先看这里）
 
+（2026-10-02 在本表末追加**验收判据**一行：规则 19 / I18 属**提示级已落地、行为未观测**——别把"写进 persona"读成"调度者真的会执行"。2026-10-03 再在本表末追加**提问纪律**一行：规则 20 / I19 的**行为**同样未观测。2026-10-03 又在本表末追加**两行** —— **红→绿**（规则 5 的验收标准那半）与**环境前置检查**（规则 21 / I20）：它们同样是**提示级已落地、行为未观测**。）
+
 | 事项 | 状态 |
 |---|---|
 | **调度者的权限闸门是否真的每次都触发**（派发 `agent_browser` 前是否先问用户） | **未观测**：闸门于 2026-09-26 落地，还没有一次真实 Adg 会话走过它。量法：Adg 会话转写里查 `ask_user_question` 的调用是否出现在 `agent_browser` 之前，以及本会话文件策略那一行当时是不是 `danger-full-access` |
@@ -81,6 +83,10 @@ last_reviewed: 2026-10-02
 | **preset realm 里 `compaction-basic` 的 `auto` 到底取什么值** | **部分已处置，仍有一条未观测**。2026-09-28 晚按用户裁决**不再留在范围外**：生成物在 preset 自己的 `compaction` 组里构建期注入 `config: {auto: false}`（§10.1 第 9 条，与 bili 官方 patch 同键同值 ⇒ 幂等），所以"专家会不会被两套压缩同时折叠"在设计上已封住。**仍未观测**：(a) bili profile 层那份 `- id: compaction-basic` 到底能不能跨 lane 命中 realm 实例；(b) 注入的键在**真实 Adg 会话**里确实关掉了原生自动折叠（产物断言只证明键写对了）。量法：Adg 会话转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐；`/compact` 手动触发应当仍可用 |
 | **截断之后就"就地续跑同一个子代理"**（2026-09-29 追加的规则 7 接续半条） | **未观测（行为）**：机制与频次都已实测（§14：6 条 `max-tokens` 截断，全在 `adg` 子代理会话里），但这 6 个会话在截断后**记录数为 0** —— 没有一条续写过，所以"调度者会不会真的去接""接住之后产出是否完整"都没有先例。量法：转录里找 `max-tokens` 的 `turn/end` 之后**有没有**指向**同一个 child session** 的 `send_message`，并检查续写后该委派的交付块是否完整（`preset/testing-guide.md` 的 N12 / N13 是人工 review 那半） |
 | **异实体按实体拆 + 共同结论层工件的真实效果**（2026-09-29 追加的规则 6 两半） | **未观测**：同上，规则刚落、无真实 Adg 会话走过。量法：造一个"同一性质、N 个实体"的任务（用户例子 1：3 款手表），数①**子代理个数**是否等于实体数（而不是 1 个通读全部）②各条委派的产出里有没有跨实体内容（有 = 边界没写死）③调度者上下文增量（聚合 N 份结论会抬高它的上下文 —— 观测量要从"子代理个数"扩成"**子代理个数 + 调度者上下文增量**"）；再造一个"同一批材料、多个问题"的任务（用户例子 2），看有没有先产出**一份**共同结论层工件、后续委派是否只读工件与切片（而不是各自全量重读），以及源材料变更后有没有先刷新工件（`preset/testing-guide.md` 的 N1 / N2 / N3） |
+| **验收判据是否真的执行**（规则 19 / I18：交付前逐条对照验收标准、未达标返工或显式判"不达标"、不拿专家自报当达标） | **未观测**：2026-10-02 落地（检查 doc-engineer 符合度时由用户裁定补上，见 `docs-work/changelog.md` 当日条目），无真实 Adg 会话走过。量法：造一条验收标准含**多条**、其中一项**故意不成立**的委派（例如要求给出某处 `path:line`，而那个位置在材料里根本不存在），看①调度者是否 `send_message` 返工给**同一个**专家并点名**缺哪条、缺什么证据**（不是笼统"重做"）②最终交付里是否逐条判定、达标项是否指到证据落点③有没有拿专家"已完成"自报直接交付（= 违例）。注意**发出端**那半（"没有验收标准不许发出"）同样未单独观测，两者别混在一个量法里 |
+| **调度者是否真的"不确定就问用户"**（规则 20 / I19：任何时候都可以问、问得多不算打扰、相关几问一次问齐） | **未观测**：2026-10-03 按用户要求落地（目的：让调度者真正理解意图、与用户对齐目标、**一轮做对**，而不是靠多轮返工），无真实 Adg 会话走过。量法：造一个**刻意留歧义**的需求（目标 / 范围 / 口径 / 优先级 / 方案取舍里有一处说不清，或验收标准只能由用户拍板），看①调度者是否在**开工前**就用 `ask_user_question` 把意图与验收标准问清（而不是先派子代理、做完再回头问）②同一件事的相关几问是否**一次问齐**（挤牙膏式一条一条问 = 颗粒度不合规）③过程中出现分叉 / 要偏离原计划时是否**再问**④有没有"为少打扰"自行假设一个解释就往下做（= 违例）；反向检查：用户自己说过「别问我 / 不要打扰」时是否停手并如实报出未决项。注意**不要**把"问得多"当成违例（次数无上限，同 I12）—— 判据是**时机与颗粒度**，不是条数 |
+| **修 bug 类任务的"红→绿"验收是否真的执行**（规则 5 的**验收标准**那半 + I18：先有一个会失败的复现、改到它绿、再跑全量与一次真实入口） | **未观测**：2026-10-03 按用户要求落地（并入规则 5 的验收标准字段与 I18，**不新增规则编号**），无真实 Adg 会话走过。量法：造一个**真实的小 bug**（例如某条命令在特定参数下报错），看①交付前写下的验收标准里有没有**会失败的复现**（复现命令 + 红的那次退出码或输出）②最终交付里有没有同一命令**转绿**的那次退出码或输出③有没有再跑一次全量测试／回归、并**端到端走一次真实入口**的记录④有没有把"编译通过／单测绿"当成修好（= 违例）。**别与上面那条「验收判据是否真的执行」混在一个量法里**：那条量"验收标准有没有被逐条判定"，这条量"修 bug 的验收标准本身有没有可执行的红的凭据" |
+| **环境前置检查是否真的在动手前做**（规则 21 / I20：权限 / 依赖 / 网络 / 登录态 / 服务与端口五项先验，缺任一项立刻停手报回） | **未观测**：2026-10-03 按用户要求落地，无真实 Adg 会话走过。量法：造一个**环境前置不成立**的任务（要求写到工作区之外、或调用一个本机没装的命令），看①调度者是否**动手前**就停手报回（而不是先改一半再撞墙）②报回的未决项里有没有"缺什么 / 我试了什么 / 下一步要谁做什么"三件③有没有"反复换参数重试"的痕迹（= 违例）④反向检查：环境齐备时不多问一遍，也没把这条提示级约束说成机制强制。**机制依据只有两处**可复核（`@deepseek-ai/dsh-fs-sandbox` 的「围栏行为」、`@deepseek-ai/dsh-subagent` 包导出的 `captureDelegatedPolicyOverrides()`），网络 / 登录态 / 服务与端口三面**提示级、无源码依据** |
 
 ## 5. 怎么重新测量（可直接照抄）
 
@@ -133,8 +139,29 @@ A 列头两行就是它的复现。**本次新增的观测是第二层**：即�
 
 **只对本机成立的边界**：只测了 Chrome 与 Edge（本机只有这两个，Firefox 未安装），**其它浏览器未测试**；
 chromium 系之外的浏览器是否同样受限于有名管道，本台账不下结论。
+**（2026-10-03 补记，上面两句是 2026-09-26 的机器现状、读数不改）**：本机现在装的是 **Brave**（标准安装位置，
+见 `node cli.mjs profile` 的 `CHROME=` 行）与 Edge，**没有 Chrome**；Brave 的签名见下面一块。
 **驱动深度**：B 列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回页面文本」；
 Edge 在全访问下只做到 `--dump-dom` 退出码 0，**没有再往深做**。
+
+**Brave 的受限令牌签名（真机实测，2026-10-03，`workspace-write`）**：Brave **有头与无头同形失败** ——
+退出码 **4294930433**（`0xFFFF7001`），stderr 逐字是
+`ERROR:third_party\crashpad\crashpad\client\crashpad_client_win.cc:421] OpenProcess: 拒绝访问。 (0x5)`
+与 `crashpad_client_win.cc:142] crash server failed to launch, self-terminating`，
+**不含** `platform_channel.cc` 那行 ⇒ 与 Chrome 的退出码 **21**、Edge 的 Mojo 行**不是**同一签名
+（Brave 死在 crashpad 这条路上）。同一次运行的 Edge：退出码 **2147483651**（`0x80000003`）＋
+`FATAL:mojo\public\cpp\platform\platform_channel.cc(146)] Check failed: . : 拒绝访问。 (0x5)`
+—— 本机这一版二进制的行号是 **146**，2026-09-26 记的 **183** 是当时那版二进制的读数（**认文本不认行号**）。
+**⇒ 无头不是绕开沙箱权限的路径**：有头、无头死在受限令牌的同一条内部 IPC 上，换模式／去掉窗口改变不了它，
+`--no-sandbox` 这类降权旗标在本模块更是禁止项（`browser/design.md` 的 I2）。
+三条签名的完整口径（含"命中即停手如实报、不许当重试题"）见 `browser/design.md` 的「非功能红线」与 `browser/AGENTS.md` 的「模块特有红线」。
+量法：在 `workspace-write` 会话里 `ADG_CHROME="$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe" node cli.mjs launch`
+（默认无头）与再加 `--headed`，各记退出码与 stderr 首行，再与本节 Chrome / Edge 两行对照。
+
+**全访问下无头可用（真机实测，2026-10-03）**：`danger-full-access` 下有头、无头都起得来；`--headless=new`
+**不加** `--no-sandbox` 就能起 CDP ⇒ 「默认无头」不是靠降权旗标换来的。反过来，换模式也**救不了**受限令牌
+—— 换模式的适用前提是全访问。换模式这套行为本身量到了什么、还差什么，见 §8 末的
+「默认无头与显式换有头：CLI 换模式真机闭环」。
 
 **与本节相关的源码级事实**（不是实测，逐条都能读代码确认；`README.md` 那节把它们列成四问四答）：
 父智能体不能给子智能体指定权限（`dsh-tool-subagent` 的 `lib/index.js` 里 `sandbox` 零命中）；
@@ -336,9 +363,15 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 
 → 状态分层：**真机实测（2026-10-01，本机 `danger-full-access`）**。Brave 的启动参数集、复用与标签页清理行为与 Chrome 观测一致；
 `BROWSER=Chrome/…` 只是 CDP 的版本串，**不代表**选中的是 Chrome —— 选中哪个可执行文件只看 `CHROME=` 那一行。
-Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单。
+Brave 在受限令牌下如何失败**未观测**（2026-10-01 读数，见下面的未观测清单）。
 
-**单元测试**：`cd browser && node --test --test-isolation=none test` → **37/37 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
+**（2026-10-03 补记：这一条已观测，上面的读数不改）**：`workspace-write` 下 Brave **有头与无头同形失败**，签名既不是退出码 21、
+也不是 Mojo 那条，而是 crashpad 的 `OpenProcess: 拒绝访问。 (0x5)` 与 `crash server failed to launch, self-terminating`，
+退出码 `4294930433`（`0xFFFF7001`）—— 逐字读数与量法见 §6「Brave 的受限令牌签名」。⇒ 本机实际装着的那个浏览器在受限令牌下
+同样起不来，且**换无头也救不了**（详见下面「默认无头与显式换有头」一节）。
+
+**单元测试**：`cd browser && node --test --test-isolation=none test` → **37/37 通过**（2026-09-27 读数；不需要浏览器；
+CDP 通道用可注入的假 socket 测）。2026-10-03 加入换模式（I11）的回归用例后是 **45/45 通过**，同轮再加「**换模式必须显式**」那道闸门的 3 条用例后是 **48/48 通过**，下面的「怎么重测」据此改成须 48/48。
 
 **部署实测**：`install.ps1` 把 `browser/` 拷到 `$env:USERPROFILE\.dsh\browser\`；用**部署后的副本**重跑了一遍
 `profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
@@ -352,7 +385,7 @@ Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单�
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 调用；
   出现「现场手写 CDP 脚本」即 persona 未被遵守。
 - **macOS / Linux**：Chromium 系候选路径（Chrome / Brave / Edge）与有头启动**没有**在那两个平台上跑过（单元测试只钉了 win32 的候选形状）。
-- **Brave 在受限令牌下的失败签名**：2026-10-01 加 Brave 支持那次**只在 `danger-full-access` 下跑过**（闭环见上）；它在 `workspace-write` / `read-only` 下是否同样起不来、以退出码 21 还是 Mojo `拒绝访问 (0x5)` 失败，**都没有量过**。量法：在 `workspace-write` 会话里 `ADG_CHROME="<Brave 标准安装位置>\Application\brave.exe" node cli.mjs launch`，记下退出码与 stderr 首行，再与本节的 Chrome / Edge 两行对照。
+- **Brave 在受限令牌下的失败签名**（**2026-10-03 已观测**，逐字读数见 §6「Brave 的受限令牌签名」）：2026-10-01 加 Brave 支持那次**只在 `danger-full-access` 下跑过**（闭环见上）；它在 `workspace-write` 下的失败既不是退出码 21、也不是 Mojo `拒绝访问 (0x5)` 那条，而是 crashpad 的 `OpenProcess: 拒绝访问。 (0x5)` 与 `crash server failed to launch, self-terminating`（退出码 `4294930433`，即 `0xFFFF7001`），**有头与无头同形**；`read-only` 下没有量过。量法：在 `workspace-write` 会话里 `ADG_CHROME="$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe" node cli.mjs launch`、再加 `--headed` 跑一次，记下退出码与 stderr 首行，再与本节的 Chrome / Edge 两行对照。
 - **多实例并发同一端口**：没有观测 —— `browser/testing-guide.md` 的迁移矩阵里按「第二次 `launch` 撞端口 → 超时分支报错」
   登记为**推断**，不是实测。
 - **`install.sh` 未在 Windows 上执行过**：本机没有 `sh` / `bash`，改动只做了人工核对（`install.ps1` 那一侧是真跑过的）。
@@ -367,7 +400,7 @@ Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单�
 **怎么重测**（逐条照抄）：
 
 ```sh
-cd browser && node --test --test-isolation=none test          # 须 37/37
+cd browser && node --test --test-isolation=none test          # 须 48/48（2026-10-03 起；此前是 45/45 与 37/37）
 node cli.mjs profile                                          # 须报出 CHROME=<本机实际装着的那个浏览器路径>（Chrome / Brave / Edge）
 node cli.mjs launch                                           # 须 STATE=STARTED
 node cli.mjs launch                                           # 须 STATE=REUSED
@@ -382,6 +415,88 @@ node cli.mjs close
 ```
 
 （I9 的「会剩 0 个页面」分支要在**一次性实例**上验：`--port 9444 --profile <临时目录>`，别在用户正在用的窗口里试。）
+
+### 默认无头与显式换有头：CLI 换模式真机闭环（真机实测，2026-10-03）
+
+**结论先行**：本节量的是 2026-10-03 落地的这套模式（规范文本在 `browser/design.md` I11「默认无头；换模式必须显式、且先优雅关后开」）。
+四条判据都在本机（Windows、`danger-full-access`、Brave 与 Edge）观测到：**①不给旗标一律无头**，`--headless=new` **不需要** `--no-sandbox`
+就能起 CDP（I2 的红线是「不许加」，这里是「不需要加」）；**②模式可从 CDP 读出**，不需要额外的状态文件；**③同 profile 换模式只有一种换法**
+（`Browser.close` → 等端口落下 → 同 profile 同端口按目标模式重开），复用与换模式在 CLI 输出里分得开；**④受限令牌下换模式救不了**
+（有头无头同形死在 crashpad 那条，签名见 §6「Brave 的受限令牌签名」）。
+
+**模式怎么读出来（真机实测，2026-10-03）**：判据是 UA（契约名 `Browser.getVersion` 返回的 `userAgent`），一条 `/Headless/i` 同时认 Chrome / Brave / Edge。
+
+| 目标 | UA 里可判读的片段 | 结论 |
+|---|---|---|
+| Brave 有头 | `… Chrome/154.0.0.0 Safari/537.36` | 无 `Headless` ⇒ headed |
+| Brave 无头 | `… HeadlessChrome/154.0.0.0 Safari/537.36` | 有 `Headless` ⇒ headless |
+| Edge 有头 / 无头 | `… Chrome/127.0.0.0 Safari/537.36` / `… HeadlessChrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0` | 同一判据对 Edge 也成立 |
+
+⇒ 模式是**运行时可判读的事实**，不是启动时写下的状态；§8 上面的「有头闭环」与本节的无头读数来自同一套 `launch` 参数构造。
+
+**一个 profile 同时只能有一个实例（真机实测，2026-10-03）**：
+
+| 第二个实例 | 退出码 | stderr / 副作用 | 结论 |
+|---|---|---|---|
+| **有头**（同 profile 再跑一次有头 `launch`） | `0` | `已在运行的浏览器会话中打开。`；请求被**转交**给活着的实例，**即使不带 `--new-window` 也多开一个页**（页面 1 → 2），带 `--new-window` 再多开一个窗 | 有头实例的「第二份」是**转交**，且**每次都多开页** —— 这正是下面那起事故之所以安静的原因 |
+| **无头**（同 profile 再跑一次无头 `launch`） | `21` | 不转交 | 无头那份**直接失败**，不会静默多开页 |
+
+**优雅关闭的时序（真机实测，2026-10-03）**：CDP `Browser.close` 之后，**端口约 1–2 ms 内就不可达，而进程约 215–217 ms 后才退出**（退出码 0）——
+两个模式同形。⇒ 「端口落下」比「进程走掉」早两个数量级，所以**等端口**是可靠的就绪判据（`browser/design.md` I11 的换模式步骤据此定义）；
+端口落下后立刻起新实例（同 profile 同端口）**两个方向都成功**。
+
+**CLI 换模式闭环（真机实测，2026-10-03；含同轮加的「换模式必须显式」闸门，父代理在 `--port 9610` + 临时 profile 上把整条序列重跑了一遍）**：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 默认启动 | `launch` | `STATE=STARTED`、`MODE=headless` |
+| 无头 → 有头 | `launch --headed` | `SWITCHED_FROM=headless`、`CLOSED=true`、`STATE=SWITCHED`、`MODE=headed` |
+| 有头 → 无头（**显式**要求才换） | `launch --headless` | `SWITCHED_FROM=headed`、`CLOSED=true`、`STATE=SWITCHED`、`MODE=headless` |
+| 活实例是另一种模式、但**不带旗标** | `launch` | `STATE=REUSED`、`MODE=headed`、**无** `SWITCHED_FROM=`（默认模式只决定新起的实例，不动它；A52） |
+| 同一 profile / 端口的复用 | 同模式再跑一次 `launch` | **无** `RETRY=`（即没有走"端口占用 → 重试"那条路，是复用/换模式，不是撞端口） |
+| 关闭 | `close` → `status` | `ALIVE=false`、`CLOSED=true`；随后 `status` 报 `MODE=none` |
+
+⇒ 「换了模式」与「复用了同一实例」与「撞端口重试」三件事在 CLI 输出里**互不混淆**（`SWITCHED_FROM=` / `MODE=` / `RETRY=`）。
+
+**换模式之后的 cookie（真机实测，2026-10-03）**：换模式 = 任意一次优雅关 + 重开，所以它只继承「关一次再开」本来就保住的东西 ——
+**带 `expires` 的持久 cookie 留住**（写 `document.cookie='…; max-age=3600'` 后换模式，仍读得到），**会话 cookie 丢**。
+⇒ 换模式不会额外销毁登录态，但也**不能**用来保住会话级登录。
+
+**2026-10-03 事故与根因（值得进台账）**：换模式实现曾犯一个**空 argv** 的错 —— `planLaunch` 的 `switch` 分支一度只回退出码式的
+「模式」而**不带启动参数**，调用方随即 `spawn(chrome, undefined)`；浏览器以**空命令行**启动，等价于启动**用户自己的默认 profile**，
+于是请求被转交给用户日常那个实例：**端口永远不起来、每次 `exit=0`、用户侧多出一堆窗口**（正是上面「有头转交」那格的副作用放大了）。
+修法两条：`switch` 必须返回**目标模式的启动参数**、调用方在 `spawn` 前**拒绝空参数**；回归由单元用例钉住（`37 → 45 → 48`：A41 钉前者，A54 的源码级断言钉后者）。
+
+**（2026-10-03 同轮补记：换模式必须显式 —— 代码级事实）** 上面那张闭环表落在「显式闸门」之前。同轮收紧了决策层：`browser/lib/target.mjs` 新增导出 `modeIsExplicit({ mode, env })`（单次模式值非空，或 `ADG_BROWSER_MODE` 非空 ⇒ `true`），`planLaunch` 在「实例活着、模式不同」时先算 `opts.modeExplicit ?? modeIsExplicit({ mode: opts.mode, env: opts.env })`，为假就返回 `{ action: 'reuse', modeNotRequested: true }`（**不动它**、不带启动参数），只有显式为真才走 `switch`；同模式仍是 `reuse`，模式读不出来（`unknown`）仍是 `reuse` + `modeUnverified`。`browser/cli.mjs` 的 `launch` 算出 `modeExplicit` 并传给 `planLaunch`，那条复用分支多打一行 `HINT=活着的是 … 实例；你没有显式要求模式，所以**没有**动它（默认模式只决定新起的实例长什么样）…`。回归新增 3 条单元用例：`I11 没显式要求模式 → 活着的有头实例**不动它**（modeNotRequested）`、`I11 只有显式要求（旗标 / ADG_BROWSER_MODE）才允许换掉活着的实例`、`I11 launch 在 spawn 前拒绝空 / 非数组启动参数（源码级断言）`（最后一条关掉了上面事故段里「`spawn` 前拒绝空参数只有源码级事实、没有断言」那条缺口）。`cd browser && node --test --test-isolation=none test` → **48/48 通过**（本机实跑，不带浏览器）。
+⇒ 上面那张闭环表与「怎么重测」已经按这道闸门**重跑过**（父代理同轮，`--port 9610`）：**不带旗标**的 `launch` 在活着的另一种模式实例上一律 `STATE=REUSED` + `MODE=` 为活实例的实际模式，且**没有** `SWITCHED_FROM=`；换模式一律要先**显式**要求（旗标或 `ADG_BROWSER_MODE`）。本段登记代码级事实，真机读数见上面的闭环表。
+
+**交付前最小闭环（真机实测，2026-10-03，默认无头路径）**：`text --url <新地址>` 一次性读页打出 `BYTES=36` 且 `TAB_CLOSED=`、
+`tabs` 前后都是 `1`（零残留，I10 成立）；`open` / `eval` / `shot` / `close-tab --match` / `close` 的输出各自符合 §8 上表已登记的契约。
+⇒ 上面的有头读数（复用、零残留、护栏）在**无头默认**下同形成立。
+
+**未观测（不许把上面读成「无头模式已经跑通真实任务」）**：
+
+- **真实站点的登录 / 验证码端到端**：只量了模式、复用、关闭时序与 cookie 存活，**没有**真实站点登录墙的端到端（与 §8 上面那条同口径）。
+- **macOS / Linux**：无头默认与换模式**没有**在那两个平台上跑过。
+- **多实例并发**：没量过（§8 上面已按「推断」登记，此处不升级为实测）。
+- **人为时序**：用户正在有头窗口里操作时、代理**显式**换模式（带旗标或 `ADG_BROWSER_MODE`）把它优雅关掉**没有量过**（这是 I11 的已知代价，不是已观测行为）；**不带旗标**的 `launch` 已由上面那道闸门挡住（只 `reuse`、不动活着的实例）。
+- **本机没有 Chrome**：候选次序 Chrome → Brave → Edge 在本机实际选中 Brave，这条已在 §8「Brave 支持与真机闭环」登记。
+
+**怎么重测**（逐条照抄；需要能在该会话里起浏览器的权限，`workspace-write` / `read-only` 下会死在受限令牌上，见 §6）：
+
+```sh
+node cli.mjs launch                       # 须 STATE=STARTED、MODE=headless（不给旗标一律无头）
+node cli.mjs launch                       # 须 STATE=REUSED、MODE=headless（同模式复用，且无 RETRY=）
+node cli.mjs launch --headed              # 须 SWITCHED_FROM=headless、CLOSED=true、MODE=headed
+node cli.mjs launch                       # 须 STATE=REUSED、MODE=headed，且**不得**出现 SWITCHED_FROM=（A52：不带旗标不动它）
+node cli.mjs launch --headless            # 须 SWITCHED_FROM=headed、MODE=headless（同一 profile / 端口，且无 RETRY=）
+node cli.mjs eval --js "navigator.userAgent"   # 须含 Headless ⇒ 模式是运行时可判读的
+node cli.mjs close && node cli.mjs status # 须 ALIVE=false，随后 MODE=none
+```
+
+**本轮一并改动的其他文件**（规范文本不在本节）：`browser/design.md`（新增 `BrowserMode` 值对象与 I11，`BrowserInstance` 的关闭时序注，
+「已知签名三条」，I2 里写明无头**不需要** `--no-sandbox`）、`browser/AGENTS.md`（用例数 48 与相应红线，含「不带旗标不许换掉活着的实例」）、`browser/testing-guide.md`、
+`preset/agent.cordis.yml`、根 `README.md`、`docs/registry.md`。
 
 ## 9. `preset/` 的挂载形状在 dsh 0.1.7-rc.2 变了：旧目录机制被移除 + 引擎行包名改动（真机实测，2026-09-28）
 
@@ -639,12 +754,12 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 
 | 味道 | 生成命令 | `cordis.patch.yml` | 专家 `allow` 计数（file / computer / browser / search / researcher / coder / reviewer / general） | `compaction-basic` | 断言 |
 |---|---|---|---|---|---|
-| `plain` | `node tools/gen-preset-bundle.mjs bundle/adg-plain` | **97787 B** | `10/7/11/2/5/9/9/16` | `auto=未写` | exit 0 |
-| `bili` | `… --with-billion-context bundle/adg-bili` | **99654 B** | `14/11/15/6/9/13/13/20`（每行 +4） | `auto=false` | exit 0 |
-| `save-token` | `… --with-save-token bundle/adg-save-token` | **99226 B** | `11/8/12/3/6/10/10/17`（每行 +1） | `auto=未写` | exit 0 |
-| `bili+save-token` | `… --with-billion-context --with-save-token bundle/adg-bili-save-token` | **101093 B** | `15/12/16/7/10/14/14/21`（每行 +5） | `auto=false` | exit 0 |
+| `plain` | `node tools/gen-preset-bundle.mjs bundle/adg-plain` | **117292 B** | `10/7/11/2/5/9/9/16` | `auto=未写` | exit 0 |
+| `bili` | `… --with-billion-context bundle/adg-bili` | **119159 B** | `14/11/15/6/9/13/13/20`（每行 +4） | `auto=false` | exit 0 |
+| `save-token` | `… --with-save-token bundle/adg-save-token` | **118731 B** | `11/8/12/3/6/10/10/17`（每行 +1） | `auto=未写` | exit 0 |
+| `bili+save-token` | `… --with-billion-context --with-save-token bundle/adg-bili-save-token` | **120598 B** | `15/12/16/7/10/14/14/21`（每行 +5） | `auto=false` | exit 0 |
 
-- 上表四份字节数**是读数、不是判据**，已三次复测刷新：① 2026-09-30 移除 persona 末行 —— `99623` / `101632` / `101104` / `103113` → `95631` / `97640` / `97112` / `99121` B；② 2026-10-01 给 `agent-browser` persona 加 Brave 段落 —— `95631` / `97640` / `97112` / `99121` → `96120` / `98129` / `97601` / `99610` B（每份 +489）；③ 2026-10-01 本轮把 `agent_app` 并入 `agent_computer`、给 `agent-browser` 的 `allow` 加 `read_image`、给 `agent-reviewer` 的 `allow` 加 `web_search` / `web_fetch`（并同步 persona 与顶注）—— `96120` / `98129` / `97601` / `99610` → `97787` / `99654` / `99226` / `101093` B。前两次复测里 `allow` 计数、报告行与断言**都不受影响**；**第三次不是** —— 专家列由 9 位变 8 位（`agent_app` 位消失）、`agent-browser` 计数 +1，报告行由 10 行变 9 行。
+- 上表四份字节数**是读数、不是判据**，已七次复测刷新：① 2026-09-30 移除 persona 末行 —— `99623` / `101632` / `101104` / `103113` → `95631` / `97640` / `97112` / `99121` B；② 2026-10-01 给 `agent-browser` persona 加 Brave 段落 —— `95631` / `97640` / `97112` / `99121` → `96120` / `98129` / `97601` / `99610` B（每份 +489）；③ 2026-10-01 本轮把 `agent_app` 并入 `agent_computer`、给 `agent-browser` 的 `allow` 加 `read_image`、给 `agent-reviewer` 的 `allow` 加 `web_search` / `web_fetch`（并同步 persona 与顶注）—— `96120` / `98129` / `97601` / `99610` → `97787` / `99654` / `99226` / `101093` B；④ 2026-10-02 调度 persona 正文加**规则 19 验收判据**与**位置锚泛化**（`prefix` 正文 8126 → 8574 字符，顶注新增第 16 条、修死引用规则 11）—— `97787` / `99654` / `99226` / `101093` → `103151` / `105018` / `104590` / `106457` B（每份恰好 +5364；只动 persona 正文，`allow` 计数、报告行与断言**不受影响**）；⑤ 2026-10-03 调度 persona 正文加**规则 20 提问纪律**（`prefix` 正文 8574 → 8879 字符，顶注新增第 17 条）—— `103151` / `105018` / `104590` / `106457` → `105659` / `107526` / `107098` / `108965` B（每份恰好 **+2508**：其中 305 是 persona 正文，其余是顶注第 17 条那段注释 —— 生成物把源文件的注释行**原样带上**，见本节末那条"产物体积不是稳定判据"的检验）。⑥ 2026-10-03 **浏览器默认无头（I11）**落进 `agent-browser` 的 persona（四处：权限前提换成三条已知失败签名 / 工具行加 `--headed` / 登录态资产补换模式口径 / 人工介入协议改 `launch --headed --url`）并新增顶注第 19 条 —— `105659` / `107526` / `107098` / `108965` → `117017` / `118884` / `118456` / `120323` B（每份恰好 **+6370**：其中 `agent-browser` 的 persona 正文 +1634、顶注第 19 条那段注释 +4736；**调度 persona `prefix` 正文不变 9784 字符** —— 这一轮动的是专家行，不进调度 prefix 那本账；`allow` 计数、报告行与断言都不受影响）。⑦ 2026-10-03 同轮把「**换模式必须显式**」那道闸门与用例数订正（37 → 45 → 48）写进顶注第 19 条 —— `117017` / `118884` / `118456` / `120323` → `117292` / `119159` / `118731` / `120598` B（每份恰好 **+275**，只动注释行；`allow` 计数、报告行与断言都不受影响）。前两次复测里 `allow` 计数、报告行与断言**都不受影响**；**第三次不是** —— 专家列由 9 位变 8 位（`agent_app` 位消失）、`agent-browser` 计数 +1，报告行由 10 行变 9 行。刷新口径：**删掉味道产物目录、逐条显式命令重生成、以脚本自报字节数复核** —— 2026-10-02 踩过旧目录残留：不删目录时复用出一份**不含规则 19 的 stale plain**，味道断言照样 exit 0，只有逐条重测字节才发现。
 - 生成器 stdout 逐字：`  cordis.patch.yml  <字节数> 字节 / 18 个顶层子插件条目（preset id=adg, order=20）`；激活的组打 `  billion-context    已注入：8 个专家行 + 4 个工具名（compress / decompress / search_context / acp_status），并把 compaction-basic 的 auto 设为 false` / `  save-token         已注入：8 个专家行 + 1 个工具名（save_token_expand）`；未激活的组打 `  <组名>  未注入（缺省）。…`（并给出后果提示语）。四份都 exit 0。
 - 断言通过行逐字（`node tools/check-bundle-flavor.mjs <那份文件> <味道键>`）：`通过：9 行报告，plain 味道断言成立（注入组：无）` / `…，bili 味道断言成立（注入组：billion-context）` / `…，save-token 味道断言成立（注入组：save-token）` / `…，bili+save-token 味道断言成立（注入组：billion-context + save-token）`；报告里 `plain` / `save-token` 打 `compaction-basic[auto=未写]`，另两个打 `compaction-basic[auto=false]`。
 

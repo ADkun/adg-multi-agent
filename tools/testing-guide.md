@@ -172,9 +172,9 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle/adg-bili-save-token && node tools/check-bundle-flavor.mjs bundle/adg-bili-save-token/cordis.patch.yml bili+save-token
 ```
 
-| 用例 | 类型 | 判据（2026-10-01 本机实测值） |
+| 用例 | 类型 | 判据（2026-10-03 本机实测值） |
 |---|---|---|
-| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `97787` / `99654` / `99226` / `101093`（各 18 个顶层子插件条目、8 个专家行；字节数随 persona 正文改动而变，别当判据）；断言末行逐字 `通过：9 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
+| 上面那四条生成 + 四条断言 | CLI 冒烟 | 八条命令全 exit `0`；生成物字节数 `117292` / `119159` / `118731` / `120598`（各 18 个顶层子插件条目、8 个专家行；字节数随 persona 正文改动而变，别当判据，历次刷新链见 `docs/evidence.md`）；断言末行逐字 `通过：9 行报告，plain 味道断言成立（注入组：无）` / `…bili 味道断言成立（注入组：billion-context）` / `…save-token 味道断言成立（注入组：save-token）` / `…bili+save-token 味道断言成立（注入组：billion-context + save-token）` |
 | 专家行报告行（`<toolName>[<项数>]=<组>:<ALL\|NONE\|PARTIAL\|LEAK>`） | CLI 冒烟 | `allow` 计数 plain `10/7/11/2/5/9/9/16`；bili `14/11/15/6/9/13/13/20`（每行 +4）；save-token `11/8/12/3/6/10/10/17`（每行 +1）；两旗标 `15/12/16/7/10/14/14/21`（每行 +5） |
 | `compaction-basic` 那一行 | CLI 冒烟 | plain / save-token 报 `compaction-basic[auto=未写]`；bili / bili+save-token 报 `auto=false`（这个键只在 bili 组激活时注入） |
 | **负例 1：错味道**（拿 bili 产物按 `plain` 判） | CLI 冒烟 | exit `1`、末行 `不通过：9 个错误（plain 味道 / 9 行报告）`；8 条 `ERROR agent-<id>（agent_<id>）：味道 plain 不含 billion-context 组，不该出现 compress / decompress / search_context / acp_status` + `ERROR compaction-basic：味道 plain 不该有 config.auto（没挂 bili 时它是唯一的压缩手段），实际 auto: false`；报告行全 `billion-context:LEAK` |

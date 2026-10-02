@@ -1,4 +1,4 @@
-// `browser/` 的不变量用例（编号与 design.md 的 I1..I10 一一对应）。
+// `browser/` 的不变量用例（编号与 design.md 的 I1..I11 一一对应）。
 //
 // 全部零依赖、零副作用：不 spawn 浏览器、不联网、不读写 profile。
 // CDP 客户端用「可注入的假 socket」测，所以协议行为（id 关联 / 错误映射 / 事件丢弃 / 关闭后拒绝）
@@ -15,12 +15,15 @@ import { fileURLToPath } from 'node:url';
 
 import {
   chromeCandidates,
+  detectMode,
   dshHome,
   findChrome,
   launchArgs,
   planLaunch,
+  resolveMode,
   resolvePort,
   resolveProfile,
+  MODE_DEFAULT,
   PROFILE_DIRNAME,
 } from '../lib/target.mjs';
 import { assertRuntime, connect, pickPage, pickTabsToClose } from '../lib/cdp.mjs';
@@ -124,12 +127,84 @@ test('I2 启动参数禁止出现伪装 / 降权旗标', () => {
   }
 });
 
-// ---------- I3：复用优先，绝不重启活着的实例 ----------
+// ---------- I3：同模式复用；换模式是显式的，且必须先关后开 ----------
 
-test('I3 实例活着 → reuse，且不产生启动参数', () => {
-  const plan = planLaunch({ alive: true, chrome: 'D:\\chrome.exe', profile: 'D:\\p', port: 9333 });
+test('I3 实例活着且模式相同 → reuse，且不产生启动参数', () => {
+  const plan = planLaunch({ alive: true, aliveMode: 'headless', chrome: 'D:\\chrome.exe', profile: 'D:\\p', port: 9333 });
   assert.equal(plan.action, 'reuse');
   assert.equal(plan.args, undefined);
+  assert.equal(plan.aliveMode, 'headless');
+});
+
+test('I3 活着的实例模式未知 → 也 reuse（不认识的活实例不许被静默换掉）', () => {
+  const plan = planLaunch({ alive: true, aliveMode: 'unknown', chrome: 'D:\\chrome.exe', profile: 'D:\\p', port: 9333 });
+  assert.equal(plan.action, 'reuse');
+  assert.equal(plan.modeUnverified, true);
+  assert.equal(plan.args, undefined);
+});
+
+test('I3 活着的实例是另一种模式 → switch，且必须带上**目标模式**的启动参数', () => {
+  const plan = planLaunch({
+    alive: true,
+    aliveMode: 'headless',
+    chrome: 'D:\\chrome.exe',
+    profile: 'D:\\p',
+    port: 9333,
+    mode: 'headed',
+  });
+  assert.equal(plan.action, 'switch');
+  assert.equal(plan.aliveMode, 'headless');
+  // 2026-10-03 事故的回归锁：switch 曾经不带 args，于是调用方 spawn(chrome, undefined)
+  // 用**空参数**启动了浏览器 —— 那是用户自己的默认 profile，请求被转交给用户日常那个实例。
+  assert.ok(Array.isArray(plan.args), 'switch 必须给 args');
+  assert.ok(!plan.args.includes('--headless=new'), '目标是 headed，不该再带无头旗标');
+  assert.ok(plan.args.includes('--user-data-dir=D:\\p'));
+  assert.ok(plan.args.includes('--remote-debugging-port=9333'));
+});
+
+test('I3 活着的是另一种模式但没有可用浏览器 → error（不退化成空参数启动）', () => {
+  const plan = planLaunch({
+    alive: true,
+    aliveMode: 'headless',
+    chrome: null,
+    profile: 'D:\\p',
+    port: 9333,
+    mode: 'headed',
+  });
+  assert.equal(plan.action, 'error');
+  assert.equal(plan.reason, 'CHROME_NOT_FOUND');
+});
+
+test('I11 没显式要求模式 → 活着的有头实例**不动它**（modeNotRequested）', () => {
+  const plan = planLaunch({
+    alive: true,
+    aliveMode: 'headed',
+    chrome: 'D:\\chrome.exe',
+    profile: 'D:\\p',
+    port: 9333,
+    env: {},
+  });
+  assert.equal(plan.action, 'reuse');
+  assert.equal(plan.modeNotRequested, true);
+  assert.equal(plan.args, undefined, '复用路径不许产生启动参数');
+});
+
+test('I11 只有显式要求（旗标 / ADG_BROWSER_MODE）才允许换掉活着的实例', () => {
+  const aliveBase = { alive: true, aliveMode: 'headed', chrome: 'D:\\chrome.exe', profile: 'D:\\p', port: 9333 };
+  assert.equal(planLaunch({ ...aliveBase, mode: 'headless', modeExplicit: true }).action, 'switch');
+  assert.equal(planLaunch({ ...aliveBase, env: { ADG_BROWSER_MODE: 'headless' } }).action, 'switch');
+  assert.equal(planLaunch({ ...aliveBase, env: {} }).action, 'reuse');
+  assert.equal(planLaunch({ ...aliveBase, modeExplicit: false }).action, 'reuse');
+});
+
+test('I11 launch 在 spawn 前拒绝空 / 非数组启动参数（源码级断言）', () => {
+  const src = fs.readFileSync(path.join(HERE, '..', 'cli.mjs'), 'utf8');
+  const guard = src.indexOf('没有构造出启动参数');
+  const spawnAt = src.indexOf('spawn(plan.chrome, plan.args');
+  assert.ok(guard > 0, '找不到"拒绝空参数"的闸门');
+  assert.ok(spawnAt > 0, '找不到 launch 的 spawn 调用');
+  assert.ok(guard < spawnAt, '闸门必须排在 spawn 之前');
+  assert.match(src, /Array\.isArray\(plan\.args\)/, '闸门要检查 args 是数组');
 });
 
 test('I3 实例不在且找到 Chrome → start', () => {
@@ -143,6 +218,60 @@ test('I3 找不到浏览器 → error CHROME_NOT_FOUND（不静默换浏览器�
   const plan = planLaunch({ alive: false, chrome: null, profile: 'D:\\p', port: 9333 });
   assert.equal(plan.action, 'error');
   assert.equal(plan.reason, 'CHROME_NOT_FOUND');
+});
+
+// ---------- I11：默认无头；模式显式可选、也能从活实例读出 ----------
+
+test('I11 默认模式是无头：不给 mode 时 launchArgs 带 --headless=new', () => {
+  const args = launchArgs({ profile: 'D:\\p', port: 9333, urls: [] });
+  assert.ok(args.includes('--headless=new'), '默认必须是无头（2026-10-03 用户拍板）');
+  assert.equal(resolveMode({ env: {} }), 'headless');
+  assert.equal(MODE_DEFAULT, 'headless');
+});
+
+test('I11 --headed 只去掉无头旗标，其余参数逐字相同', () => {
+  const headless = launchArgs({ profile: 'D:\\p', port: 9333, urls: ['https://a'] });
+  const headed = launchArgs({ profile: 'D:\\p', port: 9333, urls: ['https://a'], mode: 'headed' });
+  assert.ok(headless.includes('--headless=new'));
+  assert.ok(!headed.includes('--headless=new'));
+  assert.deepEqual(
+    headless.filter((a) => a !== '--headless=new'),
+    headed,
+  );
+});
+
+test('I11 模式优先级：显式 > ADG_BROWSER_MODE > 默认；非法值抛错不回落', () => {
+  assert.equal(resolveMode({ mode: 'headed', env: { ADG_BROWSER_MODE: 'headless' } }), 'headed');
+  assert.equal(resolveMode({ env: { ADG_BROWSER_MODE: 'HEADED' } }), 'headed');
+  for (const bad of ['new', 'false', 'headless=false', '有头']) {
+    assert.throws(() => resolveMode({ mode: bad, env: {} }), /浏览器模式不合法/, `mode=${bad} 应当抛错`);
+  }
+  assert.throws(() => resolveMode({ env: { ADG_BROWSER_MODE: 'garbage' } }), /浏览器模式不合法/);
+});
+
+test('I11 detectMode 从 User-Agent 读出模式（2026-10-03 三条真实读数）', () => {
+  const braveHeadless = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36',
+  };
+  const edgeHeadless = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0',
+  };
+  const braveHeaded = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36',
+  };
+  assert.equal(detectMode(braveHeadless), 'headless');
+  assert.equal(detectMode(edgeHeadless), 'headless');
+  assert.equal(detectMode(braveHeaded), 'headed');
+});
+
+test('I11 detectMode 拿不到 User-Agent 时报 unknown，不猜', () => {
+  assert.equal(detectMode(null), 'unknown');
+  assert.equal(detectMode({}), 'unknown');
+  assert.equal(detectMode({ 'User-Agent': '' }), 'unknown');
+  assert.equal(detectMode({ 'User-Agent': 42 }), 'unknown');
 });
 
 // ---------- I4：非法端口不静默回落 ----------

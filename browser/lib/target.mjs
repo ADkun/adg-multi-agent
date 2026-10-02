@@ -14,6 +14,19 @@ export const DEFAULT_PORT = 9333;
 /** 规范 profile 的目录名（固定在 DSH 用户根下，与任何工作区无关）。 */
 export const PROFILE_DIRNAME = 'browser-profile';
 
+/**
+ * 两种模式。**默认无头**（2026-10-03 用户拍板）：日常抓取不弹窗、不抢焦点，
+ * 只有碰到登录墙 / 验证码 / 反爬挑战页时才升级到有头窗口（人要进去操作）。
+ */
+export const MODES = ['headless', 'headed'];
+export const MODE_DEFAULT = 'headless';
+
+/**
+ * 无头开关。实测 2026-10-03（本机 Brave 154 / Edge 127）：两种模式用**同一组参数**
+ * 都能起 CDP，无头**不需要** `--no-sandbox` —— 所以这个旗标不违反 design.md I2。
+ */
+export const HEADLESS_FLAG = '--headless=new';
+
 /** Windows 的 env 键大小写不敏感，这里统一按小写名查找。 */
 export function envGet(env, name) {
   if (env == null) return undefined;
@@ -53,13 +66,58 @@ export function resolvePort(opts = {}) {
 }
 
 /**
+ * 浏览器模式：显式 `--headless` / `--headed` > `ADG_BROWSER_MODE` > 默认无头。
+ * 非法值直接抛 —— 静默回落会让调用方以为自己在用另一种模式（与 I4 同口径）。
+ */
+export function resolveMode(opts = {}) {
+  const { mode, env = process.env } = opts;
+  const raw = mode == null || mode === '' ? (envGet(env, 'ADG_BROWSER_MODE') ?? MODE_DEFAULT) : mode;
+  const v = String(raw).trim().toLowerCase();
+  if (!MODES.includes(v)) throw new Error(`浏览器模式不合法：${String(raw)}（只能是 headless 或 headed）`);
+  return v;
+}
+
+/**
+ * 目标模式是不是**显式**要求的（单次 `--headless` / `--headed`，或 `ADG_BROWSER_MODE`）。
+ *
+ * 只有显式要求才允许换掉一个**活着**的实例（design.md I11 ③）：默认值只决定**新起**的实例长什么样，
+ * 不许拿它去关用户正在用的窗口 —— 不带旗标的 `launch`（专家最常打的那条命令）撞上「用户正在有头
+ * 窗口里登录」就会砸掉现场，2026-10-03 专门为此加了这道闸门。
+ */
+export function modeIsExplicit(opts = {}) {
+  const { mode, env = process.env } = opts;
+  if (mode != null && mode !== '') return true;
+  const raw = envGet(env, 'ADG_BROWSER_MODE');
+  return raw != null && String(raw).trim() !== '';
+}
+
+/**
+ * 从 CDP `/json/version` 的 `User-Agent` 判出**已经活着**的实例是哪种模式（design.md I11）。
+ *
+ * 实测 2026-10-03：无头的 UA 带 `HeadlessChrome/…`（Brave `… HeadlessChrome/154.0.0.0 Safari/537.36`、
+ * Edge `… HeadlessChrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0`），有头的没有这个 token ⇒
+ * 一条 `/Headless/i` 同时认 Chrome / Brave / Edge，**不需要**额外的状态文件（进程是别人起的也认得出）。
+ * 拿不到 UA 就报 `unknown`：不猜 —— `planLaunch` 把 unknown 当「复用、不重启」处理。
+ */
+export function detectMode(version) {
+  const ua = typeof version?.['User-Agent'] === 'string' ? version['User-Agent'] : '';
+  if (!ua) return 'unknown';
+  return /Headless/i.test(ua) ? 'headless' : 'headed';
+}
+
+/**
  * 启动参数。**刻意不传** `--no-sandbox` / `--disable-blink-features=AutomationControlled` /
  * `--user-agent=` —— 对 connect-only 驱动零收益，却会让浏览器行为与用户日常浏览器不一致
  * （design.md I2，来源：本机 D:\dsh\.browser-tools\start-chrome-headed.ps1 的实测形态）。
+ *
+ * `mode` 缺省按 `MODE_DEFAULT`（无头）解析；`headless` 时追加 `--headless=new`（I2 允许的
+ * 唯一模式旗标）——它只让浏览器不画窗口，不改 UA 之外的身份、不降权、不关沙箱。
+ * `--window-size` 两种模式都传：无头下没有窗口，Chrome 拿它当默认视口尺寸。
  */
 export function launchArgs(opts = {}) {
   const { profile, port, urls = [], windowSize = '1500,980', lang = 'zh-CN' } = opts;
   if (!profile) throw new Error('launchArgs 需要 profile');
+  const mode = resolveMode({ mode: opts.mode, env: opts.env ?? {} });
   const args = [
     `--remote-debugging-port=${resolvePort({ port })}`,
     `--user-data-dir=${profile}`,
@@ -67,6 +125,7 @@ export function launchArgs(opts = {}) {
     '--no-default-browser-check',
     `--lang=${lang}`,
   ];
+  if (mode === 'headless') args.push(HEADLESS_FLAG);
   if (windowSize) args.push(`--window-size=${windowSize}`);
   args.push('--new-window');
   for (const u of urls) if (u) args.push(u);
@@ -131,14 +190,43 @@ export function findChrome(opts = {}) {
 }
 
 /**
- * 「复用还是启动」的决策（纯函数）。**复用优先**：实例还活着时绝不重启 ——
- * 重启会丢掉内存里的会话态，也让用户不得不重新登录（design.md I3）。
+ * 「复用 / 换模式 / 启动」的决策（纯函数）。
+ *
+ * **同模式一律复用**：实例还活着时绝不重启 —— 重启会丢掉内存里的会话态，也让用户不得不
+ * 重新登录（design.md I3）。**另一种模式是例外、且必须是显式请求**（2026-10-03 用户拍板：
+ * `launch --headless` 直接自动关重开）：换模式必须先优雅关掉旧实例（`Browser.close`，
+ * 登录态落盘）再按目标模式起新的 —— 因为同一个 profile 同时只能有一个实例，第二个进程
+ * 只会把 URL 转发给活着的那个、自己退 0（2026-10-03 实测：`exit 0` + 无 CDP 端点）。
+ *
+ * **没有显式要求模式时，活着的实例一律不动**（`modeNotRequested`）：解析出来的默认模式只决定
+ * **新起**的实例长什么样 —— 否则专家最常打的那条不带旗标的 `launch` 会顺手把用户正在登录的
+ * 有头窗口关掉重开（I11 ③ 与「人不在场不许关有头窗口」那条非功能红线）。
+ *
+ * **`switch` 与 `start` 一样必须给出 `args`**：调用方无条件 `spawn(chrome, plan.args)`，而
+ * `spawn(chrome, undefined)` 是"不带任何参数启动浏览器" —— 那等于启动用户**自己的默认 profile**，
+ * 请求会被转交给用户日常那个实例（2026-10-03 真机事故：换模式一直 exit=0、端口从未起来，
+ * 用户侧还多出一堆窗口）。`args` 是 `planLaunch` 的契约，不是可选装饰。
+ *
+ * `aliveMode` 来自 `detectMode`：`unknown`（拿不到 UA）**按复用处理** —— 不认识的活实例
+ * 不许被静默换掉。
  */
 export function planLaunch(opts = {}) {
-  const { alive, chrome, profile, port, urls = [] } = opts;
-  const p = resolvePort({ port });
+  const { alive, aliveMode, chrome, profile, urls = [] } = opts;
+  const p = resolvePort({ port: opts.port });
+  const mode = resolveMode({ mode: opts.mode, env: opts.env ?? {} });
   if (!profile) throw new Error('planLaunch 需要 profile');
-  if (alive) return { action: 'reuse', profile, port: p, chrome: chrome ?? null };
-  if (!chrome) return { action: 'error', reason: 'CHROME_NOT_FOUND', profile, port: p };
-  return { action: 'start', profile, port: p, chrome, args: launchArgs({ profile, port: p, urls }) };
+  if (alive) {
+    const current = aliveMode ?? 'unknown';
+    const base = { mode, aliveMode: current, profile, port: p, chrome: chrome ?? null };
+    if (current === mode) return { action: 'reuse', ...base };
+    if (current === 'unknown') return { action: 'reuse', ...base, modeUnverified: true };
+    // 目标模式只是**默认值**、调用方没有显式要求 → 活着的实例绝不因此被动过（I11 ③）。
+    const explicit = opts.modeExplicit ?? modeIsExplicit({ mode: opts.mode, env: opts.env ?? {} });
+    if (!explicit) return { action: 'reuse', ...base, modeNotRequested: true };
+    // 换模式要起一个新进程，所以没有 chrome 就没有可执行的东西（不能落到空参数启动）。
+    if (!chrome) return { action: 'error', reason: 'CHROME_NOT_FOUND', mode, profile, port: p };
+    return { action: 'switch', ...base, args: launchArgs({ profile, port: p, urls, mode }) };
+  }
+  if (!chrome) return { action: 'error', reason: 'CHROME_NOT_FOUND', mode, profile, port: p };
+  return { action: 'start', mode, profile, port: p, chrome, args: launchArgs({ profile, port: p, urls, mode }) };
 }
