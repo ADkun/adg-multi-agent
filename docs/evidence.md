@@ -646,7 +646,7 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 - **未知味道键** → **exit 2**，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）`。
 - **踩过的坑（登记，防重踩）**：`resolve-flavor.mjs` 的旗标与 `gen-preset-bundle.mjs` 的旗标**不是一套** —— 前者收 `--billion-context` / `--save-token`（含义是"这个 profile **装着**该组"，由探测得来），传 gen 的 `--with-save-token` → **exit 2**、stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）`。
 
-**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 3 警告**，exit 0；三条警告是条件性注册的 `read_image`（`第 526 行 agent-file`、`第 575 行 agent-browser`、`第 715 行 agent-general`）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，3 个警告`**：
+**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 3 警告**，exit 0；三条警告是条件性注册的 `read_image`（`第 530 行 agent-file`、`第 579 行 agent-browser`、`第 719 行 agent-general`；**2026-10-02 改 `preset/agent.cordis.yml` 时该文件 +4 行、行号整体后移 4**，原先记的 526 / 575 / 715 是同一次改动前的读数）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，3 个警告`**：
 - 插 `- save_token_expand` → `ERROR 第 526 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`
 - 插 `- acp_cache` → `ERROR 第 526 行 agent-file：allow 里的 "acp_cache" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools））——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
 - 插 `- compress` → `ERROR 第 526 行 agent-file：allow 里的 "compress" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`

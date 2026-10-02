@@ -2,7 +2,7 @@
 title: preset 模块测试指南
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-10-01
+last_reviewed: 2026-10-02
 ---
 
 # preset 模块测试指南
@@ -78,6 +78,7 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 | I16（同上） | P2 真实会话里：①用户**没提**"交接"时调度者不派 `agent_general`；②用户明确要求后它被派发，且它的任务末尾被追加了 "Your parent agent id is …、结束前用 send_message 回报"那段指引；③它收尾时真的用 `send_message` 回报，调度者侧能用 `list_agents` 看到它、并用 `send_message` 接给**同一个**它 | 真实挂载 | **未观测**：尚无真实 Adg 会话走过这条。机制是**源码级事实**（`@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance` 只在子代理**看得见 `send_message`** 时注入；`list_agents` 只列直接子级、`send_message` 只到直接父/子）—— 见 `preset/design.md` I16。量法：新会话里先说一句普通需求（转录里**不应**出现 `agent_general`），再说一句"把这件事交给子代理做"（**应**出现），然后数它那一轮 ①`send_message` 调用次数 ②最终答复是不是给调度者看的**交接回执**（结论 / 证据 / 未验证 / 需要上级做的下一步四字段）而不是对用户的寒暄 |
 | I17 委派默认走后台，阻塞会把这一次降级成一次性（2026-09-28 新增） | Q1 规则 8 里是否四件都在：①「委派一律用后台方式发出」（不设 `run_in_background: false`）②写明**代价**（阻塞 → 一次性 → 不进 `list_agents`、`send_message` 报 `NOT_RESUMABLE`、规则 6 / 7 省下的"重读"白付）③写明"后台不等于不管结果"（结算时会连同结果通知你）④**没有任何阻塞例外** —— 规则里要写明"后台派出后直接结束本轮，结算通知会把你重新唤起"，且**没有**"用户显式要求才允许阻塞"这类门槛、**也没有**"同一轮下一步就要用结果就可以阻塞"这条（2026-09-28 按用户指出的机制删掉，见 I17） | 人工 review | 未实现（脚本不查语义）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern 'run_in_background' -Encoding UTF8` —— **正常形状：只命中规则 8 与顶注第 13 条**（**不应**出现在任何专家行的 `config` 里；专家行只写 `backgroundMode: continuable`）。**判违例看语义**：出现"允许阻塞 / 默认前台 / 阻塞也没关系"，或例外被放宽成"想省自己的上下文 / 想并行"即违例 |
 | I17（同上） | Q2 真实会话里有没有出现 `run_in_background: false`，以及被阻塞的那一次是不是真的接不回来 | 真实挂载 | **未观测**：改动后还没有真实 Adg 会话走过。量法：造一个需要 2 个以上专家的任务，数 `agent_*` 调用里 `run_in_background: false` 的次数（应为 **0**）；对照组观测量是**同一次委派**在 `list_agents` 里是否出现、`send_message` 能否接上（阻塞的那一次应**看不到、接不上** —— 这正是规则的立论依据，用来确认代价描述没写反） |
+| 技能面（`skill` 只归调度者与 `agent-general`；要用技能时调度者只给**绝对路径**、不内联不复述） | R1 四件是否都在：①规则 **18** 在位（技能递路径：只给绝对路径＋「先 read 该文件再动手」，不内联不复述）②第 **17** 条仍是 `agent_general` 交接闸门（编号不许被新规则占用 —— 全仓 6 处「规则 17」都指它）③那 6 处引用仍说 17：`preset/agent.cordis.yml:289` / `:708`、`preset/AGENTS.md:24`、`preset/testing-guide.md:77`、`skills/adg-add-agent/SKILL.md:21`、`README.md:777`（**不许**把 `agent_general` 说成 18）④规则 18 里三种例外齐全（只需一小节→原文照贴不许改写；只有读不了文件的 `agent_search` 才内联；步骤须与本次事实交织改写） | 人工 review | 未实现（脚本不查语义与编号）。辅助检索：`Select-String -Path preset\agent.cordis.yml,preset\AGENTS.md,README.md,skills\adg-add-agent\SKILL.md -Pattern '规则 1[78]' -Encoding UTF8` —— **正常形状**：规则 17 / 18 各命中 1 行（都在 `preset\agent.cordis.yml` 的 persona 块内），其余命中都是交叉引用且**一律是 17**。**判违例看语义**：出现「新规则占用 17」或某处把交接闸门写成 18 即违例（2026-10-02 扶正过一次：上一轮曾把新规则占了 17、把交接闸门顶成 18，随后交换回 17 = 闸门 / 18 = 技能递路径） |
 
 ## 2. `PresetRevision` 状态机迁移矩阵（全表）
 
@@ -129,7 +130,7 @@ node tools/gen-preset-bundle.mjs   # 生成/刷新 bundle：须 exit 0（产物�
 
 其后必须做一次真实挂载（根 `README.md`「给 AI 的安装指令」第 6 步：`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()` 的形状），再做一次重启 + 新对话验收。静态自检通过 ≠ 生效；生成物形状正确也 ≠ 挂载。
 
-当前仓库实测基线（**2026-10-01 复核**）：`node tools/check-preset.mjs` → `通过：0 个错误，3 个警告`（三条 WARN 都是 `read_image` 属条件性注册：第 526 行 `agent-file`、第 575 行 `agent-browser`、第 715 行 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。（2026-09-28 复核时是 0 / 2，第三处随 2026-10-01 给 `agent-browser` 的 `allow` 加 `read_image` 而来。）
+当前仓库实测基线（**2026-10-02 复核**）：`node tools/check-preset.mjs` → `通过：0 个错误，3 个警告`（三条 WARN 都是 `read_image` 属条件性注册：第 530 行 `agent-file`、第 579 行 `agent-browser`、第 719 行 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。（警告行的坐标随 `preset/agent.cordis.yml` 行数变；2026-10-01 复核时是 526 / 575 / 715，2026-10-02 加规则 18 后该文件 820 → 824 行、坐标整体 +4；第三处 WARN 是 2026-10-01 给 `agent-browser` 的 `allow` 加 `read_image` 才有的。）
 
 ## 6. 过期检测（踩坑登记）
 

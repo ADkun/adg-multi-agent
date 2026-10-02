@@ -2,7 +2,7 @@
 title: preset 模块设计
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-10-01
+last_reviewed: 2026-10-02
 ---
 
 ## 职责与边界
@@ -96,7 +96,7 @@ last_reviewed: 2026-10-01
 - `toolFilter.allow` 是**真实**能力边界，persona 只是补充说明。来源：实测，`skills/adg-add-agent/SKILL.md`「硬约束」（给 `agent_coder` 委派，它可见的工具目录恰好等于 allow 名单；连 preset 自己注册的工具也一起被裁）。推论：禁止在 persona 里要求它做 `allow` 之外的事，也禁止承诺「专家之间默认能互相转交」。
 - 禁止给 `compaction-basic` / `tool-result-pruner` / `tool-web` 三行写回体积覆盖值。来源：实测，根 `README.md`「为什么撤销 preset 侧的体积闸门」与 `docs/evidence.md`「成本基线」「三个体积旋钮的实际生效值」（截断把工具已取到的事实切掉；提前压缩让上下文不可逆失真）。
 - 有 `pwsh` 的专家必须同时给 `job_list` / `job_output` / `job_kill`。来源：`skills/adg-add-agent/SKILL.md`「硬约束」（只给 pwsh 会让后台跑起来的任务取不回来）。
-- 禁止在除 `agent_general` 外的专家行 `allow` 里写 `skill`（**技能面口径**，2026-10-01 按用户要求）。理由不是"技能没用"，而是**维护成本**：`toolFilter` 只有 `allow` / `deny` 两种形态，preset 侧**没有**"给所有子代理默认加一个工具"的开关（源码级事实：`@deepseek-ai/dsh-tool-subagent/lib/index.js:265` 解析、`:370` 要求二者至少其一；子代理侧由 `@deepseek-ai/dsh-subagent/lib/index.js:522` 的 `childCtx.tools.restrict(composition.toolFilter)` 收紧），而**不写 `allow` 的专家会继承调度者整套目录** —— 连名册行一起继承，直接违反一跳可达（红线 1）。于是"让所有专家都能用技能"只能逐行写 `allow`，那正是"每加一个专家都要维护一遍仓库"。**默认口径＝专家不用技能面**：要用技能的工作留在调度者手上（它自己有 `skill`），或按 I16 派 `agent_general`（它的 `allow` 里有 `skill`）。判据：`node tools/check-preset.mjs` 对该情形给 **WARN**（除 `agent_general` 外的 `allow` 里出现 `skill`）。
+- 禁止在除 `agent_general` 外的专家行 `allow` 里写 `skill`（**技能面口径**，2026-10-01 按用户要求）。理由不是"技能没用"，而是**维护成本**：`toolFilter` 只有 `allow` / `deny` 两种形态，preset 侧**没有**"给所有子代理默认加一个工具"的开关（源码级事实：`@deepseek-ai/dsh-tool-subagent/lib/index.js:265` 解析、`:370` 要求二者至少其一；子代理侧由 `@deepseek-ai/dsh-subagent/lib/index.js:522` 的 `childCtx.tools.restrict(composition.toolFilter)` 收紧），而**不写 `allow` 的专家会继承调度者整套目录** —— 连名册行一起继承，直接违反一跳可达（红线 1）。于是"让所有专家都能用技能"只能逐行写 `allow`，那正是"每加一个专家都要维护一遍仓库"。**默认口径＝专家不用技能面**：要用技能的工作由调度者自己做（它自己有 `skill`）、或按 I16 派 `agent_general`（它的 `allow` 里有 `skill`）；若委派给别的专家，只在委派 prompt 里给技能的**绝对路径**＋「先 read 该文件再动手」，**不内联、不复述技能正文**（例外见 `preset/agent.cordis.yml` 的调度规则 18）。判据：`node tools/check-preset.mjs` 对该情形给 **WARN**（除 `agent_general` 外的 `allow` 里出现 `skill`）。
 - 禁止设 `maxTokens` / `agentOptions` / `reasoningEffort`（后者在手工声明的路由上会让每次委派 `UNSUPPORTED_REASONING_EFFORT`）。来源：`skills/adg-add-agent/SKILL.md`「硬约束」。
 - persona 里禁止写**子代理预算**（"结论控制在 N 字符内""委派 prompt 自带读取预算"之类）。来源：根 `README.md`「persona 层保留的政策：调度侧的编排层规则」与 `docs/evidence.md`「成本基线」（该层纪律已整体撤销；预算提示把注意力从「把事情做对」挪到「别写太多」）。**边界**：编排层的五条规则（I13）、digest 工件口径（I14）与输出／交接去冗余纪律（I15）都不属于本条禁止的范围 —— 它们约束"派给谁、派几次、材料怎么中转、写下来的东西怎么组织"，不限制任何单个专家的读取量与产出量（I15 明确禁止被改写成字数上限）。
 - 禁止把输出／交接纪律（I15）写成**字数上限、字符上限或产出量限制**，也禁止为了"简洁"省掉 **"未验证 / 未纳入"** 这一块。来源：前者是已撤销那一层的精确退化形态（`docs/evidence.md` §1：输出只占 1%，压它只损伤质量）；后者会删掉 I13 第 ⑤ 条建立的诚实护栏 —— 本仓库的成本规则一律**不许拿质量换**（根 `README.md`「为什么撤销 preset 侧的体积闸门」）。

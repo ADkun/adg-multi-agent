@@ -2,14 +2,28 @@
 title: 变更记录
 owner: Adg preset 维护者
 status: current
-last_reviewed: 2026-10-01
+last_reviewed: 2026-10-02
 ---
 
 # 变更记录
 
 一行一条，时间倒序，**只记"变了什么"**。为什么记在不变量旁的注释里就地说明（见 `docs/docs-guide.md` 第 1 节的分层契约）；决策过程不进 git。
 
-## 2026-10-01（最新）— 名册 9 → 8：`agent_app` 并入 `agent_computer`，浏览器 / 审查专家的工具面各补一件，技能面收紧到只剩 general
+## 2026-10-02（最新）— 技能面：新规则 18「技能递路径、专家自己 read」，6 处旧口径同步
+
+- 依据（用户要求，本轮裁定）：技能面仍只归调度者（`skill` 只留给 `agent_general`，本次**不放开任何专家的 `allow`**）；要用技能的工作照常委派，但调度者在委派 prompt 里**只给技能的绝对路径 ＋「先 read 该文件再动手」**，不内联、不复述技能正文。例外仅三种：①只需其中一小节→**原文照贴**、不许改写；②目标专家读不了文件（`agent_search`）→只能内联；③技能步骤须与本次任务的已知事实交织改写。
+- 理由（写进规则本行）：专家上下文一次任务即弃、调度者上下文是整个会话，长程序化手册该落在可抛弃的那个上下文里；内联＝常驻＋每步重发＋挤占压缩预算，递路径≈+30 token/委派，且专家读的是源头活文件、不陈旧。失败模式点名：专家不读就动手（故 prompt 必须写死先 read）；技能改名是破坏性变更、会静默失效。
+- `preset/agent.cordis.yml`：**新增规则 18**（技能递路径，文本如上）；**本轮把上一轮的错误编号扶正** —— 上一轮曾占用 17、把原来的规则 17 顶成 18，那会让全仓 6 处「规则 17」交叉引用（都指 `agent_general` 交接闸门）全部指错；现第 17 条恢复为 `agent_general` 交接闸门（内容一字未动）、新规则作为第 18 条追加其后。顶注第 15 条技能面口径追加递路径那段并自引用改「见规则 18」。
+- `preset/design.md`：非功能红线「技能面口径」那条把「要用技能的工作留在调度者手上」改成「由调度者自己做、或按 I16 派 `agent_general`；若委派给别的专家，只在委派 prompt 里给技能的绝对路径＋先 read，不内联不复述」，例外指向调度规则 18；front matter `last_reviewed` 2026-10-01 → **2026-10-02**。
+- `preset/AGENTS.md`：技能面红线同步递路径口径与三种例外（判据仍是 `tools/check-preset.mjs` 对该情形给 WARN）。
+- `tools/check-preset.mjs`：头部注释 5b 与 warn 前的注脚注释同步递路径口径；**WARN 模板串本身**由「让调度者把技能内容写进委派 prompt」改成「把技能**绝对路径**写进委派 prompt 并要它先 read（只有读不了文件的 agent_search 才内联）」（模板串是反引号字符串，里面不能再嵌反引号）。
+- `skills/adg-add-agent/SKILL.md`：技能面硬约束那条同步同样口径（该文件是硬换行散文，按原宽度改）。
+- `preset/testing-guide.md`：新增一条 R1 核对项（人工 review：规则 18 在位、第 17 条仍是交接闸门、6 处既有「规则 17」引用仍指交接闸门、三种例外齐全），front matter `last_reviewed` 2026-10-01 → **2026-10-02**。
+- 坐标刷新（因 `preset/agent.cordis.yml` +4 行、警告行号整体后移 4）：`preset/testing-guide.md` 的实测基线段（526 / 575 / 715 → **530 / 579 / 719**）与 `docs/evidence.md` §15 反向守卫段的三条警告坐标；两处都留着旧值作对照，不改任何结论与退出码。
+- 检验：`node tools/check-preset.mjs` **exit 0（0 错误 / 3 警告**，三条都是条件性注册的 `read_image`：第 530 行 `agent-file`、第 579 行 `agent-browser`、第 719 行 `agent-general` —— `preset/agent.cordis.yml` 820 → **824 行**，警告坐标比上一轮记的 526 / 575 / 715 整体 +4，已同步 `preset/testing-guide.md` 的基线段与 `docs/evidence.md` §15 的反向守卫段）；四味道生成 + 四条 `node tools/check-bundle-flavor.mjs` **全 exit 0**；6 处既有「规则 17」引用 grep 复核全未动、全仓无「把 `agent_general` 说成规则 18」处；旧口径措辞仅剩本文件的历史条目。
+- 未观测：**重启 dsh 后的真实挂载本轮没做**（改了 `preset/` 要重启 dsh 才对**新会话**生效），也没有在新会话里做一次真实委派验收"专家收到路径后会不会先 read"。
+
+## 2026-10-01 — 名册 9 → 8：`agent_app` 并入 `agent_computer`，浏览器 / 审查专家的工具面各补一件，技能面收紧到只剩 general
 
 - 依据（用户要求，本轮裁定）：合并 `agent_app` + `agent_computer`、给 `agent_reviewer` 加 `web_search` / `web_fetch`、给 `agent_browser` 加 `read_image` 三项**采纳**；**不做按专家的 token 用量账**（原话要点「每个任务都不一样」）；`browser` 的 `edit` **保留**（脚本出错还要就地改）；人工介入协议在专家 persona 里**保留**、不算冗余（调度 persona 里那份主要是让用户设完全权限）；技能面**二选一**里选「除 `agent_general` 外所有专家都不许用 skill」（原话「以后每加一个专家都要维护一遍仓库吗？」）。
 - `preset/agent.cordis.yml`：删掉 `- id: agent-app` 整行；`agent-computer` 的 persona 改成「系统与应用运维专员」双线（① 系统 / 设备层 ② 应用层，含 winget / adb / 小程序），安全要求追加「卸载软件」；调度 persona 的名册由 9 项改 8 项（`agent_computer` 合并描述），规则 4 补「需要跑 `git` / 测试命令的只读核对（`git log -S` / `git blame` / `node --test` 等）→ `agent_reviewer`（它带 pwsh 且只报告不改；researcher 没有 pwsh）」；顶注新增第 15 条（名册 9→8、三处工具面调整、技能面口径）。
