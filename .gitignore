@@ -9,3 +9,8 @@ Thumbs.db
 # 2) bundle/dist/*.tgz —— 插件的打包产物，需要时由 plugin/ 源码重新打包。
 # 部署不经过这些产物：install.ps1 / install.sh 每次都会重新生成并拷到 $DSH_HOME 下的稳定目录。
 bundle/
+
+# 临时工作目录：过程件（changelog / handoff / pending / 工作稿 / 证据快照）只住在这里，不进版本控制
+# —— 版本区只留最终真相（一批 AGENTS.md / design.md / testing-guide.md）。指针登记在根 AGENTS.md
+# 「版本区」一节；目录名改了要同步改那一节、docs/docs-guide.md 的「分层契约」一节与 docs/registry.md 的「索引表」一节。
+docs-work/

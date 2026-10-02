@@ -4,7 +4,7 @@
 
 **为什么本模块需要独立文档**（三样信号都在）：有独立于仓库根的命令（`node cli.mjs …`）；有模块特有红线（禁止第三方依赖、禁止把 profile 放进工作区、禁止代填密码 / 验证码自动化）；有跨模块路由要求（`preset/agent.cordis.yml` 的 `agent-browser` persona 消费它的命令行契约，`install.ps1` / `install.sh` 部署它）。
 
-## 独立命令
+## 命令
 
 ```sh
 node cli.mjs help        # 命令行契约：**选项与退出码以它为准**，本文不复制
@@ -30,7 +30,7 @@ cd browser && node --test --test-isolation=none test            # DSH 沙箱（w
 - 禁止重启一个活着的实例（I3）；禁止用 `PageSession.close()` 关浏览器（I8，只有 `cli.mjs close` 能关）。
 - 禁止关掉**不是本任务开的**标签页，也禁止用 `close-tab` 把页面关到 0 个（I9 / I10）：不点名不关、不关到 0 个、自己开的临时页自己收（`--keep` 才留）。用户窗口里的页既有登录态，也可能是他正在用的。
 - 禁止代填账号密码、读取 profile 的 cookie 库、验证码识别或指纹伪装：登录永远由人在有头窗口里完成。
-- 禁止把「浏览器起不来」写成重试题：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）就停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**——不许把它写成这两条中的任何一条（量法见 `testing-guide.md` 第 4 节）。
+- 禁止把「浏览器起不来」写成重试题：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）就停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**——不许把它写成这两条中的任何一条（量法见 `testing-guide.md`「人工 review 项」一节）。
 - 部署落点与仓库路径同名（`browser/` → `${DSH_HOME:-~/.dsh}/browser/`）；改目录名要同步改 `install.ps1` / `install.sh` 与 `agent-browser` 的 persona。
 
 ## 跨模块路由
@@ -43,6 +43,10 @@ cd browser && node --test --test-isolation=none test            # DSH 沙箱（w
 | profile 的规范默认路径 | `design.md` I1 → 根 `README.md`「浏览器工具链与登录态资产」→ `docs/evidence.md` §8 |
 | 部署集合与落点 | `install.ps1` / `install.sh` → 本文件「模块特有红线」最后一条 |
 | 想引用本模块的任何数字 / 结论 | `docs/evidence.md` §6（沙箱前提）/ §8（本模块的实测与未观测） |
+
+## 版本区
+
+本模块的最终文档只有三份，都在仓库 `browser/`（`AGENTS.md` / `design.md` / `testing-guide.md`）—— 进 git、互相引用、改了就原地更新，不建"最新稿"。过程件（changelog / handoff / pending / 工作稿 / 证据快照）一律住被 `.gitignore` 排除的 `docs-work/`，不算版本区。完整清单与各文档的职责边界见根 `AGENTS.md`「版本区（文档目录入口）」。
 
 ## 生效方式
 

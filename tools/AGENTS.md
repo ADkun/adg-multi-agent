@@ -53,3 +53,13 @@ node tools/resolve-flavor.mjs --billion-context --save-token                    
 `check-preset.mjs` 是**逐行文本扫描器，不是 YAML 解析器**：证明不了整份文件能被 YAML 解析；**也不证明插件真的挂载**——包能否解析、行有没有被关掉、服务有没有发布到全局 realm，只有真实挂载能证明（`agentPresets.resolve('adg')` 的 `.broken` 为空是判据；`standingKeyFor` 在本版 dsh 里已不存在）。
 
 `gen-preset-bundle.mjs` 只保证**生成物形状**正确（能被 YAML 解析成一行 `insert:`），证明不了 dsh 会挂载它——那要装进 profile 后看真实挂载与 `fiberState`。
+
+## 版本区
+
+本模块的最终文档只有三份，都在仓库 `tools/`（`AGENTS.md` / `design.md` / `testing-guide.md`）—— 进 git、互相引用、改了就原地更新，不建"最新稿"。过程件（changelog / handoff / pending / 工作稿 / 证据快照）一律住被 `.gitignore` 排除的 `docs-work/`，不算版本区。完整清单与各文档的职责边界见根 `AGENTS.md`「版本区（文档目录入口）」。
+
+## 生效方式
+
+三个脚本都**无常驻状态、也没有安装步骤**：改完存盘，下一次运行就是新版本（`node tools/check-preset.mjs` 直接读仓库里的 `preset/`）。两处例外：① 已经生成的 `bundle/` 产物**不会自动跟随**脚本改动 —— 要重跑 `node tools/gen-preset-bundle.mjs`（或重跑 `install.ps1` / `install.sh`，它们每次安装都会重跑生成器）；② 改 `KNOWN_TOOLS` / `FACTORY_DEFAULTS` / `EXPECTED_ROWS` 之后必须重跑 `node tools/check-preset.mjs`，复核报告里的专家行清单与旋钮生效值，且 **ERROR 必须为 0**（警告数按当时的 composition 真实情况看，见 `preset/testing-guide.md`）。
+
+脚本本身**不参与运行期**，所以改它们不需要重启 dsh；要让新的生成物在会话里真正生效，按 `preset/AGENTS.md`「生效方式」的口径走：重装 bundle → 重启 dsh → 新对话验收。

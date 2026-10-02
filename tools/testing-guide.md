@@ -7,11 +7,13 @@ last_reviewed: 2026-10-01
 
 # check-preset.mjs 测试指南
 
-对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。同目录其余脚本的用例都在第 5 节：构建脚本 `gen-preset-bundle.mjs`（它的设计记录在自己的头部注释里）与产物自检 `check-bundle-flavor.mjs`，以及组表 `tools/flavors.mjs`、探测入口 `tools/has-bundle.mjs`、味道映射 `tools/resolve-flavor.mjs` 的调用判据（5.1 节）。
+对象与不变量见 `tools/design.md`（本文件不复制它的内容，只给用例）。用例类型三档：**CLI 冒烟**（真跑命令、看退出码与 stdout 关键行）、**人工 review**（读代码或读目标文件判定，无法自动化的部分）、**未实现**（当前没有对应的自动化，条目即缺口台账）。同目录其余脚本的用例都在「`gen-preset-bundle.mjs`（同目录第二个脚本）的构建契约」一节：构建脚本 `gen-preset-bundle.mjs`（它的设计记录在自己的头部注释里）与产物自检 `check-bundle-flavor.mjs`，以及组表 `tools/flavors.mjs`、探测入口 `tools/has-bundle.mjs`、味道映射 `tools/resolve-flavor.mjs` 的调用判据（该节的「构建期注入组」一小节）。
 
 准备动作（下称"夹具 A"）：把 `preset/agent.cordis.yml` 复制到临时文件，只改副本，绝不改仓库里的那份。**注意现在只有这一份文本**：`${DSH_HOME:-~/.dsh}/.agent-presets/<id>/` 那份已随机制移除（dsh 0.1.7-rc.2，实测），不要再去找或去传它。
 
-## 1. 不变量 I1..I9 的用例
+## 用例总表
+
+（本节＝原 §1「不变量 I1..I9 的用例」；别处写「§1」仍指本节。）
 
 | 不变量 | 用例 | 类型 | 判据 |
 |---|---|---|---|
@@ -39,9 +41,11 @@ last_reviewed: 2026-10-01
 | I9（`exit 0` 的语义） | 文档与对外说明里检索"校验通过 = 已挂载"这类等价写法 | 人工 review | `tools/design.md`、`tools/AGENTS.md`、`skills/adg-add-agent/SKILL.md` 里都必须保留"不是 YAML 解析器 / 不证明挂载"的限定语 |
 | I9 | 真实挂载校验（`agentPresets.resolve('adg')` 的 `.broken` 为空 + `agentPresets.compositionInventory()`；`standingKeyFor` 在本版 dsh 已不存在，别调它） | 未实现 | 本文件内没有任何自动化调用它；按 `README.md`「给 AI 的安装指令」第 6 步人工执行 |
 
-## 2. 状态机迁移矩阵
+## 迁移矩阵
 
-### 2.1 `KnobRow`：`declared → validated`
+（本节＝原 §2「状态机迁移矩阵」；下面按对象分小节。）
+
+### `KnobRow`：`declared → validated`
 
 唯一入口 `readRowBlock()` + `EXPECTED_ROWS` 三个结构守卫。`declared` 只表示"命中了 `- id:`"，不代表取值已判；`validated` 不代表运行期生效。
 
@@ -58,7 +62,7 @@ last_reviewed: 2026-10-01
 | `validated` → 报错（留在 `validated`，退出码变 1） | 旋钮键写回但取值非法 / 位置不对 / 出现未知键 | `fail(...)`；退出码 `1` | CLI 冒烟 |
 | 禁止的迁移 | "命中多行时取第一条继续取值比较" | 代码里不存在该路径（命中多行后直接 `continue`） | 人工 review |
 
-### 2.2 `ExitStatus`：`target-resolved → {passed(0) \| failed(1) \| unreadable(2)}`
+### `ExitStatus`：`target-resolved → {passed(0) \| failed(1) \| unreadable(2)}`
 
 | 迁移 | 触发条件 | 期望结果 | 类型 |
 |---|---|---|---|
@@ -70,11 +74,13 @@ last_reviewed: 2026-10-01
 | `target-resolved` → `passed(0)` | 0 条 ERROR（WARN 任意条数） | 末行 `通过：0 个错误，N 个警告`；退出码 `0` | CLI 冒烟 |
 | `passed(0)` 的收尾方式 | 报告末尾未显式 `process.exit(0)` | 靠 Node 事件循环自然退出得 `0` | 人工 review |
 
-## 3. 跨模块消费侧契约测试
+## 消费方契约测试
 
-### 3.1 `install.ps1` / `install.sh` 消费 preset 与部署落点
+（本节＝原 §3「跨模块消费侧契约测试」；三个消费方各一小节。）
 
-两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径，以及落点：preset bundle 的**四种味道、四个稳定落点** `$DSH_HOME/bundles/dsh-adg-preset/`（plain）/ `…-bili/` / `…-save-token/` / `…-bili-save-token/`（`auto` 下**逐个注入组**探测、按该 profile 自己的结果选一份 —— 探测入口 `tools/has-bundle.mjs`、键→目录→旗标 `tools/resolve-flavor.mjs`，见根 `AGENTS.md` 红线 10 与第 5.1 节）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。preset bundle 靠**写进该 profile 的 `dsh.profile.bundles`** 选中。
+### `install.ps1` / `install.sh` 消费 preset 与部署落点
+
+两个脚本消费的事实：preset 的**三个源文件**（`preset/preset.yml`、`preset/agent.cordis.yml`、`preset/bundle.package.json`，经 `tools/gen-preset-bundle.mjs` 生成 bundle）、技能路径，以及落点：preset bundle 的**四种味道、四个稳定落点** `$DSH_HOME/bundles/dsh-adg-preset/`（plain）/ `…-bili/` / `…-save-token/` / `…-bili-save-token/`（`auto` 下**逐个注入组**探测、按该 profile 自己的结果选一份 —— 探测入口 `tools/has-bundle.mjs`、键→目录→旗标 `tools/resolve-flavor.mjs`，见根 `AGENTS.md` 红线 10 与该节的「构建期注入组」一小节）、目标 profile 的 `node_modules`（`link:` 进来）与 `dsh.profile.bundles`。preset bundle 靠**写进该 profile 的 `dsh.profile.bundles`** 选中。
 
 | 用例 | 类型 | 判据 |
 |---|---|---|
@@ -86,7 +92,7 @@ last_reviewed: 2026-10-01
 
 **怎么发现脱钩（口径）**：脱钩的表现是"脚本复制成功、但目标侧少了一样东西"，而 `check-preset.mjs` 只看 composition 的文本，**天生看不见脱钩**。所以发现手段只有两条——上面那条"逐条 `Test-Path` 核对脚本内引用的仓库路径"（人工 review，改脚本后必做），以及安装后核对目标目录的实际条目数。前者是当前唯一的第一道防线。
 
-### 3.2 `skills/adg-add-agent/SKILL.md` 消费三行旋钮的存在与"不覆盖"口径
+### `skills/adg-add-agent/SKILL.md` 消费三行旋钮的存在与"不覆盖"口径
 
 技能消费的事实：三行旋钮（`compaction-basic` / `tool-result-pruner` / `tool-web`）必须存在、本 preset 不覆盖它们的键、自检会打印两行摘要。
 
@@ -99,7 +105,7 @@ last_reviewed: 2026-10-01
 
 **技能过期时的表现**：（a）指引里提到的输出/行号与脚本实际不符，照做的人找不到证据；（b）技能说"不覆盖"而 composition 已覆盖（或反之），AI 会按过期口径劝阻或放行错误的改动。两种都表现为"照文档做，结果对不上"。
 
-### 3.3 `preset/agent.cordis.yml` 的 tool 行 ↔ `KNOWN_TOOLS` 双向一致性
+### `preset/agent.cordis.yml` 的 tool 行 ↔ `KNOWN_TOOLS` 双向一致性
 
 契约：**改 composition 的 tool 行必须同时改 `KNOWN_TOOLS`**。方向不同，失效模式不同：
 
@@ -120,7 +126,9 @@ last_reviewed: 2026-10-01
 | `pwsh` 在 Windows 上、`bash` 在非 Windows 上 | CLI 冒烟 | `pwsh` 是常驻名（本机配置 `tool-pwsh` 未被关），`bash` 只给 WARN |
 | `subagent` / `subagent_fork` | CLI 冒烟 | 这两个名字**不在** `KNOWN_TOOLS` 里；出现在专家 `allow` 里必须 `ERROR`，且 composition 里不得存在 `toolName: subagent` / `toolName: subagent_fork` 行 |
 
-## 4. 本校验器**故意不做**的检查清单
+## 人工 review 项
+
+（本节＝原 §4「本校验器**故意不做**的检查清单」：每一条都写清由谁兜底；末列"人工 review"就是本节要兜的那部分，"未覆盖"＝当前没有任何防线，属已知缺口台账。）
 
 每一条都写清由谁兜底；"未覆盖"表示当前没有任何一道防线，属于已知缺口台账。
 
@@ -130,13 +138,13 @@ last_reviewed: 2026-10-01
 | 锚点 `&a` / 别名 `*a` | 逐行扫描看到的只是一个标量字符串 | **真实挂载**（解析期展开后才知道指向什么）；人工 review |
 | flow 风格（`{a: 1}`、`[]`、行内两个键） | 只处理 block 风格的 `key: value` | **真实挂载**；人工 review |
 | 制表符缩进 | 缩进只用空格数计算，tab 不会报错 | **真实挂载**（YAML 规范禁止 tab 缩进）；人工 review |
-| **专家行不在 4 空格缩进上** | 脚本的行匹配器写死 `^ {4}- id: (agent-…)`：缩进一变，**整段专家行检查静默跳过、脚本照旧报"通过"**。当前 `delegation` 是带 `isolate` 的 `cordis:group`、其条目恰好 4 空格 | **改 `delegation` 结构后必须人工确认**：跑 `node tools/check-preset.mjs`，报告里必须出现"专家行 9 个"；没有这一行就说明一个都没匹配上 |
+| **专家行不在 4 空格缩进上** | 脚本的行匹配器写死 `^ {4}- id: (agent-…)`：缩进一变，**整段专家行检查静默跳过、脚本照旧报"通过"**。当前 `delegation` 是带 `isolate` 的 `cordis:group`、其条目恰好 4 空格 | **改 `delegation` 结构后必须人工确认**：跑 `node tools/check-preset.mjs`，报告里"专家行清单"那一行必须**非空、且条数等于 `preset/agent.cordis.yml` 里 `- id: agent-` 开头的行数**（2026-10-02 读数是 8 个——**读数，不是判据**，名册一改就变）；这一行缺失或为 0 就说明一个专家行都没匹配上 |
 | 同一行里写两个键 | 一行的正则只取第一个 `key: value` | **真实挂载**；人工 review |
 | 运行期是否真的挂载（包解析、行被条件表达式关掉、服务发布到全局 realm） | 静态扫描拿不到运行期信息 | **真实挂载**：`agentPresets.resolve('adg')`（`.broken` 为空）/ `agentPresets.list()` / `agentPresets.compositionInventory()`（按 `README.md`「给 AI 的安装指令」第 6 步；`standingKeyFor` 在本版 dsh 已不存在，别调它） |
-| `install.ps1` / `install.sh` 的部署集合与落点 | 与本模块职责无关 | 人工 review（见 3.1） |
+| `install.ps1` / `install.sh` 的部署集合与落点 | 与本模块职责无关 | 人工 review（见「`install.ps1` / `install.sh` 消费 preset 与部署落点」一小节） |
 | `KNOWN_TOOLS` 之外的名字是否在当前这台机器上注册 | 条件性注册求值不了 | **未覆盖**：`bash` / `read_image` / codex / claude-code 四类只在缺条件的部署上以"那一次委派抛错"暴露 |
 
-## 5. `gen-preset-bundle.mjs`（同目录第二个脚本）的构建契约
+## `gen-preset-bundle.mjs`（同目录第二个脚本）的构建契约
 
 它只做一件事：把 `preset/preset.yml`（顶层 `key: value` 标量）+ `preset/agent.cordis.yml`（**原样**缩进进 `config.plugins`）+ `preset/bundle.package.json`（原样拷贝）写成 `<outDir>/{cordis.patch.yml,package.json}`（**安装脚本按味道各传一个位置参数**：`bundle/adg-plain/` / `adg-bili/` / `adg-save-token/` / `adg-bili-save-token/`；不传位置参数时的缺省出海目录是 `bundle/adg-preset/`，在 `.gitignore` 里）。设计记录在脚本头部注释，用例只覆盖它的**输入守卫**与**形状**：
 
@@ -153,7 +161,7 @@ last_reviewed: 2026-10-01
 | 生成物的**运行期**效果（dsh 会不会挂载它） | 未实现 | 生成器只保证形状。要真实挂载：装进 profile（`plugin_manager` 的 `install_bundle`，或 `install.*`）后看 `agentPresets.resolve('adg').broken` 与 `compositionInventory()` 里的 `fiberState` |
 | 生成器与校验器的分工是否被混用 | 人工 review | `check-preset.mjs` 管 `agent.cordis.yml` 的**语义硬约束**；生成器管**形状与嵌缩进**。谁都不覆盖对方，别用其一代替其二
 
-### 5.1 构建期注入组：四种味道的生成、断言、负例与探针（2026-09-30 实测）
+### 构建期注入组：四种味道的生成、断言、负例与探针（2026-09-30 实测）
 
 **组表与味道键的单一事实来源是 `tools/flavors.mjs`**：两个注入组（`billion-context`、`save-token`）、`GROUP_ORDER = ['billion-context','save-token']`（决定 `allow` 追加顺序）、味道键 `plain` / `bili` / `save-token` / `bili+save-token`、稳定目录名由 `dirNameFor(key)` 拼。**改了 `tools/flavors.mjs`、`tools/gen-preset-bundle.mjs` 或 `preset/agent.cordis.yml` 就必须四条全跑**（根 `AGENTS.md` 质量门 1b）：
 
@@ -173,7 +181,7 @@ node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token bundle
 | **负例 2：漏注入**（拿 plain 产物按 `save-token` 判） | CLI 冒烟 | exit `1`、末行 `不通过：8 个错误（save-token 味道 / 9 行报告）`；8 条 `ERROR agent-<id>（agent_<id>）：味道 save-token 要求 save-token 组的 save_token_expand 全有，实际 一个都没有`；报告行全 `save-token:NONE` |
 | **负例 3：未知味道键**（`… bundle/adg-plain/cordis.patch.yml nope`） | CLI 冒烟 | exit `2`，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）` |
 | `acp_cache`（`notInjected`）出现在任何味道里 | 人工 review（读脚本源码，本轮未单独造产物） | `NEVER_INJECTED = notInjectedFor(GROUP_ORDER)` ⇒ `ERROR …：acp_cache 不在任何注入清单里（gen 脚本与 tools/flavors.mjs 的清单需对齐）` |
-| **手写注入名字进源文件**（夹具 A 的某个专家行 `allow:` 块末尾插一行） | CLI 冒烟 | 三条都 exit `1`、末行 `不通过：1 个错误，3 个警告`：插 `save_token_expand` ⇒ `ERROR 第 526 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`；插 `acp_cache` ⇒ 同一形状，括注里多一句 `（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools）`；插 `compress` ⇒ 与 bili 组同形、指回 `--with-billion-context`。名字清单由校验器从 `tools/flavors.mjs` **推导**、不另抄一份 |
+| **手写注入名字进源文件**（夹具 A 的某个专家行 `allow:` 块末尾插一行） | CLI 冒烟 | 三条都 exit `1`、末行 `不通过：1 个错误，3 个警告`：插 `save_token_expand` ⇒ `ERROR 第 N 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`（`N` = 校验器报的坐标；它随夹具与源文件的行数变，不是判据 —— 判据是那三行报错文本与 exit `1`）；插 `acp_cache` ⇒ 同一形状，括注里多一句 `（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools）`；插 `compress` ⇒ 与 bili 组同形、指回 `--with-billion-context`。名字清单由校验器从 `tools/flavors.mjs` **推导**、不另抄一份 |
 | 探针做法本身（怎么造夹具） | 人工 review | 复制 `preset/agent.cordis.yml` 到临时文件 → 在某个专家行的 `allow:` 块末尾插一行 → `node tools/check-preset.mjs <临时文件>`。**别用 Windows PowerShell 的 `Get-Content` / `Set-Content` 读写这些文件**（UTF-8 **无 BOM**，会被按 ANSI 误读成乱码并改变行数，本轮踩过）；用 UTF-8 感知的读写（node 的 `fs.readFileSync(p,'utf8')`，或本仓库的 read 工具） |
 
 **探测与味道映射（安装侧的判据，两个独立入口）**：
@@ -189,4 +197,4 @@ node tools/resolve-flavor.mjs --billion-context --save-token
 | `has-bundle.mjs` 逐组探测 | CLI 冒烟 | 每 profile 一行 `<name>\t<0\|1>`、**退出码恒 0**；本机缺省探测 `desktop 0` / `headless 0` / `web 1`，`--package=dsh-plugin-save-token` 同形；缺参数 exit `2` |
 | `resolve-flavor.mjs` 键 → 目录 → 旗标 | CLI 冒烟 | `plain\tdsh-adg-preset\t`（第三列为空）/ `bili\tdsh-adg-preset-bili\t--with-billion-context` / `bili+save-token\tdsh-adg-preset-bili-save-token\t--with-billion-context --with-save-token`；三条都 exit `0` |
 | **把 gen 的旗标传给 `resolve-flavor.mjs`**（`--with-save-token`） | CLI 冒烟 | exit `2`，stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）` ⇒ 两个入口的旗标**不是一套**（前者表示"装着该组"，后者表示"生成时带上该组"） |
-| 补丁文件名不是历史名（`dsh-plugin-save-token` 用 `./cordis.patch.yml`） | 人工 review | 判据在 `tools/flavors.mjs` 的 `probeBundle`：从包自己的 `package.json` 的 `dsh.bundle.patch` 读，读不到才退回 `dsh.bundle.patch.yml`；本机 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json` = `"./cordis.patch.yml"`（写死历史名会把装了它的 profile 判成"没装"） | |
+| 补丁文件名不是历史名（`dsh-plugin-save-token` 用 `./cordis.patch.yml`） | 人工 review | 判据在 `tools/flavors.mjs` 的 `probeBundle`：从包自己的 `package.json` 的 `dsh.bundle.patch` 读，读不到才退回 `dsh.bundle.patch.yml`；判据可照抄 `node -p "require('$env:USERPROFILE/.dsh/profiles/web/node_modules/dsh-plugin-save-token/package.json').dsh.bundle.patch"` 应得 `./cordis.patch.yml`（写死历史名会把装了它的 profile 判成"没装"）。**位置按环境变量读、账户名以本机为准**：`$env:USERPROFILE`（或 `${DSH_HOME}`）指到本机用户根即可 —— 这个 profile 下当前没有 `node_modules/dsh-plugin-save-token`，所以它是人工 review 项、不是自动化用例 | |

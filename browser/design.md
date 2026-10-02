@@ -36,7 +36,7 @@ last_reviewed: 2026-10-01
 
 - 不变量：
   - I1: profile 只能来自**显式配置**（`--profile` / `ADG_BROWSER_PROFILE`）或**规范默认**（`<DSH_HOME>/browser-profile`）；禁止任何随会话工作区漂移的推断（相对路径只在 `--profile` 显式给出时按 cwd 解析）。
-  - I2: 启动参数禁止出现伪装 / 降权旗标（`--no-sandbox`、`--disable-blink-features=…`、`--user-agent=…`、`--disable-web-security`）。来源：本机旧形态 `D:\dsh\.browser-tools\start-chrome-headed.ps1` 同时传了前三个，而它的驱动方式是 `connectOverCDP`（只连不启），这三个旗标零收益。
+  - I2: 启动参数禁止出现伪装 / 降权旗标（`--no-sandbox`、`--disable-blink-features=…`、`--user-agent=…`、`--disable-web-security`）。来源：本机旧形态（那时用一个一次性启动脚本按变体拼旗标，2026-10-02 复核该脚本已不在机器上，**未随仓库分发、当前不可复跑**）同时传了前三个，而它的驱动方式是 `connectOverCDP`（只连不启），这三个旗标零收益。
   - I4: 端口非法值（非整数、< 1、> 65535）禁止静默回落到默认值 —— 静默回落会让两个不同的实例占同一个默认端口，或让调用方以为自己连的是 A 其实连的是 B。
 
 ### BrowserInstance（生命周期型）
@@ -82,11 +82,11 @@ last_reviewed: 2026-10-01
 ## 非功能红线
 
 - 禁止引入第三方依赖（playwright / puppeteer / ws 等一律不许）。来源：旧形态为驱动浏览器装了 `playwright-core`，它启动时自带 `--remote-debugging-pipe` 与 `Page.addScriptToEvaluateOnNewDocument` 注入、并自带 `--disable-blink-features=AutomationControlled`；本模块要的只是三个方法，不值得换那套注入面。I6 由测试钉住。
-- 禁止把 profile 写进会话工作区、或写死任何本机绝对路径（`D:\dsh\…`、`C:\Users\<某人>\…`）。来源：旧 persona 写的是「放工作区里一个固定目录」，工作区一换 profile 就换，登录态当场清零 —— 这正是「浏览器代理经常被登录拦住」的直接成因。
+- 禁止把 profile 写进会话工作区、或写死任何本机绝对路径。来源：旧 persona 写的是「放工作区里一个固定目录」，工作区一换 profile 就换，登录态当场清零 —— 这正是「浏览器代理经常被登录拦住」的直接成因。（这一条里出现的本机路径一律是**反例示范，非真实引用**：`<仓库根>\…`、`<用户根>\…` —— 它们是"不要写成什么样"的示例，不是让你去读的文件。）
 - 浏览器候选次序是 **Chrome → Brave → Edge**，且只用「环境变量给出的标准安装位置」探测，禁止写死本机路径。来源：2026-10-01 本机实测——该机只装了 Brave 与 Edge，旧次序（Chrome → Edge）因此选中系统自带的 Edge，而用户要的是他主动装的 Brave。由 A20（次序、三种候选形状）与 A20b（只有 Brave + Edge 时选中 Brave）钉住。
 - 禁止在人不在场的情况下关闭有头窗口。来源：`live → closed` 会丢内存会话态；用户可能正登录到一半。要用 `close` 必须先确认本轮交互已完成。
 - 禁止代填账号密码、禁止导出/读取 profile 的 cookie 库、禁止验证码识别或指纹伪装。来源：旧形态的 `start-chrome-headed.ps1` 带了伪装旗标与伪 UA；这三件事既不稳定（站点风控升级比脚本快），也越过了「登录由人完成」的边界（`preset/design.md` I12）。
-- 禁止把「浏览器起不来」写成需要重试的情形：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）时必须停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**：受限令牌下它是否同样失败、以什么签名失败都没有量过（量法见 `testing-guide.md` 第 4 节），禁止把上面两条签名套到它头上。
+- 禁止把「浏览器起不来」写成需要重试的情形：命中沙箱失败签名（Chrome 退出码 21 / Edge `platform_channel.cc … 拒绝访问。(0x5)`）时必须停手如实报（`preset/design.md` I11）。**Brave 的失败签名未观测**：受限令牌下它是否同样失败、以什么签名失败都没有量过（量法见 `testing-guide.md`「人工 review 项」一节），禁止把上面两条签名套到它头上。
 - 禁止关掉**不是本任务开的**标签页（尤其用户正在登录 / 正在看的那个），也禁止用 `close-tab` 把页面关到 0 个来间接关浏览器（I9 / I10）。来源：用户窗口里既有登录态也有人正在用的页 —— 一个"清理得干净"的动作如果关掉了用户登录到一半的表单，代价远大于多留几个标签页。
 
 ## For Agents

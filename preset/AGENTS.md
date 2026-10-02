@@ -1,8 +1,8 @@
 # AGENTS.md — preset（Adg preset 的定义）
 
-本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 8 个专家行（其中第 8 行 `agent-general` 是交接专用的**叶子**），外加三个交给 `tools/gen-preset-bundle.mjs` 生成 bundle 的源文件（`agent.cordis.yml` / `preset.yml` / `bundle.package.json`）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
+本模块 = 一份 agent-plane 组合的定义：调度 persona（名册 + 分派规则 + 五条**编排层**规则 + 一条**输出纪律** + 一条**交接闸门**）+ 8 个专家行（其中名册最后一行 `agent-general` 是交接专用的**叶子**），外加三个交给 `tools/gen-preset-bundle.mjs` 生成 bundle 的源文件（`agent.cordis.yml` / `preset.yml` / `bundle.package.json`）。设计与不变量见 `design.md`；改动入口见 `skills/adg-add-agent/SKILL.md`。
 
-## 独立命令
+## 命令
 
 ```sh
 node tools/check-preset.mjs      # 校验仓库里的 preset/（唯一真相源；exit 0 通过 / 1 有 ERROR / 2 读不到目标文件）
@@ -51,6 +51,10 @@ node tools/gen-preset-bundle.mjs --with-save-token      # 目标 profile 装了 
 | preset 的部署形状（生成 bundle / 落点 / 写进 `dsh.profile.bundles`） | 根 `README.md`「给 AI 的安装指令」→ `tools/gen-preset-bundle.mjs` 的头部注释（生成形状与用法）→ `design.md` 的 `PresetRevision`（含 I3c） |
 | preset id（`adg`）本身 | `design.md`「跨模块改动路由」第 3 条（id 取自生成 patch 里那一行的 `config.id`，值由 `tools/gen-preset-bundle.mjs` 的 `PRESET_ID` 决定；验收判据见 `docs/registry.md`） |
 | 校验口径本身 | `tools/AGENTS.md` |
+
+## 版本区
+
+本模块的最终文档只有三份，都在仓库 `preset/`（`AGENTS.md` / `design.md` / `testing-guide.md`）—— 进 git、互相引用、改了就原地更新，不建"最新稿"；改动入口手册是 `skills/adg-add-agent/SKILL.md`（它是技能，不是本模块的版本区文档）。过程件（changelog / handoff / pending / 工作稿 / 证据快照）一律住被 `.gitignore` 排除的 `docs-work/`，不算版本区。完整清单与各文档的职责边界见根 `AGENTS.md`「版本区（文档目录入口）」。
 
 ## 生效方式
 

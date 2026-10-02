@@ -17,7 +17,7 @@ Adg 模式里每个「智能体」就是 Adg preset 的 `agent.cordis.yml` 中 `
 | `config.toolFilter.allow` | 它被允许使用的工具白名单 —— 这是**真实的能力边界**，不是提示 |
 | `config.backgroundMode` | 保持 `continuable`（后台接续干活，结果以通知回到调度者） |
 
-第 8 行 `agent-general`（`agent_general`）是**特殊的一行**，不是普通的专项专家：它**只在用户显式要求
+名册最后一行 `agent-general`（`agent_general`）是**特殊的一行**，不是普通的专项专家：它**只在用户显式要求
 "交接"时**才被派发（调度 persona 规则 17），拿的是本 preset 里最全的**叶子**工具集，用途是**上下文
 隔离**。给它加 `agent_*` 名册行、通用 `subagent` / `subagent_fork`、或 `workflow` / `ralph` 都是**反例**
 （`preset/design.md` I16）；它的 `send_message` 也不能删（运行时的"回报上级"指引靠它才注入）。

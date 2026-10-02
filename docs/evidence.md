@@ -20,17 +20,19 @@ last_reviewed: 2026-10-02
 | **真机实测** | 本机运行的 dsh 产生的日志/转写为凭，可逐行复核 | "在本机观测到过"（附时间、文件、行） |
 | **未观测** | 没有证据，只有设计意图或论证 | 只能说"设计上如此，未经观测" |
 
-## 证据来源（原始文件，本机路径）
+## 证据来源（原始文件；本机位置以环境变量形式给出）
 
-| 来源 | 路径 | 它是什么 |
+本节的路径是**当时的位置**，不是当前基线：用户根一律按环境变量读（`$env:USERPROFILE\…`，等价于 `${DSH_HOME}/…`）；仓库外的一次性脚本（沙箱探测、审计脚本）**未随仓库分发、当前不可复跑** —— 它们产出的数字是某次读数，不是判据。
+
+| 来源 | 位置 | 它是什么 |
 |---|---|---|
-| 子代理转写 | `C:\Users\cenqian\.dsh\sessions\…\session.v3.jsonl.zstd` | 子代理每一步的转录；文件是**多帧 zstd 拼接**，必须按魔数 `28 B5 2F FD` 切帧后逐帧解（Node 26 自带 `zlib.zstdDecompressSync`，但它一次只解第一帧） |
-| 审计脚本 | `D:\dsh\.dsh-token-audit\audit-run.mjs`（成本）/ `audit-steps.mjs`（子代理步数分布） | 从会话目录重算；报告写到同目录的 `audit-report.txt` / `audit-report.steps.txt`。`audit-steps.mjs` 打印 `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`、排序表与直方图 |
-| 沙箱探测（§6） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe1.js` / `probe2.js`（输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
-| 人工介入探测（§7） | `D:\dsh\_archive\2026-09-26-sandbox-probes\probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘） | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
+| 子代理转写 | `$env:USERPROFILE\.dsh\sessions\…\session.v3.jsonl.zstd`（等价 `${DSH_HOME}/sessions/…`；**当时的账户名是 `cenqian`，2026-10-02 复核该账户已不是本机账户**，所以位置只能按环境变量读） | 子代理每一步的转录；文件是**多帧 zstd 拼接**，必须按魔数 `28 B5 2F FD` 切帧后逐帧解（Node 26 自带 `zlib.zstdDecompressSync`，但它一次只解第一帧） |
+| 审计脚本（**未随仓库分发**） | 两个一次性脚本 `audit-run.mjs`（成本）/ `audit-steps.mjs`（子代理步数分布），当时放在仓库外一个临时目录（2026-10-02 复核已不在机器上、**当前不可复跑**） | 从会话目录重算；报告写到同目录的 `audit-report.txt` / `audit-report.steps.txt`。`audit-steps.mjs` 打印 `children=… min=… p10=… p25=… p50=… p75=… p90=… max=… mean=…`、排序表与直方图 |
+| 沙箱探测（§6） | 仓库外一次性探测脚本 `probe1.js` / `probe2.js`（当时放在一个临时归档目录；**不属于任何交付包、当前不可复跑**；输出 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`，如 `edge-dumpdom.err.txt`） | 在受限会话里逐条探测管道 stdio 与浏览器启动。**不属于任何交付包** |
+| 人工介入探测（§7） | 同一批仓库外一次性脚本：`probe3-launch.js`（分离启动有头浏览器）/ `probe3-attach.js`（另一次调用重连它）/ `probe4-cookie.js`（cookie 是否落盘）；**当前不可复跑** | 验证「用户手动登录后专家接着用」的**机制**：窗口存活 + 跨调用 CDP 重连。**不属于任何交付包** |
 | 静态自检 | `node tools/check-preset.mjs` | 见 `tools/testing-guide.md` |
 | 生成物自检（§10 / §15） | `node tools/check-bundle-flavor.mjs <cordis.patch.yml> <plain\|bili\|save-token\|bili+save-token>` | 钉住 **bundle 产物**里每个注入组的名字有无（该在的组必须全有、不该在的组一个都不能有、`notInjected` 出现即错），外加 `compaction-basic` 的 `auto` 只在 bili 味道为 `false`；四味道实测见 §15。原来只有这一句：钉住 **bundle 产物**里 billion-context 那四个名字的有无；`check-preset.mjs` 读的是源文件（专家行在第 4 列），产物里它们在第 14 列，产物是它的盲区。零依赖按行扫、自己探测缩进 |
-| 构建期注入组的挂载判据（§10 / §15） | 判据实现 `tools/flavors.mjs` 的 `probeBundle`，入口 `node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（缺省包名 `billion-context`；**逐个注入组各问一次**，save-token 组加 `--package=dsh-plugin-save-token`）；被判对象 = 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名 **且** `profiles/<p>/node_modules/<包名>/<补丁文件>` 存在，补丁文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读（billion-context = `./dsh.bundle.patch.yml`、dsh-plugin-save-token = `./cordis.patch.yml`，实测于 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json` 的 2.4.1），读不到才退回历史名 `dsh.bundle.patch.yml`。它取代了 2026-09-28 的 `tools/has-billion-context.mjs`（**已删除**，口径与实测见 §15） | 判据是**单向**的，只决定这个 profile 拿哪份味道（两组的布尔组合决定 plain / bili / save-token / bili+save-token）。实现只在这一处 |
+| 构建期注入组的挂载判据（§10 / §15） | 判据实现 `tools/flavors.mjs` 的 `probeBundle`，入口 `node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（缺省包名 `billion-context`；**逐个注入组各问一次**，save-token 组加 `--package=dsh-plugin-save-token`）；被判对象 = 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名 **且** `profiles/<p>/node_modules/<包名>/<补丁文件>` 存在，补丁文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读（billion-context = `./dsh.bundle.patch.yml`、dsh-plugin-save-token = `./cordis.patch.yml`，2026-10-01 实测于当时那个 profile 里装的 `dsh-plugin-save-token` 包、版本 **2.4.1**（版本号是读数）），读不到才退回历史名 `dsh.bundle.patch.yml`。它取代了 2026-09-28 的 `tools/has-billion-context.mjs`（**已删除**，口径与实测见 §15） | 判据是**单向**的，只决定这个 profile 拿哪份味道（两组的布尔组合决定 plain / bili / save-token / bili+save-token）。实现只在这一处 |
 
 ## 1. 成本基线（真机实测，改动前的 32 会话 / 983 请求快照）
 
@@ -75,7 +77,7 @@ last_reviewed: 2026-10-02
 | **子代理还在 `running` 时调度者是否**不再**把它 steer 进去**（2026-09-29 追加的规则 7 `status` 判据） | **未观测**：该半条于 2026-09-29 按用户报告追加，尚无真实 Adg 会话走过（`preset/testing-guide.md` 的 N10 / N11 同此结论）。**机制**是源码级事实（`send_message` 恒为 steer、落点是 `inbox.nextStep` —— §12），**行为**没有真机证据。量法：造一个长任务派给某个专家，在它 `running` 时对调度者提一个**同实体但不同交付物**的问题 —— 判据是①转录里**没有**指向该 `running` 子代理的 `send_message` ②调度者要么自己答、要么结束本轮等结算通知 ③结算后那件新事确实被接给**同一个**子代理（`list_agents` + `send_message`） |
 | **旁路是否被"记录而非被做"**（必要性闸门 + 强制挂号） | **未观测**。**来源（这是这条规则的依据，不是结论）**：一次真实任务的旁路委派 —— 用户要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理，而那次调研只服务同一条选购需求（同实体同性质）、且不在验收标准里。判据：抽 3–5 个含旁路诱因的任务，最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」且转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被**静默丢掉**（省了 token 却让用户不知道有东西没查，比不做这条规则更糟）；出现委派 = 闸门未生效 |
 | **浏览器任务是否真的"同一份信息只在一个站点取"**（I13 ① 的浏览器那半） | **未观测**：该半条于 2026-09-27 按用户要求追加，尚无真实 Adg 会话走过（`preset/testing-guide.md` 的 N8 / N9 同此结论）。**来源是用户报告**（"浏览器操作是非常耗时的"）＋本机实测的成本下限（一次性读页 **0.8–2.0 秒**、工具侧且不含每个模型步，见 §8）。量法：给一个**单站点即可答完**的信息需求（例如某酒店某晚房价），数 `agent_browser` 委派里点名的站点数（同一份信息应为 **1 个**；三个例外都不成立却出现 ≥2 个 = 违例），并对照同任务 `TABS` 的净增长 |
-| **重启后真实 `adg` 专家行是否看得见、调得通 bili 那四个上下文工具** | **未观测**（§10 未观测 ①）：注入只在产物里，可见性探针走的是**通用委派**路径（§10.1 第 1 条），不是 `adg` 专家行。量法：重启 dsh → 新会话选「Adg 多智能体模式」→ 让调度者派一次 `agent_search`，在委派 prompt 里要求"先调一次 `acp_status` 并把结果原样报回来"；成功 = 该步返回工具结果而不是 `names unknown global tool`。注意第二个前提：bili 的 proxy 必须活着（端口读 `C:\Users\cenqian\.local\state\billion-context\proxy-origin`，本机上一进程留下的端口会失效） |
+| **重启后真实 `adg` 专家行是否看得见、调得通 bili 那四个上下文工具** | **未观测**（§10 未观测 ①）：注入只在产物里，可见性探针走的是**通用委派**路径（§10.1 第 1 条），不是 `adg` 专家行。量法：重启 dsh → 新会话选「Adg 多智能体模式」→ 让调度者派一次 `agent_search`，在委派 prompt 里要求"先调一次 `acp_status` 并把结果原样报回来"；成功 = 该步返回工具结果而不是 `names unknown global tool`。注意第二个前提：bili 的 proxy 必须活着（端口读 `$env:USERPROFILE\.local\state\billion-context\proxy-origin`，本机上一进程留下的端口会失效） |
 | **preset realm 里 `compaction-basic` 的 `auto` 到底取什么值** | **部分已处置，仍有一条未观测**。2026-09-28 晚按用户裁决**不再留在范围外**：生成物在 preset 自己的 `compaction` 组里构建期注入 `config: {auto: false}`（§10.1 第 9 条，与 bili 官方 patch 同键同值 ⇒ 幂等），所以"专家会不会被两套压缩同时折叠"在设计上已封住。**仍未观测**：(a) bili profile 层那份 `- id: compaction-basic` 到底能不能跨 lane 命中 realm 实例；(b) 注入的键在**真实 Adg 会话**里确实关掉了原生自动折叠（产物断言只证明键写对了）。量法：Adg 会话转写里找 `compress` 工具调用之外的自动折叠痕迹，与 bili 的 `/acp-cache` 台账对齐；`/compact` 手动触发应当仍可用 |
 | **截断之后就"就地续跑同一个子代理"**（2026-09-29 追加的规则 7 接续半条） | **未观测（行为）**：机制与频次都已实测（§14：6 条 `max-tokens` 截断，全在 `adg` 子代理会话里），但这 6 个会话在截断后**记录数为 0** —— 没有一条续写过，所以"调度者会不会真的去接""接住之后产出是否完整"都没有先例。量法：转录里找 `max-tokens` 的 `turn/end` 之后**有没有**指向**同一个 child session** 的 `send_message`，并检查续写后该委派的交付块是否完整（`preset/testing-guide.md` 的 N12 / N13 是人工 review 那半） |
 | **异实体按实体拆 + 共同结论层工件的真实效果**（2026-09-29 追加的规则 6 两半） | **未观测**：同上，规则刚落、无真实 Adg 会话走过。量法：造一个"同一性质、N 个实体"的任务（用户例子 1：3 款手表），数①**子代理个数**是否等于实体数（而不是 1 个通读全部）②各条委派的产出里有没有跨实体内容（有 = 边界没写死）③调度者上下文增量（聚合 N 份结论会抬高它的上下文 —— 观测量要从"子代理个数"扩成"**子代理个数 + 调度者上下文增量**"）；再造一个"同一批材料、多个问题"的任务（用户例子 2），看有没有先产出**一份**共同结论层工件、后续委派是否只读工件与切片（而不是各自全量重读），以及源材料变更后有没有先刷新工件（`preset/testing-guide.md` 的 N1 / N2 / N3） |
@@ -83,12 +85,14 @@ last_reviewed: 2026-10-02
 ## 5. 怎么重新测量（可直接照抄）
 
 ```powershell
-# 成本：报告写到 D:\dsh\.dsh-token-audit\audit-report.txt（覆盖上一次）
-node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
+# 成本：报告写到**会话目录旁边**（同目录的 audit-report.txt，覆盖上一次）
+node <审计脚本目录>\audit-run.mjs "$env:USERPROFILE\.dsh\sessions"    # 会话目录 = ${DSH_HOME}/sessions
 
 # 子代理步数分布：比分位数，不比均值
-node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"
+node <审计脚本目录>\audit-steps.mjs "$env:USERPROFILE\.dsh\sessions"
 ```
+
+**现状（2026-10-02 复核）**：这两个审计脚本与它们产出的报告**当前都取不到** —— 脚本未随仓库分发、原来那个目录已不在机器上，报告也不在。所以本节只是**口径描述**，不能当可复跑证据；上面第 1–4 节的数字是**某次读数、不是当前基线**。要重测就照这个口径自己写一个：读 `$env:USERPROFILE\.dsh\sessions`（= `${DSH_HOME}/sessions`）下的 `session.v*.jsonl.zstd`（**多帧 zstd 拼接**，读法见本文「读档案的坑（下次别再踩）」那条），把报告写在同目录。
 
 两条都必须**改动前后各跑一次**才能判断一次改动是帮忙还是添乱；
 拿不出前后对比数字就不要宣称某个改动"省了成本"（这条同时是 `preset/design.md` 的非功能红线来源）。
@@ -102,10 +106,10 @@ node D:\dsh\.dsh-token-audit\audit-steps.mjs "C:\Users\cenqian\.dsh\sessions"
 **观测条件与方法**：本机（Windows）、同一个 `node`（v26.9.0）、同一批浏览器二进制，**只改会话文件策略**
 （A 列 = `workspace-write`，B 列 = `danger-full-access`）；两次都由 `pwsh` 工具启动 `node` 脚本 ——
 也就是「受限令牌的孙进程」，与专家侧的实际运行条件一致。
-**复现脚本**：`D:\dsh\_archive\2026-09-26-sandbox-probes\probe1.js`（stdio 与浏览器启动 + 真驱动一次 CDP）、
-`D:\dsh\_archive\2026-09-26-sandbox-probes\probe2.js`（按变体收集浏览器 stderr）；原始输出在 `D:\dsh\_archive\2026-09-26-sandbox-probes\` 下的
+**复现脚本（未随仓库分发、当前不可复跑）**：两个一次性探测脚本 `probe1.js`（stdio 与浏览器启动 + 真驱动一次 CDP）、
+`probe2.js`（按变体收集浏览器 stderr），当时放在仓库外一个临时归档目录（2026-10-02 复核该目录已不在机器上）；它们的原始输出是同目录下的
 `probe1.log` / `probe2.log`，外加按变体命名的 `<变体>.out.txt` / `<变体>.err.txt`（如 `edge-dumpdom.err.txt`）。**这两个脚本不属于任何交付包**
-（与 `D:\dsh\.dsh-token-audit\` 那批审计脚本同一口径）。B 列是同一份脚本在同一天重跑的，不是旁证。
+（与那批审计脚本同一口径）。B 列是同一份脚本在同一天重跑的，不是旁证。
 
 | 探测 | A：`workspace-write` | B：`danger-full-access` |
 |---|---|---|
@@ -140,9 +144,9 @@ Edge 在全访问下只做到 `--dump-dom` 退出码 0，**没有再往深做**�
 （`dsh-subagent/lib/index.js` 的 `captureDelegatedPolicyOverrides()`），而 `dsh-user-approval` 对该策略
 直接返回 `rejected`、不弹窗 —— 所以子代理**不能**用 `sandbox_permissions` 升权。
 第四问：**父级切换权限后，已经在跑的子代理会跟着变吗？** —— **不会**。
-`captureDelegatedPolicyOverrides()`（`dsh-subagent/lib/index.js:524-541`）在子代理**首次 await 之前**就同步取当时的
+`@deepseek-ai/dsh-subagent` 导出的 `captureDelegatedPolicyOverrides()` 在子代理**首次 await 之前**就同步取当时的
 父会话状态，并在子会话尚未发布的窗口里把它写成 `source: 'delegation'` 的三条子会话事件
-（`:552-562` 的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；
+（同一包导出的 `appendDelegatedPolicyOverrides()`：`sandbox/mode` / `approval/policy` / `permission/preset`）；
 同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child`。
 ⇒ **新权限只对"切换之后新开的子代理"生效**，已经在跑的子代理拿不到；要让它用上只能**新建委派**（或停掉旧的再重派）。
 **未观测（行为）**：真机上调度者在用户切权后是否真的会新建委派，而不是干等旧子代理变得可用 —— 已写进
@@ -176,7 +180,7 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 **结论**：人工介入只能「专家停手并把未决问题写进最终结果 → 调度者用 `ask_user_question` 转达 →
 按回答重派／换方式／收手」。那句错误文本本身就把这个分工写成了规定动作。
 
-**机制实测**（同一台机器、同一天；脚本 `D:\dsh\_archive\2026-09-26-sandbox-probes\probe3-launch.js` 与 `probe3-attach.js`，
+**机制实测**（同一台机器、同一天；脚本 `probe3-launch.js` 与 `probe3-attach.js` —— 仓库外一次性脚本，**未随仓库分发、当前不可复跑**，
 **不属于任何交付包**）：「用户手动登录、专家接着用」要求浏览器比启动它的那次工具调用活得更久，
 并且能被**另一个进程**重新接上。分两次进程（= 两次工具调用）实测：
 
@@ -252,16 +256,16 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 登录态能不能跨浏览器重启；外加第四件：**标签页为什么会堆积、修复后靠什么保证不再堆积**。根 `README.md`「浏览器工具链与登录态资产」、`browser/design.md`（I1 / I3 / I8 / I9 / I10）
 与 `browser/testing-guide.md` 引用本节。
 
-**旧形态的直接成因（本机观测，不是推测）**：`D:\dsh\.browser-tools\` 下有 130+ 个一次性脚本
+**旧形态的直接成因（本机观测，不是推测）**：当时在仓库外一个临时目录（**2026-10-02 复核：该目录已不在机器上**）下攒了 130+ 个一次性脚本
 （`lib.js` 用 `playwright-core` 的 `connectOverCDP`；`start-chrome-headed.ps1` 用 PowerShell `Start-Process`
 起系统 Chrome，并额外传了 `--no-sandbox` / `--disable-blink-features=AutomationControlled` / 伪造 `--user-agent`）。
 旧 persona 写的是「profile 放**工作区里**一个固定目录，例如 `.browser-profile`」—— 工作区一换 profile 就换。
-**对既有登录态的只读取证**（把 `D:\dsh\.browser-profile\Default\Network\Cookies` 拷到临时目录后用
-`node:sqlite` 只读查询，不碰原文件）：
+**对既有登录态的只读取证**（把旧形态工作区里那个固定目录下的 `.browser-profile\Default\Network\Cookies` 拷到临时目录后用
+`node:sqlite` 只读查询，不碰原文件；**该目录 2026-10-02 复核已不存在**）：
 
 | 观测 | 值 |
 |---|---|
-| cookie 库 | `D:\dsh\.browser-profile\Default\Network\Cookies`，94,208 B，最后写入 2026-09-27 17:40 |
+| cookie 库 | `<旧形态工作区>\.browser-profile\Default\Network\Cookies`，94,208 B，最后写入 2026-09-27 17:40 |
 | 域名数 / 带 Secure 或 HttpOnly 的条数 | **32 / 58** |
 | 主要登录域 | `.ctrip.com`(22)、`.huazhu.com`(9)、`mpassport.huazhu.com`(5)、`passport.ctrip.com`(5)、`.qunar.com`(9)、`login.microsoftonline.com`(7)、`login.live.com`(6) |
 
@@ -271,7 +275,7 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 
 | 步骤 | 命令 | 结果 |
 |---|---|---|
-| 解析 | `node cli.mjs profile` | `PROFILE=C:\Users\cenqian\.dsh\browser-profile`、`PROFILE_EXISTS=false`、`CHROME=C:\Program Files\Google\Chrome\Application\chrome.exe` |
+| 解析 | `node cli.mjs profile` | `PROFILE=$env:USERPROFILE\.dsh\browser-profile`、`PROFILE_EXISTS=false`、`CHROME=<Chrome 标准安装位置>\Application\chrome.exe`（2026-09-27 读数；当时的账户名是 `cenqian`） |
 | 有头启动 | `node cli.mjs launch --url https://example.com` | `STATE=STARTED`、`BROWSER=Chrome/152.0.7977.76`、`TABS=1` |
 | **幂等复用** | 再跑一次 `node cli.mjs launch` | `STATE=REUSED`（**没有重启**）、`TABS=1`、标题 `Example Domain` |
 | 读页 | `node cli.mjs text --match example.com --out <文件>` | `TITLE=Example Domain`、`BYTES=129`、正文写进 `OUT=` 指定的文件（不占工具结果） |
@@ -317,14 +321,14 @@ node -e "const{spawn}=require('child_process');try{spawn('cmd.exe',['/c','echo h
 
 旧候选次序是 Chrome → Edge（**没有 Brave**），所以在本机上 `profile` 报出的是 Edge。2026-10-01 把次序改成
 **Chrome → Brave → Edge**（只用环境变量给出的标准安装位置探测，不写死路径；顺序理由见 `browser/design.md`「非功能红线」），
-并在 **`danger-full-access`** 会话里用**部署后的副本**（`C:\Users\adkun\.dsh\browser\`，Node v26.10.0）跑完整闭环：
+并在 **`danger-full-access`** 会话里用**部署后的副本**（`$env:USERPROFILE\.dsh\browser\`，Node v26.10.0）跑完整闭环：
 
 | 步骤 | 命令 | 结果 |
 |---|---|---|
-| 解析 | `node cli.mjs profile` | `PORT=9333`、`CHROME=C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe`、`PROFILE_EXISTS=false` |
+| 解析 | `node cli.mjs profile` | `PORT=9333`、`CHROME=<Brave 标准安装位置>\Application\brave.exe`、`PROFILE_EXISTS=false`（2026-10-01 读数） |
 | 有头启动 | `node cli.mjs launch --url https://example.com` | `STATE=STARTED`、`BROWSER=Chrome/154.0.8037.58`（Brave 在 CDP 里自报 `Chrome/…`）、`TABS=1` |
 | **幂等复用** | 再跑一次 `launch` | `STATE=REUSED`、`BROWSER=Chrome/154.0.8037.58`、`TABS=1` |
-| 读页（同 URL 已开着） | `text --url https://example.com/` | `BYTES=1301`、**不打 `TAB_CLOSED=`** —— `sessionFor` 对**完全相同的 URL** 是「精确命中则复用」（`cli.mjs:129-144`），根本不新开临时页 |
+| 读页（同 URL 已开着） | `text --url https://example.com/` | `BYTES=1301`、**不打 `TAB_CLOSED=`** —— `@/cli.mjs` 里 `sessionFor` 那条分支对**完全相同的 URL** 是「精确命中则复用」（按 `sessionFor` 与 `TAB_CLOSED` 两个名字在 `cli.mjs` 里检索即可命中），根本不新开临时页 |
 | 读页（当前没开的 URL） | `text --url "https://example.com/?adg=brave"` | `BYTES=1301`、`TAB_CLOSED=8DAB610499F9A803E5B53B8F18BC897F`、`TABS` **1 → 1**（零残留） |
 | 护栏（I9，只剩 1 页） | `close-tab --match example.com` | **退出码 1**、`ERROR=关掉它（们）会剩 0 个页面，那等于关浏览器；要关浏览器请用 node cli.mjs close`、浏览器仍活着 |
 | 点名清理 | `open --url https://www.iana.org/help/example-domains` → `close-tab --match example.com` | 前者 `TAB_OPENED=`、`TABS=2`；后者 `TAB_CLOSED=Example Domain \| https://example.com/`、`CLOSED_TABS=1`、`TABS` **2 → 1** |
@@ -336,7 +340,7 @@ Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单�
 
 **单元测试**：`cd browser && node --test --test-isolation=none test` → **37/37 通过**（不需要浏览器；CDP 通道用可注入的假 socket 测）。
 
-**部署实测**：`install.ps1` 把 `browser/` 拷到 `C:\Users\cenqian\.dsh\browser\`；用**部署后的副本**重跑了一遍
+**部署实测**：`install.ps1` 把 `browser/` 拷到 `$env:USERPROFILE\.dsh\browser\`；用**部署后的副本**重跑了一遍
 `profile` / `launch` / `eval` / `close`，全部成功（persona 引用的就是这条路径）。preset 那一份部署后与仓库
 `preset/agent.cordis.yml` **SHA256 相同**（`A6F26DFB…7F860`）。
 
@@ -348,7 +352,7 @@ Brave 在受限令牌下如何失败**未观测**，见下面的未观测清单�
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 调用；
   出现「现场手写 CDP 脚本」即 persona 未被遵守。
 - **macOS / Linux**：Chromium 系候选路径（Chrome / Brave / Edge）与有头启动**没有**在那两个平台上跑过（单元测试只钉了 win32 的候选形状）。
-- **Brave 在受限令牌下的失败签名**：2026-10-01 加 Brave 支持那次**只在 `danger-full-access` 下跑过**（闭环见上）；它在 `workspace-write` / `read-only` 下是否同样起不来、以退出码 21 还是 Mojo `拒绝访问 (0x5)` 失败，**都没有量过**。量法：在 `workspace-write` 会话里 `ADG_CHROME="C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" node cli.mjs launch`，记下退出码与 stderr 首行，再与本节的 Chrome / Edge 两行对照。
+- **Brave 在受限令牌下的失败签名**：2026-10-01 加 Brave 支持那次**只在 `danger-full-access` 下跑过**（闭环见上）；它在 `workspace-write` / `read-only` 下是否同样起不来、以退出码 21 还是 Mojo `拒绝访问 (0x5)` 失败，**都没有量过**。量法：在 `workspace-write` 会话里 `ADG_CHROME="<Brave 标准安装位置>\Application\brave.exe" node cli.mjs launch`，记下退出码与 stderr 首行，再与本节的 Chrome / Edge 两行对照。
 - **多实例并发同一端口**：没有观测 —— `browser/testing-guide.md` 的迁移矩阵里按「第二次 `launch` 撞端口 → 超时分支报错」
   登记为**推断**，不是实测。
 - **`install.sh` 未在 Windows 上执行过**：本机没有 `sh` / `bash`，改动只做了人工核对（`install.ps1` 那一侧是真跑过的）。
@@ -406,7 +410,7 @@ node cli.mjs close
   → 该模式在新会话里直接不可用。
 - **它不影响挂载，只让整份 preset 变 `broken`**，所以 `check-preset.mjs`（文本扫描器）与
   `--dump-config`（只证明 patch 被读到）**都发现不了** —— 只有运行期读 `agentPresets` 才看得见。
-- 出厂（**dsh 安装目录里**的）`presets/standard.patch.yml:119-122` 现在用的是 `@deepseek-ai/dsh-workflow-ptc`
+- 出厂（**dsh 安装目录里**的）`presets/standard.patch.yml` 里那条现在用的是 `@deepseek-ai/dsh-workflow-ptc`
   （行 id `workflow-ptc`、`config: {provider: spawn}`）；`preset/agent.cordis.yml` 已按此改，
   并在文件里留了注释记录这次改名与原诊断字符串。
 - **一般教训**：composition 里写的 `@deepseek-ai/*` 包名会随 dsh 升级**改名**；改完必须做真实挂载
@@ -437,7 +441,7 @@ node cli.mjs close
 
 1. **`ctx.agentPresets` 在已被释放的 scope 里访问会抛
    `cannot get required service "agentPresets" in inactive context`**；这一句放在 `setInterval`
-   里就是**未捕获异常 → Host 崩溃**（本机这次真崩过一次，`bundle/_preset-verify3/index.js:54`）。
+   里就是**未捕获异常 → Host 崩溃**（本机这次真崩过一次；当时用的探针 bundle 目录 `bundle/_preset-verify3` —— 探针目录不入库，由 `.gitignore` 的 `bundle/` 排除）。
    探针要：属性访问放进 `try/catch`，并在 `scoped.on('dispose', …)` 里清掉定时器。
 2. **ESM registry 按文件 URL 缓存**：同一个目录的探针插件重新挂载**不会**重跑 `apply`
    （第二次运行什么都没写出来）。要重跑就得换一个新目录（新 URL）。
@@ -447,18 +451,18 @@ node cli.mjs close
 - **`$DSH_HOME/profiles/node_modules/` 这个"共享解析根"在本版被排除**：拷在那里的包，挂载行
   解析不到；改放 profile **自己的** `node_modules`（或 `link:` 稳定目录）才起得来。
   解析是**两段锚定**：先从 dsh 安装目录，再落到当前 profile
-  （`@deepseek-ai/dsh-app-boot/lib/index.js:477-481`）。
+  （`@deepseek-ai/dsh-app-boot` 里做这一步解析的那处判定，按"先安装目录"这条注释/顺序检索即命中）。
 - 本机现状：`profiles/web/node_modules/dsh-adg-preset` 是指向
   `$DSH_HOME/bundles/dsh-adg-preset` 的 **link**；`profiles/web/node_modules/@deepseek-ai/*` **0 个目录**，
   而全部 `@deepseek-ai/*` 行照样 active。
 - preset 声明**不在** profile patch 里（走 bundle，挂载行由包自己带）。
-- **`link:` 是重启安全的**（源码级事实，`@deepseek-ai/dsh-app-boot/lib/index.js:596-598`）：
+- **`link:` 是重启安全的**（源码级事实，`@deepseek-ai/dsh-app-boot` 里那次 fallback 修复，逐字注释 `pnpm-installed packages and every other symlink stay` 可直接 grep）：
   启动时那次 fallback 修复**只**删目标落在 `<profile>/.dsh-module-fallback/node_modules` 里的链接，
   原文是"pnpm-installed packages and every other symlink stay"，且没有该目录的 profile 完全不动。
   所以 `link:` 进 profile 的 `dsh-adg-preset` 不会被下一次启动清掉。
   反过来说，如果哪天 bundle 真的解析不到，dsh 给的诊断文本是
   `Selected profile bundle "…" could not be loaded; repair or remove its bundle selection.`
-  （同文件 `:3179`）。
+  （同一包里那句诊断文本，按这句话检索即命中）。
 
 ### 9.6 一个**没修好**的环境问题（如实记录，别读成已解决）
 
@@ -472,9 +476,9 @@ node cli.mjs close
 - **影响：0。** 所有已声明的依赖都解析得到、所有行都是 active —— 本节两次真实挂载实测就是在漂移之后做的。
 - **修法（必须先关掉 dsh）**：关掉 dsh → 重跑 `install.ps1` / `install.sh`（它会重跑 `pnpm add link:…`），
   或直接在该 profile 里 `pnpm install` 重建 `node_modules` / `.modules.yaml` / 锁文件。
-- **本机两个 profile 的当前形状不一样，如实记下来**：
-  - `desktop` 的 `pnpm add` **成功了** —— 它的清单是 `dsh-adg-preset: link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`（新形状）。
-  - `web` 只有 **bundle** 换成了新形状（`link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`，是符号链接）。
+- **本机两个 profile 的当前形状不一样，如实记下来**（下面三处 manifest 取值是 2026-09-28 读数：当时那是**另一个账户**的家目录，现在这台机器上那个账户已不存在 ⇒ **路径写法一律用 `${DSH_HOME}`，不要照抄账户名**）：
+  - `desktop` 的 `pnpm add` **成功了** —— 它的清单是 `dsh-adg-preset: link:${DSH_HOME}/bundles/dsh-adg-preset`（新形状）。
+  - `web` 只有 **bundle** 换成了新形状（`link:${DSH_HOME}/bundles/dsh-adg-preset`，是符号链接）。
 - 脚本已按实测加固：**pnpm 失败只报告、不中断**（包已在位就不算失败），而且**只有在包真的出现在
   profile 的 `node_modules` 里之后**才写 `dsh.profile.bundles`；
   另有一条 5.1 专属坑：原生命令写 stderr 在 `$ErrorActionPreference='Stop'` 下会变成**终止错误**
@@ -484,7 +488,7 @@ node cli.mjs close
 **未观测（不许写成实测）**：① `desktop` profile 的**挂载**没有测过 ——
 `dsh --profile desktop --dump-config` 被拒（`error: profile "desktop" is managed exclusively by the
 Electron application`）；它的 bundle 依赖与挂载行都已按同一形状就位（本次 `pnpm add` 对它**成功**，
-清单里是 `link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset`），但没有运行期证据。
+清单里是 `link:${DSH_HOME}/bundles/dsh-adg-preset`），但没有运行期证据。
 ② Windows 上本机**没有 `sh`**，`install.sh` 这次的改动**没有在本机执行过**（只做了逐行 review 与语法对照）。
 ③ 探针那次没有单独记录 `agentPresets.list()` 的条数（只记了 `resolve` 与 `compositionInventory()`）。
 
@@ -497,9 +501,9 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 
 1. **真机实测（有局限）**：bili 的工具在子代理可见目录里是**裸名**（`compress` / `decompress` / `search_context` / `acp_status`，另加未纳入的 `acp_cache`），**没有 `mcp__` 前缀** ⇒ 它们能被 `toolFilter.allow` 引用。量法：在挂了 bili 的 profile `web` 的会话里用**通用 `subagent`** 派一个子代理，让它枚举自身可见/可调用工具 —— 回报 **34 个**，其中包含这 5 个裸名。
    **局限（不许读成 Adg 实测）**：这次探测走的是通用委派路径（其 session 头记 `agentPreset: "cordis"`，不是 `adg`），**不是** `adg` 专家行 ⇒ "真实 Adg 专家重启后看得见、调得通"已登记为 §4 未观测。
-2. **源码级事实（为什么 allow 是硬边界）**：`dsh-subagent/lib/types/child-agent.js:171-172` `if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter);`；`dsh-tools/lib/types/index.js:488-511` `restrict(filter)` 拿 `this.view(scope).restrictableNames` 比对、**未知名直接抛** `names unknown global tool ...`，L541 把限制作用在 **INHERITED** 可见面上（L553-557 的注释解释了 preset 迁到 agent plane 后"子过滤器不再约束它拿到的东西"这一历史成因）；`dsh-subagent/lib/types/descriptor.js:46` `TOOL_FILTER_KEYS = new Set(['allow', 'deny'])`（两者至少要给一个）。⇒ 后果是**那一次委派当场失败**，不是挂载失败（红线 7）。
-3. **源码级事实（为什么只能在 global 层解决）**：`dsh-base/lib/contracts.js:464-467`「A realm context has no session, no model plane, and no agent-facing tool plane」，preset 的工具面是 `@@ global @ preset` ⇒ **realm 里注册的工具永远进不了子代理的可见列表**。所以"给专家压缩能力"这件事必须靠一个注册在**全局层**的工具，bili 恰好如此（第 1 条）。
-4. **源码级事实（"不给工具"这一侧的代价）**：bili `src/server.ts:3335-3336` `const shouldInject = opts.compress.injectTool && !isTitleGen;`、`server.ts:3427` `if (shouldInject) sysParts.push(buildCompressSystemPrompt(...))` —— **系统提示那一段没有工具可见性护栏**（护栏只在 `plugin.ts:627` 的 `toolNames` 与 `plugin.ts:959` `const allowed = [...PROXY_TOOL_NAMES]` 这类**注册面**上）。⇒ 专家会收到"该压缩了就调 `compress` / 先看 `acp_status`"的指令，**手里却没有这两个工具**。这是本次改动真正的动机，不是"锦上添花"。
+2. **源码级事实（为什么 allow 是硬边界）**：`@deepseek-ai/dsh-subagent` 按 `if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter);` 收窄子代理的工具面；`@deepseek-ai/dsh-tools` 的 `restrict(filter)` 拿 `this.view(scope).restrictableNames` 比对、**未知名直接抛** `names unknown global tool ...`，并且限制作用在 **INHERITED** 可见面上（该文件里那段注释解释了 preset 迁到 agent plane 后"子过滤器不再约束它拿到的东西"这一历史成因）；过滤键集合是 `TOOL_FILTER_KEYS = new Set(['allow', 'deny'])`（两者至少要给一个，在 `@deepseek-ai/dsh-subagent` 里按这个常量名检索即命中）。⇒ 后果是**那一次委派当场失败**，不是挂载失败（红线 7）。
+3. **源码级事实（为什么只能在 global 层解决）**：`@deepseek-ai/dsh-base` 的契约注释逐字写着「A realm context has no session, no model plane, and no agent-facing tool plane」（按这句在一个包内检索即命中），preset 的工具面是 `@@ global @ preset` ⇒ **realm 里注册的工具永远进不了子代理的可见列表**。所以"给专家压缩能力"这件事必须靠一个注册在**全局层**的工具，bili 恰好如此（第 1 条）。
+4. **源码级事实（"不给工具"这一侧的代价）**：bili 的两处拼装 —— `const shouldInject = opts.compress.injectTool && !isTitleGen;` 与 `if (shouldInject) sysParts.push(buildCompressSystemPrompt(...))`（在 `billion-context` 包里按这两个片段检索即命中）—— **系统提示那一段没有工具可见性护栏**（护栏只在**注册面**：`toolNames` 与 `const allowed = [...PROXY_TOOL_NAMES]` 这类判定上）。⇒ 专家会收到"该压缩了就调 `compress` / 先看 `acp_status`"的指令，**手里却没有这两个工具**。这是本次改动真正的动机，不是"锦上添花"。
 5. **检验（生成物两种味道都验过，脚本已进仓库）**：`tools/check-bundle-flavor.mjs`，2026-09-28 本机输出：
    - plain 产物（`node tools/gen-preset-bundle.mjs bundle/adg-plain`）→ 9 个专家行全 `NONE`，allow 计数 `agent_file[10] agent_computer[7] agent_app[7] agent_browser[10] agent_search[2] agent_researcher[5] agent_coder[9] agent_reviewer[7] agent_general[16]`，`通过：9 个专家行，plain 模式断言成立`，**exit 0**。
    - bili 产物（`node tools/gen-preset-bundle.mjs --with-billion-context`）→ 全 `ALL`，计数 `14 / 11 / 11 / 14 / 6 / 9 / 13 / 11 / 20`（**每行正好 +4**），**exit 0**。
@@ -507,14 +511,15 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
    - **口径更新（2026-10-01，防误引）**：上面这一组是名册 **9 行**时代（含 `agent_app`）的读数。`agent_app` 并入 `agent_computer` 后名册 **8 行**、报告 **9 行**，`agent-browser` 的 `allow` 又多了 `read_image` ⇒ 当前字节数、allow 计数、负例条数与警告行号**一律以 §15 为准**（本节保留的是当时的事实）。
    - 零回归证据：**不带旗标重跑生成物，去掉注释行后与改动前已装的稳定产物逐行相同**（非注释行 `278 = 278`、diff `0`）。整体 SHA256 从 `8DC3165CD3B439AFFA721D0126E2489A9768ED0CED401EF01BA81A61EEEC5F81`（1.1.0 的 plain）变成 `8FD4D6A5B0C9D64AF33E5E3A9A6B2C65EE506FEC37FBCB91834904A8B1F78289`（1.2.0 的 plain）：**13 行差异全是注释**（生成物头部的 flavor 说明 + 源文件注释块新增的 `auto` 段）**加上 `package.json` 的版本号** ⇒ 行、键、取值一个都没动，改的是说明文字。
    - **踩过的坑（登记，防重踩）**：专家行在**源文件**里缩进 4 列、在**产物**里 14 列（被整体推进 `config.plugins:` 下），写死任一个数字都会"一行都匹配不到却照样通过" ⇒ 判据必须**自己探测缩进**；另外排除 `agent-instructions` 那行靠的是"行内必须有 `toolName:`"。
-6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR 第 496 行 agent-search …构建期注入的名字…`、exit 1。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。（**2026-10-01 现状是 0 / 3** —— 第三处是 `agent-browser` 的 `read_image`，见 §15；本条保留 2026-09-28 当时的事实。）
-7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs C:\Users\cenqian\.dsh\profiles web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。**（该脚本 2026-10 起由 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]` 取代 —— 逐组问，补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读；口径与四味道实测见 §15。上面这次读取本身仍是 2026-09-28 的历史事实。）**
-8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`C:\Users\cenqian\.dsh\bundles\` 下是 `dsh-adg-preset` 等稳定目录；`C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 10 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分多种味道、多个稳定目录，按 profile 各拿一份 —— 见 §11。）**
+6. **检验（源文件侧的护栏）**：`tools/check-preset.mjs` 新增 `BUILD_TIME_INJECTED_TOOLS`（那 4 个名字各带理由；`acp_cache` 单独注明"gen 的注入清单里没有这个"），源文件里手写它们 ⇒ **ERROR** 并指回 `--with-billion-context`。冒烟：在临时副本手写一行 `- compress` → `ERROR …agent-search：allow 里的 "compress" 是构建期注入的名字…`、exit 1（**不记坐标**：坐标随 `preset/agent.cordis.yml` 的行数变、不是判据；要看坐标就跑一次脚本读它自己的输出）。源文件本体：**0 错误 / 2 警告**（与改动前同一形状，两处仍是 `read_image`）。（**2026-10-01 现状是 0 / 3** —— 第三处是 `agent-browser` 的 `read_image`，见 §15；本条保留 2026-09-28 当时的事实。）
+7. **真机实测（判据在本机）**：`node tools/has-billion-context.mjs "$env:USERPROFILE\.dsh\profiles" web desktop headless` → `web<TAB>1`、`desktop<TAB>0`、`headless<TAB>0`。**（该脚本 2026-10 起由 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]` 取代 —— 逐组问，补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读；口径与四味道实测见 §15。上面这次读取本身仍是 2026-09-28 的历史事实。）**
+8. **真机实测（落点形状，"生成物全机共用一份"的物理根据）**：`$env:USERPROFILE\.dsh\bundles\` 下是 `dsh-adg-preset` 等稳定目录；`$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-adg-preset` 是 **SymbolicLink → `..\..\..\bundles\dsh-adg-preset`** ⇒ 换稳定目录内容即换"已装的 bundle"，不需要 pnpm；也正因各 profile 链接同一份，注入版会波及这台机器上**每一个**装它的 profile（`AGENTS.md` 红线 10 的 auto 口径由此而来）。**（该口径 2026-09-28 已被推翻：生成物现在分多种味道、多个稳定目录，按 profile 各拿一份 —— 见 §11。）**
 9. **挂 bili 的 profile 要关掉 preset realm 里的自动压缩**，依据分四层：
-    - **源码级事实（bili 官方就是这么做的）**：`C:\Users\cenqian\.dsh\profiles\web\node_modules\billion-context\dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
-    - **源码级事实（键存在，且语义就是"只留手动"）**：`@deepseek-ai/dsh-compaction-basic` 的 `lib/index.js:62` `if (config.auto !== void 0 && typeof config.auto !== "boolean") throw new Error("BasicCompactionConfig: auto must be a boolean")`；`:85` `auto: config.auto ?? true`；`:817` zod `auto: z.boolean()`；`:827` `if (this.config.auto) this._registerAutomaticCompaction()`；该包 `README.md:76` 表格 `| auto | true | Enable automatic condensation and overflow recovery; set false for manual-only operation. |` ⇒ `auto: false` = 关自动折叠与溢出恢复，**手动 `/compact` 仍可用**（`command-compact` 那行不动）。
+    - **源码级事实（bili 官方就是这么做的）**：`billion-context` 装进 profile 后带来的 `dsh.bundle.patch.yml` 全文 10 行，`- insert: - id: bili-native / name: billion-context/dsh` 之后就是 `- id: compaction-basic` / `config:` / `  auto: false`（bili 0.1.165；这份补丁的位置＝`${DSH_HOME}/profiles/<profile>/node_modules/billion-context/dsh.bundle.patch.yml`，也可以直接跑 `node tools/has-bundle.mjs` 那一族探测）⇒ 官方口径是**关掉自动压缩**，不是把整行 `disabled`。
+    - **源码级事实（键存在，且语义就是"只留手动"）**：`@deepseek-ai/dsh-compaction-basic` 里四处逐字可 grep —— schema 校验 `if (config.auto !== void 0 && typeof config.auto !== "boolean") throw new Error("BasicCompactionConfig: auto must be a boolean")`、默认值 `auto: config.auto ?? true`、zod 声明 `auto: z.boolean()`、以及真正起作用的 `if (this.config.auto) this._registerAutomaticCompaction()`；该包 README 的配置表里 `auto` 那一行是 `| auto | true | Enable automatic condensation and overflow recovery; set false for manual-only operation. |` ⇒ `auto: false` = 关自动折叠与溢出恢复，**手动 `/compact` 仍可用**（`command-compact` 那行不动）。
     - **设计依据（为什么写在 preset 自己的组里，而不是依赖 profile 层那份）**：本 preset 的 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行活在 `isolate: {compaction: true, toolResultPruner: true}` 的 **realm** 里、是**另一份实例**；bili 的补丁打在 **profile 层**，"同 id 能不能命中 realm 那行"从未被观测（见本节未观测 ③）⇒ 生成物直接往 preset 的 `compaction` 组里写**同键同值**：两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套折叠各自抢阈值、压同一段历史。
-    - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 8 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 8 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **9** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 \`config:\` —— \`auto: false\` 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
+    - **一个容易误读的点（2026-09-29 的读数，非判据，对应本节未观测 ②）**：卸载 billion-context 之后核对装配结果时会看到，宿主层的 `compaction-basic` / `command-compact` / `tool-result-pruner` 三行都带着 `disabled: true` —— 那是 `@deepseek-ai/dsh-web-app` 那份自带补丁的设计（压缩后端归 preset 层管），**与 billion-context 无关**，所以卸载它不会把这三行变回启用态。判据仍只看本 preset 自己 `compaction` 组里那三行的结构（红线 3）。
+    - **检验**：`tools/check-bundle-flavor.mjs` 现在**一次断言两件事** —— plain 产物 8 行全 `NONE` + `compaction-basic[auto=未写]`（exit 0）；bili 产物 8 行全 `ALL` + `compaction-basic[auto=false]`（exit 0）；两个方向交叉断言各 exit 1（各报 **9** 个 ERROR，其中一条正是 `auto` 的方向错）。**源文件侧反向守卫**：往 `preset/agent.cordis.yml` 的 `compaction-basic` 行临时手写 `config: {auto: false}` ⇒ `check-preset.mjs` **exit 1**，逐字报 `ERROR 第 322 行 compaction-basic：config.auto = false 是构建期注入的键——不要写进源文件（没挂 bili 的 profile 会因此失去唯一的自动压缩），用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`（**这句逐字报错里的坐标是 2026-09-30 那次读数，不是判据**：同一状态今天复跑，报的还是这条 ERROR，坐标由脚本按当时的源文件行数给出 ⇒ 引用它只引文本、不引坐标）；同一状态下 `gen-preset-bundle.mjs --with-billion-context` 也 **exit 1**（`… 的 compaction-basic 行已经有 config 段 —— auto: false 只允许由本脚本注入`），不会叠加出第二份 `config`。还原后两者都回到 exit 0。
     - **踩过的坑（登记，防重踩）**：`auto` 本来就在该插件的 `spec.allowedKeys` 里 ⇒ "未知键"那条检查**拦不住手写**，必须单加一条"这个键只允许出现在产物里"的规则，否则有人手写 `false` 就会让没挂 bili 的 profile 静默失去唯一的压缩手段（那才是真正的洞）。零回归仍以第 5 条的 SHA256 为准。
 
 ### 10.2 未观测（已照 §4 登记，引用本节时不许抹平）
@@ -528,9 +533,10 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 **症状（真机实测，用户报告）**：挂着 bili 的 `web` profile 里，真实 Adg 专家子代理调用 `compress` 得到 `unknown tool compress`（子代理原话："The compress tool is not present in my available toolset (an earlier call returned "unknown tool compress")"）；同一次会话里调度者自己看得见这些工具（它是全局层）。
 
 **根因（源码级事实 + 真机实测）**：
-1. 注入与否原本**全机一票**：`install.ps1:88` 原文 `default { $useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0) }`，配上"生成物全机共用一份"（§10.1 第 8 条）⇒ 只要有一个目标 profile 没挂 bili，**所有** profile 都拿 plain。
-2. 真机实测：`C:\Users\cenqian\.dsh\profiles\desktop\node_modules\dsh-adg-preset` 与 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-adg-preset` 当时都是指向 `..\..\..\bundles\dsh-adg-preset` 的 reparse point，而那份产物里 `- name: compress` 出现 **0** 次 ⇒ `web` 的 9 个专家行 `allow` 里一个 bili 工具都没有（`web` 挂着 bili、`desktop` 没挂 —— 探测 `web<TAB>1` / `desktop<TAB>0`，见 §10.1 第 7 条）。
-3. "有专家行缺 `allow`"的假设**不成立**：`preset/agent.cordis.yml` 里 9 个专家行全部带 `toolFilter.allow`（id 行 / allow 行：agent-file 416/431、agent-computer 443/456、agent-app 466/479、agent-browser 489/521、agent-search 533/547、agent-researcher 553/568、agent-coder 575/589、agent-reviewer 600/614、agent-general 635/650），当时的 `node tools/check-preset.mjs` 也是 **0 错误 / 2 警告**（两处 `read_image` 条件注册，与本次无关）。缺陷在"装到 profile 里的那一份"，不在源文件。
+1. 注入与否原本**全机一票**：`install.ps1` 里那条 `default { $useBiliTools = ($biliOnProfiles.Count -gt 0 -and $biliOffProfiles.Count -eq 0) }`（按 `useBiliTools` 检索即命中），配上"生成物全机共用一份"（§10.1 第 8 条）⇒ 只要有一个目标 profile 没挂 bili，**所有** profile 都拿 plain。
+2. 真机实测（2026-09-28 读数，路径以 `$env:USERPROFILE` 为准）：`$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-adg-preset` 与 `$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-adg-preset` 当时都是指向 `..\..\..\bundles\dsh-adg-preset` 的 reparse point，而那份产物里 `- name: compress` 出现 **0** 次 ⇒ `web` 的 9 个专家行 `allow` 里一个 bili 工具都没有（`web` 挂着 bili、`desktop` 没挂 —— 探测 `web<TAB>1` / `desktop<TAB>0`，见 §10.1 第 7 条）。
+3. "有专家行缺 `allow`"的假设**不成立**：`preset/agent.cordis.yml` 里 9 个专家行全部带 `toolFilter.allow`（判据＝`tools/check-preset.mjs` 对每一个专家行都报出 allow 计数、没有一个专家行收到"缺 allow"那条 ERROR —— **不记 id 行/allow 行的坐标**，坐标会被每一次编辑改掉），当时的 `node tools/check-preset.mjs` 也是 **0 错误 / 2 警告**（两处 `read_image` 条件注册，与本次无关）。缺陷在"装到 profile 里的那一份"，不在源文件。
+3. "有专家行缺 `allow`"的假设**不成立**：`preset/agent.cordis.yml` 里 9 个专家行全部带 `toolFilter.allow`（判据＝`tools/check-preset.mjs` 对每一个专家行都报出 allow 计数、没有一个专家行收到"缺 allow"那条 ERROR —— **这里不记 id 行 / allow 行的坐标**，坐标会被每一次编辑改掉），当时的 `node tools/check-preset.mjs` 也是 **0 错误 / 2 警告**（两处 `read_image` 条件注册，与本次无关）。缺陷在"装到 profile 里的那一份"，不在源文件。
 
 **修法（已进仓库）**：生成物分**两种味道、两个稳定目录**，两份 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**（所以 `dsh.profile.bundles` 那一行两种味道通用）：
 - `$DSH_HOME/bundles/dsh-adg-preset` = plain（沿用旧路径）
@@ -538,13 +544,13 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 
 `install.*` 的 `auto` 改为**逐个 profile** 用同一条探测判据决定它拿哪一份（`on` / `off` 只做整体覆盖，覆盖与探测不一致时打黄字警告）；新增第 4b-1 步用 `tools/check-bundle-flavor.mjs` 断言**该 profile 实际链接到的那一份**的味道（判据不能是"包在不在"——两份 `package.json` 相同），不一致即 exit 2。
 
-**检验（临时 `DSH_HOME` 端到端四轮，不动真机）**：临时根 `D:\dsh\.adg-scratch\home` 造出与真机同形的混装（`web` 的 `dsh.profile.bundles` 含 `billion-context` 且装了 `dsh.bundle.patch.yml` ⇒ 探测 `web=1` / `desktop=0`；两个 profile 的 `node_modules` 用 junction 指向稳定目录），跑 `install.ps1 -SkipPackages`：
+**检验（临时 `DSH_HOME` 端到端四轮，不动真机）**：在仓库外造了一个临时根（当时叫 `.adg-scratch\home`，不入库、路径不照抄）造出与真机同形的混装（`web` 的 `dsh.profile.bundles` 含 `billion-context` 且装了 `dsh.bundle.patch.yml` ⇒ 探测 `web=1` / `desktop=0`；两个 profile 的 `node_modules` 用 junction 指向稳定目录），跑 `install.ps1 -SkipPackages`：
 - 无 `node_modules` 时：exit 2，两份味道都生成并落到两个稳定目录（plain **85794** 字节 / bili **87818** 字节，各 18 个顶层条目）—— 4b 的 `continue`（包不在 `node_modules`）在 4b-1 之前，那一轮没跑味道断言。
 - junction 就位（`desktop`→plain、`web`→bili）：exit **0**，输出 `已挂载 [web] / 未挂载 [desktop]`、`味道 -> desktop : plain`、`味道 -> web : bili`、两行 `落点味道 = plain|bili（tools\check-bundle-flavor.mjs 通过）`。
 - 再跑一次：同结果 exit 0（幂等）。
 - **故意把 `web` 的 junction 改指 plain**（模拟"换味道那一步没成功"）：exit **2**，note `落点味道 ≠ bili —— 链接到的还是另一种味道…`，并原样打印报告（`agent_file[10]=NONE` … `compaction-basic[auto=未写]` + 10 个 `ERROR …bili 模式期望四个名字全有，实际 一个都没有` + `不通过：10 个错误（bili 模式 / 10 个专家行）`）⇒ 这个断言**不会假绿**。
 
-**踩过的坑（登记，防重踩）**：安装脚本里**不能**用 `@(& node ...)` 捕获原生命令的 stdout —— 在 DSH 沙箱（workspace-write）的 pwsh 里它拿回**空串**、`$LASTEXITCODE` 还停在上一条命令的值（管道形式直接 `Program 'node.exe' failed to run: Access is denied` + `NativeCommandFailed`）。后果是探测静默变成"全都没挂 bili"、味道断言**假装通过**。两处（第 0 节探测、4b-1）都改成 `cmd /c "node ... > <log> 2>&1"` + 读文件 + **显式检查退出码与结果文件存在**。
+**踩过的坑（登记，防重踩）**：安装脚本里**不能**用 `@(& node ...)` 捕获原生命令的 stdout —— 在 DSH 沙箱（workspace-write）的 pwsh 里它拿回**空串**、`$LASTEXITCODE` 还停在上一条命令的值（管道形式直接 `Program 'node.exe' failed to run: Access is denied` + `NativeCommandFailed`）。后果是探测静默变成"全都没挂 bili"、味道断言**假装通过**。两处（脚本注释里的「注入组探测」一段与 `4b-1` 那一段）都改成 `cmd /c "node ... > <log> 2>&1"` + 读文件 + **显式检查退出码与结果文件存在**。
 
 **未观测**：① 真机 `web` 换到注入版、重启后**真实 `adg` 专家**看得见并调通 `compress` / `acp_status`（§10.2 ① 仍未闭合；本次只多了"plain 落点下专家确实报 `unknown tool`"这一负向观测）；② 同一个 dsh 进程里两个 profile 各拿各的味道（不同 profile 的会话并存）**冷启动无副作用**；③ `install.ps1` 的 4b-1 在**真机**上换味道成功那一次是否也通过（本次只在临时根里量过）。
 
@@ -553,12 +559,12 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 **用户报告（本次改动的来源，m00002）**：Adg 多智能体模式下子代理默认后台非阻塞、调度者随时可能收到用户的**新提问**；而 persona 规则 7 要求"同一实体的后续任务优先接给已经读过它的那个专家"⇒ 调度者会向**正在工作**的子代理再发一条消息，把新输入**插进它当前的任务**。用户的问题是：怎么让调度者知道**何时该插话、何时该新开一个**，或者论证该不该保留原规则。
 
 **机制（源码级事实，逐条带出处；本次**没有**真机 A/B）**：
-1. 模型侧 `send_message` 的能力只有一条通路：`@deepseek-ai/dsh-tool-subagent-control` 的 execute 调 `ctx.subagents.sendMessage(...)`（`lib/index.js:51-59`），**没有 delivery / queue 参数**。
-2. 被调方固定用 steer：`@deepseek-ai/dsh-subagent` 的 `sendMessage()` 走 `deliverToChild(..., { delivery: "steer" })`（`lib/index.js:1762-1775`）。queue 只在宿主级 `queuePrompt`（同包 `lib/index.js:1785-1791`），模型侧拿不到。
-3. 两种投递落点不同：steer → `agent.steer()` → `inbox.nextStep`（插进**当前轮的下一步**）；queue → `agent.followup()` → `inbox.nextTurn`（同包 `lib/types/inbox.js:37-45`）。对 `inactive` 的子代理，因为没有当前轮，steer 退化为开新轮（idleSteer）—— 这正是规则 7 想复用的那条路。
-4. `list_agents` 只有两态、**不含进度**：渲染 `${id} [${status}] — ${label}`（`@deepseek-ai/dsh-tool-subagent-control\lib\types\list-agents.js:18-20, 102-104`）；工具 description 明写子代理结束时会**通知**你、不必轮询。
-5. 结算通知是**唤醒型**投递：`@deepseek-ai/dsh-subagent\lib\index.js:1264` 的 `notifySettlement` → `sendWaking(parent, message, parent.status === "idle" ? "queue" : "steer")`。
-6. `interrupt_agent` 只停当前轮，已排队的消息保持暂停直到之后再 `send_message`（同包 README `:53`）。
+1. 模型侧 `send_message` 的能力只有一条通路：`@deepseek-ai/dsh-tool-subagent-control` 的 execute 调 `ctx.subagents.sendMessage(...)`，**没有 delivery / queue 参数**（在该包里检索 `sendMessage(` 即命中）。
+2. 被调方固定用 steer：`@deepseek-ai/dsh-subagent` 的 `sendMessage()` 走 `deliverToChild(..., { delivery: "steer" })`。queue 只在宿主级 `queuePrompt`（同包），模型侧拿不到。
+3. 两种投递落点不同：steer → `agent.steer()` → `inbox.nextStep`（插进**当前轮的下一步**）；queue → `agent.followup()` → `inbox.nextTurn`（`@deepseek-ai/dsh-subagent` 的 inbox 实现里这两个字段名可直接检索）。对 `inactive` 的子代理，因为没有当前轮，steer 退化为开新轮（idleSteer）—— 这正是规则 7 想复用的那条路。
+4. `list_agents` 只有两态、**不含进度**：渲染模板是 `${id} [${status}] — ${label}`（在 `@deepseek-ai/dsh-tool-subagent-control` 里按这个模板串检索即命中）；工具 description 明写子代理结束时会**通知**你、不必轮询。
+5. 结算通知是**唤醒型**投递：`@deepseek-ai/dsh-subagent` 的 `notifySettlement` → `sendWaking(parent, message, parent.status === "idle" ? "queue" : "steer")`。
+6. `interrupt_agent` 只停当前轮，已排队的消息保持暂停直到之后再 `send_message`（同包 README 的 `interrupt_agent` 段）。
 
 **为什么原规则会滑到这里**：规则 7 的复用前提是**隐式**的（原文只说"（空闲的、以及已结束但可恢复的都能接）"），**没有一句"正在工作的别用它"**；而 `send_message` 的工具描述（"A working agent receives it at its next step"）读起来无害，所以模型把"复用同一位专家"执行成了"向运行中的它发消息"。后果不只是多一条消息：新问题与原任务的收尾会合并进**同一条 closing message**，而结算通知带的正是这段合并文本，事后分不清哪半句答的是哪件事；正在做验证的那一轮还可能被带偏原验收标准。
 
@@ -582,11 +588,11 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 
 ## 14. 输出上限截断：`max-tokens` 是正常结局，且本机已量到 6 条（源码级事实 + 只读扫描，2026-09-29）
 
-**本机上限**：`web` profile 的 `agent-default-model` 走 `llm-pi-ai` provider `ali`（`C:\Users\cenqian\.dsh\profiles\web\cordis.patch.yml`，该 provider 段**没有** `maxTokens` / `defaultMaxTokens`）⇒ 落到适配器默认 **`DEFAULT_MAX_TOKENS = 32768`**（`@deepseek-ai/dsh-llm-pi-ai\lib\index.js:925`；`web` profile 段落无覆盖）。**这与上下文窗口（该适配器默认 `262144`）是两件事** —— 前者是单条回复的输出上限，后者是累积上下文；两类"满"要分开治理。DeepSeek 原生适配器才是 `256e3` / `1e6`（`@deepseek-ai/dsh-llm-deepseek\lib\index.js:430-431`）。**诚实边界**：`dsh-llm-pi-ai\lib\index.js:2249` 的 `capacity(...)` 若被模型目录（models.dev）抬高过就不同，该目录不在本地，**无法离线确证**。
+**本机上限**：`web` profile 的 `agent-default-model` 走 `llm-pi-ai` provider `ali`（`${DSH_HOME}/profiles/web/cordis.patch.yml`，该 provider 段**没有** `maxTokens` / `defaultMaxTokens`）⇒ 落到适配器默认 **`DEFAULT_MAX_TOKENS = 32768`**（`@deepseek-ai/dsh-llm-pi-ai` 里这个常量名可直接检索；`web` profile 段落无覆盖）。**这与上下文窗口（该适配器默认 `262144`）是两件事** —— 前者是单条回复的输出上限，后者是累积上下文；两类"满"要分开治理。DeepSeek 原生适配器才是 `256e3` / `1e6`（`@deepseek-ai/dsh-llm-deepseek` 里那两个字面量）。**诚实边界**：`@deepseek-ai/dsh-llm-pi-ai` 里 `capacity(...)` 那处判定若被模型目录（models.dev）抬高过就不同，该目录不在本地，**无法离线确证**。
 
-**截断是什么**：provider 把 API 结束原因映射成规范结局 `{kind:"max-tokens"}`（`dsh-llm-deepseek\lib\index.js:1901` / `dsh-llm-pi-ai\lib\index.js:1418`），agent 循环据此**正常 return** —— `dsh-agent-loop\lib\index.js:1129-1135` 先把这一轮的 `assistant/message` 落进会话，紧接 `:1136` `if (finish.kind === "max-tokens") return { kind: "max-tokens" };`（在 tool-call 执行之前）。所以：不是超时、不是错误、**不走** `agent/request-error`（`dsh-agent-loop\lib\index.js:1103` 的重试分支只看 `error` / `aborted`）⇒ **框架没有内建重试**。副作用：`dsh-llm\lib\index.js:1053` 在 max-tokens 时 `kept = all.map((block) => block.type !== "tool-call")` ⇒ **未完成的 tool-call 块被整体丢弃**（丢的是工具调用意图，不是已写出的文本）。`turn/end` 记为 max-tokens 且不被后续 step 覆盖（`dsh-agent-loop\lib\index.js:975`）。用户看到的是客户端**合成**提示（`dsh-client-ui-chat\lib\client.js:1318-1333`、`:7123`、`:9847`），**没有**"一键继续"按钮或命令；模型上下文里**没有**"本轮还剩多少额度"的字段。`dsh-goal-round-driver\lib\index.js:261-265` 撞上限时反而 `disarm(state)`（关掉自动轮次，方向与"自动续写"相反）。
+**截断是什么**：provider 把 API 结束原因映射成规范结局 `{kind:"max-tokens"}`（`@deepseek-ai/dsh-llm-deepseek` 与 `@deepseek-ai/dsh-llm-pi-ai` 各自的适配器里把结束原因映射成 `max-tokens` 的那处判定），agent 循环据此**正常 return** —— `@deepseek-ai/dsh-agent-loop` 先把这一轮的 `assistant/message` 落进会话，紧接着 `if (finish.kind === "max-tokens") return { kind: "max-tokens" };`（在 tool-call 执行之前）。所以：不是超时、不是错误、**不走** `agent/request-error`（同包里那个重试分支只看 `error` / `aborted`，按 `request-error` 检索即命中）⇒ **框架没有内建重试**。副作用：`@deepseek-ai/dsh-llm` 在 max-tokens 时 `kept = all.map((block) => block.type !== "tool-call")` ⇒ **未完成的 tool-call 块被整体丢弃**（丢的是工具调用意图，不是已写出的文本）。`turn/end` 记为 max-tokens 且不被后续 step 覆盖（`@deepseek-ai/dsh-agent-loop` 里写 `turn/end` 的那处）。用户看到的是客户端**合成**提示（`@deepseek-ai/dsh-client-ui-chat` 的前端代码里那几处合成文案），**没有**"一键继续"按钮或命令；模型上下文里**没有**"本轮还剩多少额度"的字段。`@deepseek-ai/dsh-goal-round-driver` 撞上限时反而 `disarm(state)`（关掉自动轮次，方向与"自动续写"相反；在包里按 `disarm(` 检索即命中）。
 
-**只读扫描（本机 285 个会话档案，2026-09-29）**：`turn/end` 的 `reason.kind` 分布 = `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2。**6 条全部落在被委派的子代理会话里**（会话头逐条 `agentPreset:"adg"` + `origin:"subagent"` + `delegationDepth:1`；4 条 v4、2 条 v3；cwd `D:\dsh` ×4、`D:\yxgit` ×2）。逐条（文件 / 记录索引 / `seq` / `turn` / 截断前最后一条 assistant 的 `step` 与字符数）：
+**只读扫描（本机 285 个会话档案，2026-09-29）**：`turn/end` 的 `reason.kind` 分布 = `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2。**6 条全部落在被委派的子代理会话里**（会话头逐条 `agentPreset:"adg"` + `origin:"subagent"` + `delegationDepth:1`；4 条 v4、2 条 v3；cwd 落在两个不同的工作目录（4 条在本仓库根、2 条在另一个项目根 —— 本机绝对路径不照抄））。逐条（文件 / 记录索引 / `seq` / `turn` / 截断前最后一条 assistant 的 `step` 与字符数）：
 
 | # | 会话文件 | 位置 | seq / turn | 截断前最后一条 |
 |---|---|---|---|---|
@@ -601,9 +607,11 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 
 **读档案的坑（下次别再踩）**：`session.v*.jsonl.zstd` 是**多帧 zstd 拼接**，不是"一个压缩块"（例：某 v4 档案 574248 字节含 **155 个 zstd 帧**；`zlib.zstdDecompressSync(整个文件)` 只解出 259 字节的头部 `{"type":"session","version":4,…}`），**必须先按 magic `28 b5 2f fd` 切帧、逐帧解压再拼接**；**本机不需要外部 zstd** —— Node v26 的 `node:zlib` 自带 `zstdDecompressSync`（285 个档案全部解压成功、0 失败）。同一坑本节记过一次。
 
-**对规则的意味（已落进 `preset/agent.cordis.yml`）**：① 大产出要在委派 prompt 里要求**分段交付**（规则 5 的期望产出），这是**交付形态**要求、不是产出量上限；② 子代理被截断时由调度者 `send_message` 接给**同一个它**、请它从断点续写（规则 7）—— 截断不改变可续性（`dsh-subagent\lib\index.js:1076` 的 `resume({ resumeSessionId: childId })`），同一 child session 可直接续跑；③ 工具返回会把子代理保留的部分答案附在错误里（`dsh-tool-subagent\lib\index.js:292` 的 `"subagent run hit its token limit before finishing"` + `:297-305` 的 `withDiagnosticAndPartialText`）⇒ 正确口径是"**先消费部分产出，再决定续跑还是换人**"，不要重派让它从头来。规则 10 ⑤ 只写**预防**（"输出上限不可预测 → 大产出分段交付"），**恢复动作归规则 7**。
+**对规则的意味（已落进 `preset/agent.cordis.yml`）**：① 大产出要在委派 prompt 里要求**分段交付**（规则 5 的期望产出），这是**交付形态**要求、不是产出量上限；② 子代理被截断时由调度者 `send_message` 接给**同一个它**、请它从断点续写（规则 7）—— 截断不改变可续性（`@deepseek-ai/dsh-subagent` 的 `resume({ resumeSessionId: childId })`，按这个调用形状检索即命中），同一 child session 可直接续跑；③ 工具返回会把子代理保留的部分答案附在错误里（`@deepseek-ai/dsh-tool-subagent` 的 `"subagent run hit its token limit before finishing"` 与 `withDiagnosticAndPartialText`）⇒ 正确口径是"**先消费部分产出，再决定续跑还是换人**"，不要重派让它从头来。规则 10 ⑤ 只写**预防**（"输出上限不可预测 → 大产出分段交付"），**恢复动作归规则 7**。
 
-**§14.1 父级侧的截断信号：运行时结算通知的开场白（2026-09-30 补，源码级事实）**：后台子代理结算时，运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，**开场白按 `stopReason` 分支**（`@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()`）：`completed` → `Background subagent <id> finished and will do no further work unless you send it more.`／`aborted` → `was stopped before it finished.`／**`max-tokens` → `ran out of room before it finished.`**／`refusal` → `declined the task.`／`error` → `failed before it finished.`（另有 default 分支 `ended abnormally (<stopReason>) before it finished.`）。随后是 `Its closing message:` + 子级最终 assistant 输出的**非空文本块**；若一个非空文本块都没有，就补一句 `It left no closing message.`（`:85-105` 的 `createSettlementMessage()`；逐字见 `@deepseek-ai/dsh-subagent/README.md:150`，运行时实现另见 `lib/index.js:618` 与 `:642`）⇒ **用户给的例子（`… ran out of room before it finished.` 紧跟 `It left no closing message.`）正是"被截断且没留下收尾文本"这一态**，既不是失败、不是被停、也不是拒绝。对规则的意味：调度者不必去读 child 的转写，**结算通知的开场白就是判据**；被截断 ≠ 被终止（`dsh-subagent\lib\index.js:1076` 的 `resume({ resumeSessionId: childId })` 那条路照旧可用），所以规则 7 把这句开场白写成了触发信号。
+### 14.1 父级侧的截断信号：运行时结算通知的开场白（2026-09-30 补，源码级事实）
+
+后台子代理结算时，运行时构造一条 `kind: "subagent-settled"` 的父级 user 消息，**开场白按 `stopReason` 分支**（`@deepseek-ai/dsh-subagent` 的 `settlementSummary()`，在包里按这个函数名检索即命中）：`completed` → `Background subagent <id> finished and will do no further work unless you send it more.`／`aborted` → `was stopped before it finished.`／**`max-tokens` → `ran out of room before it finished.`**／`refusal` → `declined the task.`／`error` → `failed before it finished.`（另有 default 分支 `ended abnormally (<stopReason>) before it finished.`）。随后是 `Its closing message:` + 子级最终 assistant 输出的**非空文本块**；若一个非空文本块都没有，就补一句 `It left no closing message.`（同包的 `createSettlementMessage()`；逐字见该包 README 的结算通知一节，运行时实现另见同包里构造 `subagent-settled` 消息的那两处）⇒ **用户给的例子（`… ran out of room before it finished.` 紧跟 `It left no closing message.`）正是"被截断且没留下收尾文本"这一态**，既不是失败、不是被停、也不是拒绝。对规则的意味：调度者不必去读 child 的转写，**结算通知的开场白就是判据**；被截断 ≠ 被终止（`@deepseek-ai/dsh-subagent` 的 `resume({ resumeSessionId: childId })` 那条路照旧可用），所以规则 7 把这句开场白写成了触发信号。
 
 **未观测（已照 §4 登记）**：调度者是否真的去接、接住之后产出是否完整（6 条截断里一条都没续写过）；**见到 §14.1 那句开场白之后会不会真的发出继续消息**（同一条行为观测）；本机 `maxTokens` 是否被模型目录抬高（离线无法确证）。
 
@@ -619,15 +627,15 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 | `save-token` | `--with-save-token` | `dsh-plugin-save-token` | `save_token_expand` | 无 | 否 |
 
 - `GROUP_ORDER = ['billion-context','save-token']` 决定 `allow` 的追加顺序；味道键由"装着哪几组"决定（`flavorKeyOf`）：`plain` / `bili` / `save-token` / `bili+save-token`；稳定目录名由 `dirNameFor(key)` 拼（`dsh-adg-preset` / `-bili` / `-save-token` / `-bili-save-token`，味道键里的 `+` 换成 `-`）。四份产物的 `package.json` **逐字节相同**、包名都是 `dsh-adg-preset`（所以 `dsh.profile.bundles` 那一行四种味道通用），不同的只有 `cordis.patch.yml`。
-- 探测判据 = `tools/flavors.mjs` 的 `probeBundle(profilesDir, profile, packageName)`：① 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名；② `profiles/<profile>/node_modules/<包名>/<补丁文件>` 存在。**补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读**，读不到才退回历史名 `dsh.bundle.patch.yml` —— 两个真实插件实测：`billion-context` 写 `./dsh.bundle.patch.yml`，`dsh-plugin-save-token` 写 `./cordis.patch.yml`（本机 `C:\Users\cenqian\.dsh\profiles\web\node_modules\dsh-plugin-save-token\package.json`，版本 **2.4.1**）⇒ **写死历史名会把装了 save-token 的 profile 判成"没装"**。读文件异常一律 catch 成 false。
+- 探测判据 = `tools/flavors.mjs` 的 `probeBundle(profilesDir, profile, packageName)`：① 该 profile 的 `package.json` 里 `dsh.profile.bundles` 含该包名；② `profiles/<profile>/node_modules/<包名>/<补丁文件>` 存在。**补丁文件名从包自己的 `package.json` 的 `dsh.bundle.patch` 读**，读不到才退回历史名 `dsh.bundle.patch.yml` —— 两个真实插件实测：`billion-context` 写 `./dsh.bundle.patch.yml`，`dsh-plugin-save-token` 写 `./cordis.patch.yml`（当时实测的那份在 `${DSH_HOME}/profiles/web/node_modules/dsh-plugin-save-token/package.json`，版本 **2.4.1** —— 版本号是当时的读数）⇒ **写死历史名会把装了 save-token 的 profile 判成"没装"**。读文件异常一律 catch 成 false。
 - 两个入口：`node tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（缺省包名 `billion-context` = 历史默认值；每 profile 一行 `<name>\t<0|1>`；**退出码恒 0**，探测结果是数据不是错误）；`node tools/resolve-flavor.mjs [--billion-context] [--save-token]` → 一行三列 TSV `<味道键>\t<稳定目录名>\t<gen 旗标>`（只做映射，**不做探测**）。
 - 为什么必须一枚味道一份（两侧后果都不轻）：**不给** —— 那两个插件的指令/通知只看自己的 config，不看这次请求有没有那些工具；**给了但目标 profile 没装那个插件** —— 名字不存在，撞红线 7，每一次委派当场抛 `names unknown global tool "…"`。
 
 **源码级事实（save-token 那一半的通知确实会打到专家身上）**：
-- `dsh-plugin-save-token/lib/index.js:487` 的通知正文直接点名工具：`… Need any omitted detail? Call the save_token_expand tool with id "…"`；该插件**只注册这一个工具**（同文件 `:957` `name: "save_token_expand"`）。它把工具结果**进入历史的那一刻**换成 `[save-token #id] …` 通知。
-- `ctx.on("tools/post-execute", …)` 在同文件 `:722`；`:726` `if (exec.parent !== void 0) comp.nestedCalls++;`、`:728` `if (exec.parent !== void 0) return decision;` ⇒ 它只跳过**设了 `parent`** 的派发。`parent` 是 PTC / `run_code` 子派发的 token（`@deepseek-ai/dsh-tools/lib/types/ptc.js:438` 逐字 `parent: exec.token,`，`C:\Users\cenqian\AppData\Local\npm-cache\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\dsh-tools`），**普通子代理委派不设它** ⇒ 被委派的专家会收到"去调 `save_token_expand`"的通知。
+- `dsh-plugin-save-token` 里拼那条通知的 `save_token_expand` 指引文本直接点名工具：`… Need any omitted detail? Call the save_token_expand tool with id "…"`；该插件**只注册这一个工具**（按 `name: "save_token_expand"` 检索即命中）。它把工具结果**进入历史的那一刻**换成 `[save-token #id] …` 通知。
+- 该插件的 `ctx.on("tools/post-execute", …)` 里有两处 `if (exec.parent !== void 0) …`（一处 `comp.nestedCalls++`、一处直接 `return decision`）⇒ 它只跳过**设了 `parent`** 的派发。`parent` 是 PTC / `run_code` 子派发的 token（`@deepseek-ai/dsh-tools` 的 PTC 类型定义里逐字写着 `parent: exec.token,`），**普通子代理委派不设它** ⇒ 被委派的专家会收到"去调 `save_token_expand`"的通知。
 
-**真机实测（首测 2026-09-30，Windows / Node v26.9.0 / 仓库根 `D:\dsh\adg-multi-agent`；下表数字随后续改动复测刷新，链条见下）**：四条命令各生成一份 `cordis.patch.yml`（每份都 **18 个顶层子插件条目 / 9 行报告 = 8 个专家行 + 1 行 `compaction-basic`**），再各按自己的味道断言：
+**真机实测（首测 2026-09-30，Windows / Node v26.9.0 / 命令一律在本仓库根跑；下表数字随后续改动复测刷新，链条见下）**：四条命令各生成一份 `cordis.patch.yml`（每份都 **18 个顶层子插件条目 / 9 行报告 = 8 个专家行 + 1 行 `compaction-basic`**），再各按自己的味道断言：
 
 | 味道 | 生成命令 | `cordis.patch.yml` | 专家 `allow` 计数（file / computer / browser / search / researcher / coder / reviewer / general） | `compaction-basic` | 断言 |
 |---|---|---|---|---|---|
@@ -646,7 +654,7 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 - **未知味道键** → **exit 2**，stderr `未知的味道键：nope（可用：plain / bili / save-token / bili+save-token）`。
 - **踩过的坑（登记，防重踩）**：`resolve-flavor.mjs` 的旗标与 `gen-preset-bundle.mjs` 的旗标**不是一套** —— 前者收 `--billion-context` / `--save-token`（含义是"这个 profile **装着**该组"，由探测得来），传 gen 的 `--with-save-token` → **exit 2**、stderr `不认识的旗标 --with-save-token（可用：--billion-context --save-token；味道键共 plain / bili / save-token / bili+save-token）`。
 
-**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 3 警告**，exit 0；三条警告是条件性注册的 `read_image`（`第 530 行 agent-file`、`第 579 行 agent-browser`、`第 719 行 agent-general`；**2026-10-02 改 `preset/agent.cordis.yml` 时该文件 +4 行、行号整体后移 4**，原先记的 526 / 575 / 715 是同一次改动前的读数）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，3 个警告`**（**以下三条是 2026-10-01 的逐字记录，当时源文件是 820 行、所以 transcript 里报的是「第 526 行」**；同一次探针放到今天的源文件上会报「第 530 行」）：
+**检验（源文件侧的反向守卫）**：`node tools/check-preset.mjs`（源文件本体）→ **0 错误 / 3 警告**，exit 0；三条警告都是条件性注册的 `read_image`，**归属**分别是 `agent-file` / `agent-browser` / `agent-general`（**判据是这三条归属与"0 错误 / 3 警告"，不是坐标**；坐标随源文件行数变 —— 2026-10-02 那次改动让它们整体后移 4 行，改前的 526 / 575 / 715 与改后的 530 / 579 / 719 都只是**读数，非判据**，复核日期 2026-10-02）。用临时探针文件（复制源文件、在 `agent-file` 的 `allow` 块末尾插一行）实测三条，**每条都 exit 1、`不通过：1 个错误，3 个警告`**（**以下三条是 2026-10-01 的逐字记录：当时源文件是 820 行、所以 transcript 里报的是「第 526 行」；同一次探针放到今天的源文件上会报「第 530 行」—— 行号是读数，不是判据，引用时只引报错文本**）：
 - 插 `- save_token_expand` → `ERROR 第 526 行 agent-file：allow 里的 "save_token_expand" 是构建期注入的名字（save-token 的取回工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-save-token 生成`
 - 插 `- acp_cache` → `ERROR 第 526 行 agent-file：allow 里的 "acp_cache" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在（注意：gen 的注入清单里**没有**这个，需要它请改 tools/flavors.mjs 里 billion-context 组的 tools））——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
 - 插 `- compress` → `ERROR 第 526 行 agent-file：allow 里的 "compress" 是构建期注入的名字（billion-context 的上下文工具，只在挂了该 bundle 的 profile 里存在）——不要手写进源文件，用 node tools/gen-preset-bundle.mjs --with-billion-context 生成`
@@ -656,6 +664,6 @@ Electron application`）；它的 bundle 依赖与挂载行都已按同一形状
 **检验（产物体积不是稳定判据）**：生成物把**源文件的注释行原样带上**。本轮实测：只改 `preset/agent.cordis.yml` 的注释块 ⇒ 四份产物整体 **+431 B**；只改 `tools/flavors.mjs` 里 save-token 组的 `artifactNotes` ⇒ 含该组的两个产物各 **+211 B**。⇒ 判据只能是 `check-bundle-flavor.mjs` 的断言，不是字节数。
 **回归对照（味道拆分没有改变注入行为）**：`bundle/adg-preset/cordis.patch.yml`（上一版生成、缺省落点）与 `bundle/adg-bili/cordis.patch.yml`（本轮生成）逐行**集合**比对 —— 只在旧侧出现的行 **10** 条、只在新侧出现的行 **14** 条，**全部是 `#` 注释行**（旧侧如 `# （billion-context 的 DSH 插件把这几个名字注册在全局层，…`、新侧如 `# （billion-context 把这几个名字注册在全局层，…`），**正文行完全相同**；行数 906 → 911 的差也全来自注释块改写。
 
-**真机实测（本机 profile / 链接现状，2026-09-30）**：`node tools/has-bundle.mjs C:\Users\cenqian\.dsh\profiles desktop headless web` → `desktop 0` / `headless 0` / `web 1`；加 `--package=dsh-plugin-save-token` → 同样 `desktop 0` / `headless 0` / `web 1` ⇒ **`web` 的正确味道是 `bili+save-token`**。`C:\Users\cenqian\.dsh\bundles\` 下有 `dsh-adg-preset`、`dsh-adg-preset-bili`；`profiles\web\node_modules\dsh-adg-preset` 是指向 `..\..\..\bundles\dsh-adg-preset-bili` 的 **SymbolicLink**，其 `package.json` 写 `"dsh-adg-preset": "link:C:/Users/cenqian/.dsh/bundles/dsh-adg-preset-bili"` ⇒ **当前链接的是 bili 那一份，与探测结果（两组都装）不一致**；重跑 `install.*` 应改链到 `dsh-adg-preset-bili-save-token`（`-save-token` / `-bili-save-token` 两个稳定目录本机**尚未创建**）。
+**真机实测（本机 profile / 链接现状，2026-09-30 读数）**：`node tools/has-bundle.mjs "$env:USERPROFILE\.dsh\profiles" desktop headless web` → `desktop 0` / `headless 0` / `web 1`；加 `--package=dsh-plugin-save-token` → 同样 `desktop 0` / `headless 0` / `web 1` ⇒ **`web` 的正确味道是 `bili+save-token`**。`$env:USERPROFILE\.dsh\bundles\` 下有 `dsh-adg-preset`、`dsh-adg-preset-bili`；`profiles\web\node_modules\dsh-adg-preset` 是指向 `..\..\..\bundles\dsh-adg-preset-bili` 的 **SymbolicLink**，其 `package.json` 写 `"dsh-adg-preset": "link:${DSH_HOME}/bundles/dsh-adg-preset-bili"` ⇒ **当时链接的是 bili 那一份，与探测结果（两组都装）不一致**；重跑 `install.*` 应改链到 `dsh-adg-preset-bili-save-token`（`-save-token` / `-bili-save-token` 两个稳定目录当时**尚未创建**）。
 
 **未观测（已照 §4 登记）**：① 四种味道的产物在**真实挂载**（重启 dsh + 新会话）里是否各自正确 —— 本节只有静态断言与产物比对，**没有重启挂载**；② 装了 save-token 的那一份在真实委派里，专家拿到 `[save-token #id]` 通知后是否真的去调 `save_token_expand`（行为层，本轮只证明"通知会到、工具名该在"）；③ `install.ps1` / `install.sh` 的逐组探测与选味道实现（另一撰写者负责）本轮未复核，本节只记判据与脚本入口，**不把它写成已实现的安装行为**。

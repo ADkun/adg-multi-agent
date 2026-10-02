@@ -18,7 +18,9 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 
 `node --test` 默认给每个测试文件起一个 pipe-stdio 子进程，沙箱拒绝 pipe（失败形态是测试文件本身报 `Error: spawn EPERM`，不是断言失败）——加 `--test-isolation=none` 即走同一条路径且不需要子进程。
 
-## 1. 不变量 → 用例 → 类型（全表）
+## 用例总表
+
+（本节＝原 §1「不变量 → 用例 → 类型（全表）」；别处写「§1」仍指本节。每条都带类型与状态档。）
 
 | 不变量 | 用例（`test/browser.test.mjs` 里的测试名） | 类型 | 状态 |
 |---|---|---|---|
@@ -39,7 +41,9 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 | I10（同上，**抢跑修复**） | A38 `I10 新建临时页先开空白标签、attach 后再导航等可读状态（不许抢跑）`（断言 `about:blank` 建页、`sleep(600)` 已消失、复用 `goto`、超时报错）；A39 `I10 初始导航失败也要收走自己开的临时页（失败路径同样「谁开的谁收」）` | 单元测试（源码级断言） | 已实现 |
 | I10（同上，抢跑修复，行为侧） | A40 真机：`text --url` 三个真实站点正文分别 **129 / 547 / 2061 字节**（**修复前三个全是 `BYTES=0`**），每条都打 `TAB_CLOSED=` 且 `TABS` 1 → 1；单轮工具侧耗时 **0.78 / 1.43 / 1.98 s** | 真机实测 | 已实现（2026-09-27，一次性实例端口 9444 + 临时 profile） |
 
-## 2. 状态机迁移矩阵（全表）
+## 迁移矩阵
+
+（本节＝原 §2「状态机迁移矩阵（全表）」；下面按对象分小节，行是起始状态、列是事件。）
 
 ### BrowserInstance（`design.md`）
 
@@ -69,21 +73,25 @@ cd browser && node --test --test-isolation=none test # DSH 沙箱（workspace-wr
 | 用户早先开的页 / `open` `launch` 开的页（`created=false`） | 自环（**绝不自动关**） | 自环 | → `closed`（仅当被 `--match` / `--tab` 点名） | 禁止：同上 | 强制 `closed` |
 | 已关闭的 target | 自环（幂等，不报错） | 自环 | 自环（幂等） | — | 自环 |
 
-## 3. 跨模块消费侧契约测试
+## 消费方契约测试
 
-### 3.1 `preset/agent.cordis.yml` 的 `agent-browser` persona 消费的是**命令行契约的形状**
+（本节＝原 §3「跨模块消费侧契约测试」；两个消费方各一小节，附人工 review 的漂移检测口径。）
+
+### `preset/agent.cordis.yml` 的 `agent-browser` persona 消费的是**命令行契约的形状**
 
 persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语义。契约一变（改命令名、改 `STATE=` 的取值、改退出码），persona 的指示就会指向不存在的命令。
 
 过期检测（人工 review）：`Select-String -Path preset\agent.cordis.yml -Pattern 'cli\.mjs' -Encoding UTF8` 取出 persona 里出现的命令，逐个对照 `node cli.mjs help`（`cli.mjs` 的 `USAGE` 常量是唯一真相源）。任何对不上的命令即已过期。
 
-### 3.2 `install.ps1` / `install.sh` 消费的是**目录名**
+### `install.ps1` / `install.sh` 消费的是**目录名**
 
 部署落点 `${DSH_HOME:-~/.dsh}/browser/` 与仓库路径 `browser/` **同名**。改名会同时打断两处（脚本找不到源目录、persona 里的路径失效）。
 
 漂移检测（人工 review）：核对 `install.ps1` 的 `$browserSrc` / `$browserDest` 与 `install.sh` 的对应变量同时指向 `browser`，且 `agent-browser` persona 里写的用户根路径与之一致。
 
-## 4. 未观测清单（不许写成实测）
+## 人工 review 项
+
+（本节＝原 §4「未观测清单（不许写成实测）」：这些是自动化抓不到、必须真机跑或必须有人看的部分。**每条都带量法**，不许把没跑过的写成实测。）
 
 - **真实站点的登录墙端到端没有跑过**：本模块实测的是**机制**（有头启动 / 实例复用 / 优雅关闭后 cookie 落盘并跨重启存活，见 `docs/evidence.md` §8），**不是**「用户在某个真实网站上登录、专家接着抓到了登录后的内容」。量法：让一次真实 Adg 会话在需要登录的站点上走完「专家开窗 → 用户登录 → 重派 → 抓到登录后内容」。
 - **专家是否真的照 persona 用这套工具**：没有真实 Adg 会话走过。量法：转写里检索 `cli.mjs` 的调用；出现「现场手写 CDP 脚本」即 persona 未被遵守。
@@ -93,7 +101,7 @@ persona 里出现 `cli.mjs` 的命令名、`KEY=value` 输出行与退出码语�
 - **「哪一页已经不需要了」这个判断没有自动化**：本模块只有两条确定规则（自己开的临时页自己收；调用方点名的页才关）。专家收尾时是否真的会点名清理、以及会不会把该留的页关掉，没有真实 Adg 会话为证。量法：转写里检索 `close-tab` 的调用与 `TABS=` 的变化；一次任务结束时 `TABS` 仍显著增长即纪律未被遵守。
 - **超时 / 失败清理分支没有在真机上触发过**：Chrome 对不可达站点会给出错误页（`.invalid` 域名 → 224 字节的错误页，退出码 0）或在约 10.7s 后正常返回（不可路由 IP `10.255.255.1`），所以 `state.timeout` 报错与"失败时收走自己开的临时页"这两条**只有源码级断言（A38 / A39）**，没有真机证据。量法：拿一个 30s 内既不 `interactive` 也不 `complete` 的本地页面（例如无限 `document.write` 的 `data:`/本地文件）跑 `text --url`，应报 `页面在 30000ms 内没有进入可读状态` 且 `TABS` 不变。
 
-## 5. 交付前的最小闭环
+## 交付前的最小闭环
 
 ```sh
 cd browser && node --test --test-isolation=none test     # 须 37/37 通过

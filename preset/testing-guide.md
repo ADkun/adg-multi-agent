@@ -15,14 +15,16 @@ last_reviewed: 2026-10-02
 node tools/check-preset.mjs        # 校验仓库里的 preset/（**唯一真相源**；没有"已安装的第二份文本"可传了）
 node tools/gen-preset-bundle.mjs   # 生成 bundle/adg-preset/{cordis.patch.yml,package.json}（缺省出海目录；构建产物，不手改）
 # 味道由"目标 profile 装着哪个注入组"决定（tools/has-bundle.mjs 逐组探测 → tools/resolve-flavor.mjs 给键/目录/旗标）；
-# 改了源文件 → 四种味道都要生成并各自断言（完整四条与逐条判据见 tools/testing-guide.md 5.1）：
+# 改了源文件 → 四种味道都要生成并各自断言（完整四条与逐条判据见 tools/testing-guide.md 的「构建期注入组：四种味道的生成、断言、负例与探针」一节）：
 node tools/gen-preset-bundle.mjs --with-billion-context bundle/adg-bili && node tools/check-bundle-flavor.mjs bundle/adg-bili/cordis.patch.yml bili
 node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node tools/check-bundle-flavor.mjs bundle/adg-save-token/cordis.patch.yml save-token
 ```
 
 零依赖（只用 `node:fs` / `node:path` / `node:url`，不引 YAML 库）。退出码：**0 = 通过**（允许 WARN，WARN 不是失败）；**1 = 不通过**（有 ERROR，其含义只有一个：这次委派必然抛错）；**2 = 读不到目标文件**（路径不存在/打不开，或存在但不是普通文件）。路径参数仍在（可校验任意一份文本），但**没有第二份"已安装的文本"了** —— 旧的 `${DSH_HOME}/.agent-presets/<id>/` 发现机制在 dsh 0.1.7-rc.2 已被移除，`preset/agent.cordis.yml` 是唯一真相源；安装侧的真相是 profile 里注册的那一行声明（由 `bundle/adg-preset/cordis.patch.yml` 生成物提供）。
 
-## 1. 不变量 → 用例 → 类型（全表）
+## 用例总表
+
+（本节＝原 §1「不变量 → 用例 → 类型（全表）」；别处写「§1」仍指本节。）
 
 | 不变量 | 用例 | 类型 | 已实现？ |
 |---|---|---|---|
@@ -78,9 +80,11 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 | I16（同上） | P2 真实会话里：①用户**没提**"交接"时调度者不派 `agent_general`；②用户明确要求后它被派发，且它的任务末尾被追加了 "Your parent agent id is …、结束前用 send_message 回报"那段指引；③它收尾时真的用 `send_message` 回报，调度者侧能用 `list_agents` 看到它、并用 `send_message` 接给**同一个**它 | 真实挂载 | **未观测**：尚无真实 Adg 会话走过这条。机制是**源码级事实**（`@deepseek-ai/dsh-subagent` 的 `withContinuableReturnGuidance` 只在子代理**看得见 `send_message`** 时注入；`list_agents` 只列直接子级、`send_message` 只到直接父/子）—— 见 `preset/design.md` I16。量法：新会话里先说一句普通需求（转录里**不应**出现 `agent_general`），再说一句"把这件事交给子代理做"（**应**出现），然后数它那一轮 ①`send_message` 调用次数 ②最终答复是不是给调度者看的**交接回执**（结论 / 证据 / 未验证 / 需要上级做的下一步四字段）而不是对用户的寒暄 |
 | I17 委派默认走后台，阻塞会把这一次降级成一次性（2026-09-28 新增） | Q1 规则 8 里是否四件都在：①「委派一律用后台方式发出」（不设 `run_in_background: false`）②写明**代价**（阻塞 → 一次性 → 不进 `list_agents`、`send_message` 报 `NOT_RESUMABLE`、规则 6 / 7 省下的"重读"白付）③写明"后台不等于不管结果"（结算时会连同结果通知你）④**没有任何阻塞例外** —— 规则里要写明"后台派出后直接结束本轮，结算通知会把你重新唤起"，且**没有**"用户显式要求才允许阻塞"这类门槛、**也没有**"同一轮下一步就要用结果就可以阻塞"这条（2026-09-28 按用户指出的机制删掉，见 I17） | 人工 review | 未实现（脚本不查语义）。辅助检索：`Select-String -Path preset\agent.cordis.yml -Pattern 'run_in_background' -Encoding UTF8` —— **正常形状：只命中规则 8 与顶注第 13 条**（**不应**出现在任何专家行的 `config` 里；专家行只写 `backgroundMode: continuable`）。**判违例看语义**：出现"允许阻塞 / 默认前台 / 阻塞也没关系"，或例外被放宽成"想省自己的上下文 / 想并行"即违例 |
 | I17（同上） | Q2 真实会话里有没有出现 `run_in_background: false`，以及被阻塞的那一次是不是真的接不回来 | 真实挂载 | **未观测**：改动后还没有真实 Adg 会话走过。量法：造一个需要 2 个以上专家的任务，数 `agent_*` 调用里 `run_in_background: false` 的次数（应为 **0**）；对照组观测量是**同一次委派**在 `list_agents` 里是否出现、`send_message` 能否接上（阻塞的那一次应**看不到、接不上** —— 这正是规则的立论依据，用来确认代价描述没写反） |
-| 技能面（`skill` 只归调度者与 `agent-general`；要用技能时调度者只给**绝对路径**、不内联不复述） | R1 三件是否都在：①规则 **18** 在位（技能递路径：只给绝对路径＋「先 read 该文件再动手」，**不内联、不复述技能正文**）②第 **17** 条仍是 `agent_general` 交接闸门（编号不许被新规则占用 —— 既有「规则 17」引用都指它，**没有任何一处把交接闸门说成 18**）③规则 18 里三种例外齐全（只需一小节→原文照贴不许改写；只有读不了文件的 `agent_search` 才内联；步骤须与本次事实交织改写） | 人工 review | 未实现（脚本不查语义与编号）。辅助检索：`Select-String -Path preset\agent.cordis.yml,preset\AGENTS.md,README.md,skills\adg-add-agent\SKILL.md -Pattern '规则 1[78]' -Encoding UTF8`。**别把命中行数当判据** —— 规则定义行 `preset\agent.cordis.yml:314` / `:315` 正文是 `17. **…` / `18. **…`、不含「规则 N」字样，本来就匹配不到；而**引用规则 18 的文字本身就会增加命中**（同一次改动里把这句写进 testing-guide、changelog、evidence，各算一次，计数还会随本轮自己的编辑变）。判据是**逐条语义核对**：每一处「规则 17」都指交接闸门 `agent_general`、每一处「规则 18」都指技能递路径，没有任何一处把 `agent_general` 说成 18。**判违例看语义**：出现「新规则占用 17」或某处把交接闸门写成 18 即违例（本仓库当前形态：新增的规则编号是 **18**、第 **17** 条仍是 `agent_general` 交接闸门，与 `2f061c2` 逐字相同） |
+| 技能面（`skill` 只归调度者与 `agent-general`；要用技能时调度者只给**绝对路径**、不内联不复述） | R1 三件是否都在：①规则 **18** 在位（技能递路径：只给绝对路径＋「先 read 该文件再动手」，**不内联、不复述技能正文**）②第 **17** 条仍是 `agent_general` 交接闸门（编号不许被新规则占用 —— 既有「规则 17」引用都指它，**没有任何一处把交接闸门说成 18**）③规则 18 里三种例外齐全（只需一小节→原文照贴不许改写；只有读不了文件的 `agent_search` 才内联；步骤须与本次事实交织改写） | 人工 review | 未实现（脚本不查语义与编号）。辅助检索：`Select-String -Path preset\agent.cordis.yml,preset\AGENTS.md,README.md,skills\adg-add-agent\SKILL.md -Pattern '规则 1[78]' -Encoding UTF8`。**别把命中行数当判据** —— 规则定义行在 `preset/agent.cordis.yml` 里写成 `17. **…` / `18. **…`（**不含「规则 N」字样**，所以按「规则 18」grep 本来就匹配不到定义行；这正是"用可 grep 的正文片段当锚、不用坐标"的示范），而**引用规则 18 的文字本身就会增加命中**（同一次改动里把这句写进 testing-guide、changelog、evidence，各算一次，计数还会随本轮自己的编辑变）。判据是**逐条语义核对**：每一处「规则 17」都指交接闸门 `agent_general`、每一处「规则 18」都指技能递路径，没有任何一处把 `agent_general` 说成 18。**判违例看语义**：出现「新规则占用 17」或某处把交接闸门写成 18 即违例（本仓库当前形态：新增的规则编号是 **18**、第 **17** 条仍是 `agent_general` 交接闸门，与 `2f061c2` 逐字相同） |
 
-## 2. `PresetRevision` 状态机迁移矩阵（全表）
+## 迁移矩阵
+
+（本节＝原 §2「`PresetRevision` 状态机迁移矩阵（全表）」；行是起始状态、列是事件。）
 
 起始状态为行，事件为列。**自环**=合法但状态不变；**禁止**格标注原因。状态定义见 `design.md`「PresetRevision」。
 
@@ -94,7 +98,21 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 
 迁移唯一入口：`install.ps1` / `install.sh`（`validated → deployed`），其后由 registry 的注册与组合接续（`deployed → mounted`）。禁止绕过对象直接改状态（手工往 `$DSH_HOME/bundles/` 贴文件、或手改 `bundle/adg-preset/` 的生成物都算绕过）。
 
-## 4. `tools/check-preset.mjs` 的能力边界断言
+## 消费方契约测试
+
+本模块的源文本（`preset/agent.cordis.yml` + `preset/preset.yml` + `preset/bundle.package.json`）有三个消费方。它们各自只依赖下面这几样**可 grep 的形状**，契约一改就要同步，否则消费侧静默失准：
+
+| 消费方 | 它依赖的契约（可 grep） | 判据 / 用例 |
+|---|---|---|
+| `tools/check-preset.mjs` | 专家行的固定缩进前缀 `^ {4}- id: (agent-[a-z0-9-]+)$`、`allow` 只认块序列（`- item` 行）、旋钮键集（`KNOWN_TOOLS` / `FACTORY_DEFAULTS` / `EXPECTED_ROWS`） | §1「用例总表」里的静态自检行；`node tools/check-preset.mjs` 必须 exit 0 且报告出现专家行清单与旋钮生效值 |
+| `tools/gen-preset-bundle.mjs` | `preset/preset.yml` 顶层的标量 `name:` / `order:`、`preset/agent.cordis.yml` 顶层是条目列表、preset id 取自脚本内部的 `PRESET_ID` | I3c 行：重跑生成器后产物的 `plugins:` 段与源文件逐行一致（只差一层缩进） |
+| `install.ps1` / `install.sh` 与 profile 的 `dsh.profile.bundles` | 稳定落点目录名（由 `tools/flavors.mjs` 的 `dirNameFor(key)` 推导，**不要写死**）、注册行里的 preset id `adg` | 「交付前的最小闭环」一节 + 真实挂载判据：`agentPresets.resolve('adg')` 的 `.broken` 为空 |
+
+**这不是**校验器能证明挂载的意思：静态自检通过 ≠ 生效（I1）。
+
+## 人工 review 项
+
+（本节＝原 §4「`tools/check-preset.mjs` 的能力边界断言」：它抓不到的东西只能靠真实挂载或人来看 —— 即下面这张清单。）
 
 它是**逐行文本扫描器，不是 YAML 解析器**（脚本头部注释自述；根 `README.md`「自检到底静态挡住了什么（别把它的覆盖范围想大）」）。抓不到的"坏"至少有：
 
@@ -121,7 +139,7 @@ node tools/gen-preset-bundle.mjs --with-save-token bundle/adg-save-token && node
 
 它**能**支撑的结论只有一条：这些硬约束在文本上没被破坏（退出码 0），以及报告里那三行摘要（专家行清单、体积旋钮生效值、裁剪后实际吐出）与「已覆盖」标注。
 
-## 5. 交付前的最小闭环
+## 交付前的最小闭环
 
 ```sh
 node tools/check-preset.mjs        # 源文本：须 exit 0
@@ -130,9 +148,9 @@ node tools/gen-preset-bundle.mjs   # 生成/刷新 bundle：须 exit 0（产物�
 
 其后必须做一次真实挂载（根 `README.md`「给 AI 的安装指令」第 6 步：`agentPresets.resolve('adg')` 的 `.broken` 为空 + `compositionInventory()` 的形状），再做一次重启 + 新对话验收。静态自检通过 ≠ 生效；生成物形状正确也 ≠ 挂载。
 
-当前仓库实测基线（**2026-10-02 复核**）：`node tools/check-preset.mjs` → `通过：0 个错误，3 个警告`（三条 WARN 都是 `read_image` 属条件性注册：第 530 行 `agent-file`、第 579 行 `agent-browser`、第 719 行 `agent-general`），退出码 **0**；传不存在的路径与传目录均退出 **2**。（警告行的坐标随 `preset/agent.cordis.yml` 行数变；2026-10-01 复核时是 526 / 575 / 715，2026-10-02 加规则 18 后该文件 820 → 824 行、坐标整体 +4；第三处 WARN 是 2026-10-01 给 `agent-browser` 的 `allow` 加 `read_image` 才有的。）
+当前仓库实测基线（**2026-10-02 复核**）：`node tools/check-preset.mjs` → `通过：0 个错误，3 个警告`（三条 WARN 都是 `read_image` 属条件性注册，各带一个 `agent-file` / `agent-browser` / `agent-general` 的行坐标标签），退出码 **0**；传不存在的路径与传目录均退出 **2**。**判据是"0 错误 / 3 警告 + 那三条 WARN 的归属"，不是任何坐标数字**：脚本打印的行坐标随 `preset/agent.cordis.yml` 的行数变（2026-10-01 加规则时整体 +4、2026-10-01 给 `agent-browser` 加 `read_image` 才出现第三条），照抄坐标会在下一次编辑后静默失准。要**当场**看坐标就跑一次脚本读它自己的输出 —— 那是可复跑的读数，不是写进文档的锚。
 
-## 6. 过期检测（踩坑登记）
+## 过期检测（踩坑登记）
 
 | 会过期的东西 | 症状 | 怎么发现（可照抄） |
 |---|---|---|

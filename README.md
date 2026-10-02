@@ -49,7 +49,7 @@ message 回到调度者 —— **不用递归也能交接回来**。
 
 | 仓库里的路径 | 安装到 |
 |---|---|
-| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（四个构建产物 `bundle/adg-plain/`、`bundle/adg-bili/`、`bundle/adg-save-token/`、`bundle/adg-bili-save-token/`，都在 `.gitignore` 里），各装到它自己的稳定目录（`${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset` = plain，以及 `...-bili` / `...-save-token` / `...-bili-save-token`，见红线 10），再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles`（四份 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以那一行四种味道通用） |
+| `preset/`（两个文件） | **不再是"拷两个文件"**：先由 `tools/gen-preset-bundle.mjs` 生成 bundle（四个构建产物 `bundle/adg-plain/`、`bundle/adg-bili/`、`bundle/adg-save-token/`、`bundle/adg-bili-save-token/`，都在 `.gitignore` 里 —— **产物不入库，由 `node tools/gen-preset-bundle.mjs` 生成**），各装到它自己的稳定目录（`${DSH_HOME:-~/.dsh}/bundles/dsh-adg-preset` = plain，以及 `...-bili` / `...-save-token` / `...-bili-save-token`，见红线 10），再把 `dsh-adg-preset` 写进目标 profile 的 `dsh.profile.bundles`（四份 `package.json` 逐字节相同、**包名都是 `dsh-adg-preset`**，所以那一行四种味道通用） |
 | `skills/adg-add-agent/SKILL.md` | `${DSH_HOME:-~/.dsh}/skills/adg-add-agent/SKILL.md` |
 | `browser/`（浏览器工具链，零依赖） | `${DSH_HOME:-~/.dsh}/browser/`（**重新跑一次安装脚本即生效，不用重启 dsh**） |
 
@@ -148,7 +148,7 @@ libuv 的管道 stdio 用有名管道，其 client 端打开所请求的写访�
 **同一批命令在 `danger-full-access` 下全部转绿**。本机没装 Firefox，且当时（2026-09-26）机器上只装了 Chrome 与 Edge，
 **其它浏览器未测试**；全访问那一列只有 Chrome 做了完整的「启动 → 连 CDP → 导航 → 取回文本」，
 Edge 只做到 `--dump-dom` 退出码 0。**2026-10-01 补注**：候选次序改为 **Chrome → Brave → Edge** 并新增 Brave（`browser/design.md`「非功能红线」）；
-本表是 2026-09-26 的读数、**不回改**，而 **Brave 在受限令牌下如何失败属于未观测**（量法见 `browser/testing-guide.md` 第 4 节）。
+本表是 2026-09-26 的读数、**不回改**，而 **Brave 在受限令牌下如何失败属于未观测**（量法见 `browser/testing-guide.md`「人工 review 项」一节）。
 
 ### 为什么不能从 preset 侧修（四个问题的答案）
 
@@ -157,7 +157,7 @@ Edge 只做到 `--dump-dom` 退出码 0。**2026-10-01 补注**：候选次序�
 | 父智能体能否给子智能体指定权限范围？ | **不能** | `dsh-tool-subagent` 的实例配置只有 `provider` / `toolName` / `modelSelectionSettings` / `enableRunInBackground` / `backgroundMode` / `agentOptions` / `persona` / `toolFilter` / `maxDepth`；它的 `lib/index.js` 里 **`sandbox` 零命中**，模型可见 schema 也只多 `provider` / `model` / `reasoning_effort` / `run_in_background` |
 | 能否用 preset 文件改默认权限范围？ | **不能** | `sandbox-policy`（部署默认 `mode`）、`permission`（预设表）、`approval` 三行都在 **host-plane** 的 `@deepseek-ai/dsh-base/cordis.patch.yml` 里；模式解析是 `request.mode ?? 会话的 sandbox/mode 事件 ?? 部署默认`（`dsh-sandbox-policy/lib/index.js` 的 `resolve()` / `overrideOf()`），**没有 preset 侧入口**能改一个会话的模式。`dsh-permission-presets` 自己的「已知限制」第一条就写着：预设只组合沙箱模式与审批策略这两个机制级旋钮，agent / profile 选择尚未纳入 |
 | 子代理能否自己升权（`sandbox_permissions` + 用户批准）？ | **不能** | 委派时子会话的审批策略被**钉成 `never`**（`dsh-subagent/lib/index.js` 的 `captureDelegatedPolicyOverrides()`，注释原话 "the approval policy is pinned to `'never'` regardless of the parent's own policy"）；`dsh-user-approval` 对 `never` 直接 `return "rejected"`、**不弹窗**。所以专家侧的升权重试是失败关闭，不是弹出审批 |
-| 父级切换权限后，已经在跑的子代理会跟着变吗？ | **不会 —— 新权限只对"切换之后新开的子代理"生效**（2026-09-30 补，用户要求写进调度 persona 规则 11） | 权限在**委派那一刻**就被捕获：`captureDelegatedPolicyOverrides()`（`dsh-subagent/lib/index.js:524-541`）在子代理"首次 await 之前"**同步**取当时的父会话状态，并在子会话尚未发布的窗口里写成 `source: 'delegation'` 的 `sandbox/mode` / `approval/policy` / `permission/preset` 事件（`:552-562` 的 `appendDelegatedPolicyOverrides()`）；同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 用户切到 `danger-full-access` 之后要**新建委派**，等旧子代理是等不到的 |
+| 父级切换权限后，已经在跑的子代理会跟着变吗？ | **不会 —— 新权限只对"切换之后新开的子代理"生效**（2026-09-30 补，用户要求写进调度 persona 规则 11） | 权限在**委派那一刻**就被捕获：`@deepseek-ai/dsh-subagent` 包导出的 `captureDelegatedPolicyOverrides()` 在子代理"首次 await 之前"**同步**取当时的父会话状态，并在子会话尚未发布的窗口里写成 `source: 'delegation'` 的 `sandbox/mode` / `approval/policy` / `permission/preset` 事件（同包导出的 `appendDelegatedPolicyOverrides()` 负责落那三条事件）；同一函数的注释逐字为 `a later parent switch belongs to the parent's future, not to this child` ⇒ 用户切到 `danger-full-access` 之后要**新建委派**，等旧子代理是等不到的（按 `captureDelegatedPolicyOverrides` 这个导出名在包里检索即命中） |
 
 **唯一能把子代理送进完全权限的路径是：用户在会话里把权限切到 `danger-full-access`。**
 子会话只继承父会话的**显式**覆盖值 —— `captureDelegatedPolicyOverrides()` 取的是
@@ -516,7 +516,7 @@ YAML 解析（例如同一行里写两个键、锚点/别名、flow 风格 `{a: 
 | 委派 prompt **五项必填**：目标 / **验收标准** / **本次不做** / 已知事实 / 期望产出（规则 5） | **已落地** | 没有验收标准，专家只能自己猜边界，猜宽了就去探索旁路；没有"本次不做"清单的"专注"是**空白授权** | 可查：转录里能不能指出这条委派的**验收标准**与**排除项**。规则 5 由 53 字符扩到 171 字符；规则 6 收紧"实体"锚点后再加 115 字符 —— 两者合计 +233 字符 |
 | **必要性闸门 + 强制挂号**（规则 15）：三问任一"否"就不派；不做的旁路必须在最终交付里挂号 | **已落地** | 四条编排层规则解决的是"**不重复**读"，这一条解决"**少读不该读的**"。来源是一次真实任务：要"便携小巧的录音笔"，调度者为"录音合规性"单独开了一个子代理 —— 那次调研只服务同一条选购需求（同实体同性质），且不在验收标准里 | **主指标是子代理个数**（少开一个就是少买一份材料）。代价是规则 15 的 300 字符（≈75 token/步），**少开一个子代理就值回票价**（单个子代理实测均值 ≈1.73M）。质量侧靠**挂号抽查**：最终答复里**有**挂号句「未纳入本次：X（可能影响 Y，未调研）」、转录里**没有**对应委派 = 遵守；挂号句缺失 = 旁路被静默丢掉（比不做这条规则更糟） |
 | 委派 prompt **分字段写** + **输出／交接去冗余纪律**（规则 5 / 10） | **已落地** | 输出只占总花费 **1%**（0.9M / 94.1M），压它本身毫无意义；真正的杠杆是**写下的字会变成上下文** —— 每个字都在后续每一步作为 cache-read 重发（cache-read 85.1M = 90.4%）。所以被乘数最大的是两件**交接件**：委派 prompt（专家每一步都读）与专家返回结果（调度者余下每一步都读、还会成为最终答复的素材）；反过来最终答复的措辞后面没有更多步，省不到钱、只影响可读性 | 四条**禁止式**判据：① 不回贴工具输出原文（给位置就够）② 同一结论只说一次，后文用"见上 / 第 N 条"引用 ③ 不转述中间过程 ④ **"未验证 / 未纳入"必填块不许为求简短省略**。**没有字数上限** —— 一写成"N 字符内"就精确退化成已撤销的那层。观测量：`adg` 行的 `output` + 同口径重跑后的 **cache-read 增速** + 三个抽查（回贴重合 / 重复率 / **未验证块是否仍齐全**）。规则 5 加 106 字符、规则 10 加 130 字符（prefix 块 4584 → 4820） |
-| **交付形态 + 截断接续**（规则 5 / 7 / 10，2026-09-29 按用户要求追加；2026-09-30 补父级侧触发信号） | **已落地（机制实测 + 只读扫描量到 6 条 / 285 会话；收益未量）** | 截断是 **`{kind:"max-tokens"}` 的正常结局**：provider 把 API 结束原因映射过来、agent 循环据此**正常 return**（不抛错、也不走 `agent/request-error`，所以**没有内建重试**），已产出的文本照常落进会话，只是**未完成的 tool-call 块被整体丢弃**（`@deepseek-ai/dsh-llm/lib/index.js:1053`）。触发只可能来自子代理**自己**：用户能从界面点/发"继续"，而**被委派的子代理发不了**、GUI 里也只有一条客户端合成的提示（无按钮），所以"谁去接"只能落在调度者身上 —— 不接，这次委派就停在半句上 | 三处：① 规则 5 的**期望产出**写明"产出大时分段交付"（先给结论 / 证据位置 / 未验证的梗概，再分段给大正文）② 规则 7 补**接续**半条并钉死死顺序 —— 被截断**立刻** `send_message` 接给**同一个它**、请它从断点续写（截断不改变可续性，同一 child session 可直接续跑）；"换人"只留给"它已无法接续"或"整段驻留期已厚、要结轮"**（2026-09-30 补：父级那侧的触发信号逐字是结算通知开场白 `Background subagent <id> ran out of room before it finished.` —— `@deepseek-ai/dsh-subagent/lib/types/continuation-messages.js:57-78` 的 `settlementSummary()` 按 `stopReason` 分支，`completed` / `aborted` / `refusal` / `error` 各有一句、只有 `max-tokens` 是这句；被截断 ≠ 被终止，回一条继续消息它就能接着做）**③ 规则 10 ⑤ 改写成**预防式**："输出上限不可预测，所以大产出按规则 5 分段交付、不要憋到单条回答里" —— ⑤ 不再是"被截断后自己接着写"那个恢复动作（恢复归规则 7）。**没有**任何字数 / 产出量上限（`design.md` I13 / I15）。观测量：转录里截断后**有没有**指向同一个子代理的 `send_message`（有 = 接住；没有、且它之后再无产出的那截内容 = 停在半句）。代价 **+1346 字符**（prefix 正文 7736 → **9082**，≈320 token/步）—— 本仓库历次规则改动里最大的一笔，换"一次截断不必从头重做"。**已量到**（只读扫描 285 个会话档案）：`turn/end` 的 `reason.kind` 分布 `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2，6 条全部落在 `agentPreset:"adg"` + `origin:"subagent"` 的**被委派子代理**里（3 条是长产出：51233 字符的长文断在半句上等）；而这 6 个会话在截断后**记录数为 0**（无 `assistant/message`、无 `user/message`）⇒ "截断后就地接续"在本机**完全没有先例**，正因如此才必须写成调度者的动作。读档案的坑：`session.v*.jsonl.zstd` 是**多帧 zstd 拼接**，必须先按 magic `28 b5 2f fd` 切帧（Node v26 的 `node:zlib` 自带 `zstdDecompressSync`，不需要外部 zstd）。本机单条输出上限 ≈ **32768**（pi-ai 适配器默认；与上下文窗口 262144 是**两件事**）|
+| **交付形态 + 截断接续**（规则 5 / 7 / 10，2026-09-29 按用户要求追加；2026-09-30 补父级侧触发信号） | **已落地（机制实测 + 只读扫描量到 6 条 / 285 会话；收益未量）** | 截断是 **`{kind:"max-tokens"}` 的正常结局**：provider 把 API 结束原因映射过来、agent 循环据此**正常 return**（不抛错、也不走 `agent/request-error`，所以**没有内建重试**），已产出的文本照常落进会话，只是**未完成的 tool-call 块被整体丢弃**（`@deepseek-ai/dsh-llm` 里把 API 结束原因映射成 `{kind:"max-tokens"}` 的那处判定）。触发只可能来自子代理**自己**：用户能从界面点/发"继续"，而**被委派的子代理发不了**、GUI 里也只有一条客户端合成的提示（无按钮），所以"谁去接"只能落在调度者身上 —— 不接，这次委派就停在半句上 | 三处：① 规则 5 的**期望产出**写明"产出大时分段交付"（先给结论 / 证据位置 / 未验证的梗概，再分段给大正文）② 规则 7 补**接续**半条并钉死死顺序 —— 被截断**立刻** `send_message` 接给**同一个它**、请它从断点续写（截断不改变可续性，同一 child session 可直接续跑）；"换人"只留给"它已无法接续"或"整段驻留期已厚、要结轮"**（2026-09-30 补：父级那侧的触发信号逐字是结算通知开场白 `Background subagent <id> ran out of room before it finished.` —— `@deepseek-ai/dsh-subagent` 的 `settlementSummary()` 按 `stopReason` 分支，`completed` / `aborted` / `refusal` / `error` 各有一句、只有 `max-tokens` 是这句；被截断 ≠ 被终止，回一条继续消息它就能接着做）**③ 规则 10 ⑤ 改写成**预防式**："输出上限不可预测，所以大产出按规则 5 分段交付、不要憋到单条回答里" —— ⑤ 不再是"被截断后自己接着写"那个恢复动作（恢复归规则 7）。**没有**任何字数 / 产出量上限（`design.md` I13 / I15）。观测量：转录里截断后**有没有**指向同一个子代理的 `send_message`（有 = 接住；没有、且它之后再无产出的那截内容 = 停在半句）。代价 **+1346 字符**（prefix 正文 7736 → **9082**，≈320 token/步）—— 本仓库历次规则改动里最大的一笔，换"一次截断不必从头重做"。**已量到**（只读扫描 285 个会话档案）：`turn/end` 的 `reason.kind` 分布 `completed` 385 / `aborted` 36 / **`max-tokens` 6** / `error` 5 / `interrupted` 2，6 条全部落在 `agentPreset:"adg"` + `origin:"subagent"` 的**被委派子代理**里（3 条是长产出：51233 字符的长文断在半句上等）；而这 6 个会话在截断后**记录数为 0**（无 `assistant/message`、无 `user/message`）⇒ "截断后就地接续"在本机**完全没有先例**，正因如此才必须写成调度者的动作。读档案的坑：`session.v*.jsonl.zstd` 是**多帧 zstd 拼接**，必须先按 magic `28 b5 2f fd` 切帧（Node v26 的 `node:zlib` 自带 `zstdDecompressSync`，不需要外部 zstd）。本机单条输出上限 ≈ **32768**（pi-ai 适配器默认；与上下文窗口 262144 是**两件事**）|
 | 8 份重复的"后台委派"提示段 | **框架侧，preset 改不了** | `dsh-tool-subagent` 给**每个** `continuable` 委派行注册一段 `systemPrompt` 段落（`lib/index.js` 的 `install()` 里 `systemPrompt.section({ name: 'tool:' + toolName … })`），文本几乎相同、只差工具名 —— 本 preset 有 8 行 | 调度者系统提示里约 330 字符 × 8 ≈ 2.6 KB/请求（字符数可数，token 按 ~4 字符/token 估算约 0.66k，占 94.1M 的 **<1%**）。**不要为了省这点删专家行**；要修只能在框架侧合并成一段共享段落 |
 | 压三组体积旋钮 / 设 `maxTokens` / 写"结论 N 字符内" | **不建议（已撤销的口径）** | 截断会把工具**已经取到**的事实切掉；输出只占账单 1%，压它只损伤质量并招来返工 | 见 [为什么撤销 preset 侧的体积闸门](#为什么撤销-preset-侧的体积闸门) |
 
@@ -576,14 +576,20 @@ digest 那条另看交付后工作区 `git status` 是否干净）。**同样未
 改动前后都要量，否则无法判断一次改动是帮忙还是添乱：
 
 ```powershell
-node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
+# 口径（本机私有审计脚本，**未随仓库分发、当前不可复跑**——它的路径已不存在）：
+# 一个一次性脚本，读本机会话档案目录（Windows 上是 $env:USERPROFILE\.dsh\sessions，
+# 迁移过用户根的话用 ${DSH_HOME}/sessions），逐会话汇总 token 与工具字符数，
+# 把报告写到它自己同目录的 audit-report.txt（覆盖上一次）。
 ```
 
-它会把报告写到同目录的 `audit-report.txt`（覆盖上一次）。重点看 `=== sessions by preset ===` 里
-`adg` 那一行的 `input` / `cache` / `output` / `requests`，以及每个子代理的 `toolChars`。
+报告的重点看 `=== sessions by preset ===` 里 `adg` 那一行的 `input` / `cache` / `output` / `requests`，
+以及每个子代理的 `toolChars`。
 
-> 为什么有 `audit-run.mjs` 这个副本：原始的 `audit.js` 在 ESM 作用域里用了 `require`，直接跑会报错；
-> `.mjs` 那份是改好的可执行版本。
+> **现状（2026-10-02 复核）**：上面两条命令与那份报告**当前都取不到** —— 脚本与报告都不在仓库里、
+> 也不在这台机器的文件系统上（连它原来的目录都不存在）。本节因此只是**口径描述**：它说明"当时的数是怎么来的"，
+> 不能当成可复跑的证据；`docs/evidence.md` 里由它产出的数字同样是**某次读数、不是当前基线**。
+> 私下留着旧副本时还要注意：原始那版在 ESM 作用域里用了 `require`，直接跑会报错，可执行的是改好的 `.mjs` 版本。
+> 要重新量就照这个口径自己写一个一次性脚本，并把它的**存放位置**写进本次的取证记录（不要写死本机路径进文档）。
 
 **测完对比时注意：**上面的基线是**改动之前**的 32 个会话。改动生效后要重新跑一次，用同一口径
 （同样按 preset 分组的 `input + output + cache`）对比，不要拿单次会话的绝对值下结论。
@@ -623,7 +629,7 @@ node D:\dsh\.dsh-token-audit\audit-run.mjs "C:\Users\cenqian\.dsh\sessions"
 - `toolFilter.allow` 是**真白名单**（见「设计要点」），专家只看得见 allow 里列出的名字；
 - bili 注入给模型的压缩指令与 nudge **只看自己的 config，不看这个请求有没有那些工具**；save-token 同理 ——
   它在**工具结果进入历史的那一刻**就把大输出换成 `[save-token #id] …` 通知，通知正文点名
-  `save_token_expand`（该插件 `lib/index.js:487`），也不看接话的那位调不调得动。
+  `save_token_expand`（该插件里拼那条通知的指引文本，按 `save_token_expand` 与 `[save-token #` 在包里检索即命中），也不看接话的那位调不调得动。
 
 两头凑起来的后果是：装了 bili 又不给专家那几个名字，专家会收到"去调 `compress` / `acp_status`"的指令，
 工具目录里却没有它们（实测：调度者自己看得见，因为它是全局层；被裁的是专家）。反过来，把这些名字
@@ -654,14 +660,14 @@ sh install.sh                                                          # 自动�
 每个 profile 的 `node_modules/dsh-adg-preset` 只 `link:` 自己该拿的那一份。挂 bili 的拿注入版、没挂的拿
 plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不会猜。`--billion-context=on|off`
 （PowerShell：`-BillionContext on|off`）是**整体覆盖**，覆盖结果与探测不一致时会多打一行黄字警告；探测段在
-`install.sh` / `install.ps1` 的第 0 节，两份脚本共用同一份判据。装完脚本还用
+`install.sh` / `install.ps1` 的「注入组探测」一段（按 `注入组探测` 这个标签在两个脚本里检索即可命中），两份脚本共用同一份判据。装完脚本还用
 `tools/check-bundle-flavor.mjs` 断言**那个 profile 实际链接到的那一份**的味道（判据不能是"包在不在"——
 四种味道的 `package.json` 逐字节相同）。
 手动跑 `gen-preset-bundle.mjs` 不带旗标 = plain，忘带旗标 = 少个能力，不会装坏。
 
 > **本机（2026-09-30 复测）：`web` 两组都装着，正确味道是 `bili+save-token`（稳定目录
 > `dsh-adg-preset-bili-save-token`）；`desktop` / `headless` 两组都没挂 ⇒ plain（`dsh-adg-preset`）。**
-> 实测：`node tools/has-bundle.mjs C:\Users\cenqian\.dsh\profiles web` → `web<TAB>1`；同一条命令加
+> 实测：`node tools/has-bundle.mjs "$env:USERPROFILE\.dsh\profiles" web` → `web<TAB>1`；同一条命令加
 > `--package=dsh-plugin-save-token` → `web<TAB>1`；`node tools/resolve-flavor.mjs --billion-context --save-token` →
 > `bili+save-token<TAB>dsh-adg-preset-bili-save-token<TAB>--with-billion-context --with-save-token`。`web` 现在链接的
 > 还是旧的 `$DSH_HOME/bundles/dsh-adg-preset-bili`，**重跑一次 `install.ps1` 就会迁到 `...-bili-save-token`**。
@@ -679,7 +685,7 @@ plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不
 
 **save-token 组的名字必须注入给专家**（理由不同于 bili）：`dsh-plugin-save-token` 在**工具结果进入历史的那一刻**
 把大输出换成 `[save-token #id] …` 通知，通知正文写着
-`Call the save_token_expand tool with id "…", or read the FULL ORIGINAL at: <locator>`（该插件 `lib/index.js:487`）。
+`Call the save_token_expand tool with id "…", or read the FULL ORIGINAL at: <locator>`（按这句原文在 `dsh-plugin-save-token` 包里检索即命中）。
 被委派的专家**确实会收到这种通知**：`tools/post-execute` 钩子只跳过 `exec.parent !== undefined` 的执行，而
 `exec.parent` 是 PTC/`run_code` 子派发的 token，普通子代理委派不设它。所以专家的 `allow` 里没有
 `save_token_expand`，它就会去调一个不存在的工具 —— 注入的理由是"通知已经发给它了"。
@@ -698,7 +704,7 @@ plain，两边都不会被砸；探测本身没跑成时脚本直接报错，不
 两边都生效也无行为差异（幂等），而只注入名字、不关自动压缩的后果是两套压缩各自折叠同一段历史、互相抢阈值。
 
 语义要说准：`auto: false` 是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（该插件的 `auto` 行：
-"set `false` for manual-only operation"；`lib/index.js:827` 用 `if (this.config.auto)` 决定要不要注册那两个
+"set `false` for manual-only operation"；`@deepseek-ai/dsh-compaction-basic` 的实现按 `this.config.auto` 决定要不要注册那两个
 listener），**不是**把这一行 `disabled` 掉。**只有 billion-context 组激活的味道（`bili` / `bili+save-token`）才写这个键**；
 plain 与 save-token 味道里绝不能出现它 —— 这两类 profile 里，dsh 自带的自动压缩是**唯一**的压缩手段，
 关掉等于让上下文无限增长。

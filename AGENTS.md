@@ -14,7 +14,7 @@ node tools/check-preset.mjs
 # 注意：**没有"已安装的那一份文本"可以传路径了** —— 旧机制（$DSH_HOME/.agent-presets/<id>/）在
 # dsh 0.1.7-rc.2 已被移除，仓库里的 preset/agent.cordis.yml 就是唯一真相源。
 
-# 生成 preset bundle（构建产物，落在 .gitignore 忽略的 bundle/adg-<味道>/；install.* 每次都会按探测结果重跑它）
+# 生成 preset bundle（构建产物，**产物不入库，由 `node tools/gen-preset-bundle.mjs` 生成**，落在 .gitignore 忽略的 bundle/adg-<味道>/；install.* 每次都会按探测结果重跑它）
 # 不带旗标 = plain；不传位置参数时才落到缺省出海目录 bundle/adg-preset/（install.* 每次都显式传位置参数）
 node tools/gen-preset-bundle.mjs
 node tools/gen-preset-bundle.mjs --with-billion-context   # 目标 profile 装了 billion-context 才用：给 8 个专家的 toolFilter.allow 追加它的 4 个上下文工具，并给 compaction-basic 注入 config.auto=false（红线 10）
@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profi
 7. **`allow` 里只能写已注册的工具名。** `dsh-tools` 的 `restrict()` 遇到未知名直接抛 `names unknown global tool ...`，那一次委派当场失败；合法名单见 `tools/design.md`。
 8. **`install.ps1` 必须保留 UTF-8 BOM。** Windows PowerShell 5.1 没有 BOM 时会按系统 ANSI 代码页读脚本，中文乱码并直接解析失败；编辑工具会**悄悄**去掉它，改完单独确认前三个字节仍是 `EF BB BF`。
 9. **`browser/` 工具链的边界**：禁止引入第三方依赖（`playwright` / `puppeteer` / `ws`）；禁止把 profile 放进会话工作区、或写死任何本机绝对路径；禁止代填账号密码、读取 profile 的 cookie 库、验证码识别与指纹伪装。来源与不变量见 `browser/design.md`（I1 / I6）与 `browser/AGENTS.md`「模块特有红线」。
-10. **构建期注入组的名字只能由构建期注入，禁止手写进 `preset/agent.cordis.yml`。** 目前有两组（清单**只有一份**，写在 `tools/flavors.mjs` 的 `INJECTION_GROUPS`）：billion-context 的 `compress` / `decompress` / `search_context` / `acp_status`（同属该插件的 `acp_cache` 故意不注入），以及 save-token 的 `save_token_expand`。它们不属于本组合，是那两个 DSH 插件注册在**全局层**的工具（实测：子代理的工具目录里它们是裸名、没有 `mcp__` 前缀，所以 `restrict()` 接受）。两侧后果都不轻：**不给** —— 那两个插件的指令与通知只看自己的 config、不看这个请求有没有那些工具（bili 的 `billion-context/src/server.ts:3427` 系统段与 L3447 nudge 都没有 pluginMode 护栏；save-token 在工具结果**进入历史的那一刻**把大输出换成 `[save-token #id] …` 通知，通知正文直接点名 `Call the save_token_expand tool with id "…"`，见 `dsh-plugin-save-token/lib/index.js:487`），而被委派的专家确实收得到这种通知（`tools/post-execute` 只跳过 `exec.parent !== undefined` 的 PTC / `run_code` 子派发，普通子代理委派不设它），于是专家收到"去调某个工具"的指令却没有工具可调；**给了但目标 profile 没装那个插件** —— 名字不存在，撞红线 7，每一次委派当场抛 `names unknown global tool "compress"`。所以口径是"源文件中立、生成物按探测决定"：探测在 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（判据 = 包名在该 profile 的 `dsh.profile.bundles` 里 **且** 装上的那份包里真的有它的补丁文件 —— 文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读，读不到才退回历史名 `dsh.bundle.patch.yml`），**装着哪个组才带哪个旗标**生成：`node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token`（两个旗标可叠加；`tools/resolve-flavor.mjs` 负责把"装着哪几组"翻成味道键 / 稳定目录名 / gen 旗标）；`tools/check-preset.mjs` 会把源文件里手写的这些名字判成 **ERROR** 并指回对应的旗标（清单从 `tools/flavors.mjs` 推导，它不另抄一份）。生成物按**味道**分份，现在共**四种味道、四个稳定目录**：plain = `$DSH_HOME/bundles/dsh-adg-preset`、bili = `.../dsh-adg-preset-bili`、save-token = `.../dsh-adg-preset-save-token`、bili+save-token = `.../dsh-adg-preset-bili-save-token`（四份的 `package.json` 逐字节相同，只有 `cordis.patch.yml` 不同，**包名都是 `dsh-adg-preset`** ⇒ `dsh.profile.bundles` 那一行四种味道通用）；**目录名不要写死，以 `tools/flavors.mjs` 的 `dirNameFor(key)` 为准**（味道键里的 `+` 换成 `-`）。每个 profile 的 `node_modules/dsh-adg-preset` 只 `link:` 自己该拿的那一份；`auto` 下味道由**该 profile 自己的探测结果**决定（`--<组>=on` / `off` 才是整体覆盖，覆盖与探测不一致时脚本打黄字警告），装完由 `install.*` 的第 4b-1 步用 `tools/check-bundle-flavor.mjs` 断言**已链接的那一份**的味道（判据不能是"包在不在"——四种味道的 `package.json` 逐字节相同）。旧口径"生成物全机共用一份，所以 auto 只在"每个目标 profile 都挂着"时才注入"**已推翻**：混装机器（例如本机 `desktop` 没挂、`web` 挂）上它会**连挂着的那个 profile 也一起装 plain**，于是那些 profile 的专家收得到 bili 的压缩指令、`allow` 里却没有工具，一调就报 `unknown tool compress`（2026-09-28 用户报告的真实缺陷，证据见 `docs/evidence.md` §11）。**billion-context 组激活时还要关掉 preset realm 里的自动压缩**：给 `compaction` 组那行 `compaction-basic` 注入 `config: {auto: false}`，与 bili 自己的 `dsh.bundle.patch.yml`（`- id: compaction-basic` / `config: {auto: false}`）**同键同值** —— 那份官方补丁打在 **profile 层**，而本 preset 的 compaction 三行活在 `isolate: {compaction: true}` 的 realm 里、是另一份实例，跨 lane 的 id 命中与否从未被观测，所以生成物直接写进 preset 自己的组里（两边都生效也无行为差异）。`auto: false` 的语义是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（`@deepseek-ai/dsh-compaction-basic` README 的 `auto` 行；`lib/index.js:827` 用 `if (this.config.auto)` 决定注册不注册那两个 listener），**不是**整行 `disabled`。`auto` 和那些注入名字一样**禁止手写进源文件**（`tools/check-preset.mjs` 判 ERROR）：没挂 bili 的 profile 里，dsh 自带的自动压缩是**唯一**的压缩手段，写死 `false` 等于让那些 profile 的上下文无限增长；billion-context 组未激活的味道里，产物出现这个键同样是 ERROR（`tools/check-bundle-flavor.mjs`）。**save-token 组与体积旋钮的职责划分（红线 3 的同一口径）**：save-token 的入历史改写与内置 `tool-result-pruner` 动的是**同一格**（工具结果进历史的那一刻），两个都开等于在已经缩过的文本上再裁一道 —— 但那三个体积旋钮（`compaction-basic` / `tool-result-pruner` / `tool-web`）归**插件出厂默认值**管，preset 不去关那一行；要不要把 pruner 行 `disabled` 是**宿主 profile 自己**的决定，生成物不管这件事。
+10. **构建期注入组的名字只能由构建期注入，禁止手写进 `preset/agent.cordis.yml`。** 目前有两组（清单**只有一份**，写在 `tools/flavors.mjs` 的 `INJECTION_GROUPS`）：billion-context 的 `compress` / `decompress` / `search_context` / `acp_status`（同属该插件的 `acp_cache` 故意不注入），以及 save-token 的 `save_token_expand`。它们不属于本组合，是那两个 DSH 插件注册在**全局层**的工具（实测：子代理的工具目录里它们是裸名、没有 `mcp__` 前缀，所以 `restrict()` 接受）。两侧后果都不轻：**不给** —— 那两个插件的指令与通知只看自己的 config、不看这个请求有没有那些工具（bili 的两处拼装都在 `billion-context` 的 `BUG_REPORT_PROMPT` 系统段与紧随其后的 `acp_status` nudge —— 按 `acp_cache` / `acp_status` 这类契约名在包里检索即可找到，两者都没有 pluginMode 护栏；save-token 在工具结果**进入历史的那一刻**把大输出换成 `[save-token #id] …` 通知，通知正文直接点名 `Call the save_token_expand tool with id "…"`，见 `dsh-plugin-save-token` 里拼那条通知的 `save_token_expand` 指引文本），而被委派的专家确实收得到这种通知（`tools/post-execute` 只跳过 `exec.parent !== undefined` 的 PTC / `run_code` 子派发，普通子代理委派不设它），于是专家收到"去调某个工具"的指令却没有工具可调；**给了但目标 profile 没装那个插件** —— 名字不存在，撞红线 7，每一次委派当场抛 `names unknown global tool "compress"`。所以口径是"源文件中立、生成物按探测决定"：探测在 `tools/has-bundle.mjs <profilesDir> <profile...> [--package=<包名>]`（判据 = 包名在该 profile 的 `dsh.profile.bundles` 里 **且** 装上的那份包里真的有它的补丁文件 —— 文件名从该包自己的 `package.json` 的 `dsh.bundle.patch` 读，读不到才退回历史名 `dsh.bundle.patch.yml`），**装着哪个组才带哪个旗标**生成：`node tools/gen-preset-bundle.mjs --with-billion-context --with-save-token`（两个旗标可叠加；`tools/resolve-flavor.mjs` 负责把"装着哪几组"翻成味道键 / 稳定目录名 / gen 旗标）；`tools/check-preset.mjs` 会把源文件里手写的这些名字判成 **ERROR** 并指回对应的旗标（清单从 `tools/flavors.mjs` 推导，它不另抄一份）。生成物按**味道**分份，现在共**四种味道、四个稳定目录**：plain = `$DSH_HOME/bundles/dsh-adg-preset`、bili = `.../dsh-adg-preset-bili`、save-token = `.../dsh-adg-preset-save-token`、bili+save-token = `.../dsh-adg-preset-bili-save-token`（四份的 `package.json` 逐字节相同，只有 `cordis.patch.yml` 不同，**包名都是 `dsh-adg-preset`** ⇒ `dsh.profile.bundles` 那一行四种味道通用）；**目录名不要写死，以 `tools/flavors.mjs` 的 `dirNameFor(key)` 为准**（味道键里的 `+` 换成 `-`）。每个 profile 的 `node_modules/dsh-adg-preset` 只 `link:` 自己该拿的那一份；`auto` 下味道由**该 profile 自己的探测结果**决定（`--<组>=on` / `off` 才是整体覆盖，覆盖与探测不一致时脚本打黄字警告），装完由 `install.*` 的第 4b-1 步用 `tools/check-bundle-flavor.mjs` 断言**已链接的那一份**的味道（判据不能是"包在不在"——四种味道的 `package.json` 逐字节相同）。旧口径"生成物全机共用一份，所以 auto 只在"每个目标 profile 都挂着"时才注入"**已推翻**：混装机器（例如本机 `desktop` 没挂、`web` 挂）上它会**连挂着的那个 profile 也一起装 plain**，于是那些 profile 的专家收得到 bili 的压缩指令、`allow` 里却没有工具，一调就报 `unknown tool compress`（2026-09-28 用户报告的真实缺陷，证据见 `docs/evidence.md` §11）。**billion-context 组激活时还要关掉 preset realm 里的自动压缩**：给 `compaction` 组那行 `compaction-basic` 注入 `config: {auto: false}`，与 bili 自己的 bundle 补丁（`dsh.bundle.patch.yml` 里那条 `- id: compaction-basic` / `config: {auto: false}`）**同键同值** —— 那份官方补丁打在 **profile 层**，而本 preset 的 compaction 三行活在 `isolate: {compaction: true}` 的 realm 里、是另一份实例，跨 lane 的 id 命中与否从未被观测，所以生成物直接写进 preset 自己的组里（两边都生效也无行为差异）。`auto: false` 的语义是「关掉自动压缩与溢出恢复，手动 `/compact` 仍可用」（契约：`@deepseek-ai/dsh-compaction-basic` 的配置 schema 里那个布尔键 `auto`（`BasicCompactionConfig`，默认 `true`），实现按 `this.config.auto` 决定要不要注册自动压缩那条 listener），**不是**整行 `disabled`。`auto` 和那些注入名字一样**禁止手写进源文件**（`tools/check-preset.mjs` 判 ERROR）：没挂 bili 的 profile 里，dsh 自带的自动压缩是**唯一**的压缩手段，写死 `false` 等于让那些 profile 的上下文无限增长；billion-context 组未激活的味道里，产物出现这个键同样是 ERROR（`tools/check-bundle-flavor.mjs`）。**save-token 组与体积旋钮的职责划分（红线 3 的同一口径）**：save-token 的入历史改写与内置 `tool-result-pruner` 动的是**同一格**（工具结果进历史的那一刻），两个都开等于在已经缩过的文本上再裁一道 —— 但那三个体积旋钮（`compaction-basic` / `tool-result-pruner` / `tool-web`）归**插件出厂默认值**管，preset 不去关那一行；要不要把 pruner 行 `disabled` 是**宿主 profile 自己**的决定，生成物不管这件事。
 
 ## 生效方式（口径不同，别承诺错）
 
@@ -82,13 +82,44 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profi
 
 | 模块 | 一句话职责 | 规则见 |
 |---|---|---|
-| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 8 个专家行（第 8 行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
+| `preset/` | Adg preset 的定义：调度 persona（名册 + 分派规则）与 8 个专家行（名册最后一行 `agent-general` 是交接专用叶子）；`preset.yml` / `agent.cordis.yml` / `bundle.package.json` 是 **bundle 的源**（由 `tools/gen-preset-bundle.mjs` 生成、装进 profile 的 `dsh.profile.bundles`） | `preset/AGENTS.md` |
 | `tools/` | `check-preset.mjs`（preset 的零依赖静态校验器，**不是 YAML 解析器**）+ `gen-preset-bundle.mjs`（从 `preset/` 源文件生成 bundle 的构建脚本，**产物不许手改**） | `tools/AGENTS.md` |
 | `browser/` | 有头 Chromium 系浏览器启动器（Chrome / Brave / Edge 探测）+ 最小 CDP 驱动（零依赖，唯一入口 `cli.mjs`） | `browser/AGENTS.md` |
 
 不在模块地图里、也不需要模块 `AGENTS.md` 的（三样信号都没有，建了就是噪音）：`skills/adg-add-agent/SKILL.md`（用户技能文档，位于 `${DSH_HOME:-~/.dsh}/skills/`，无独立命令）、`install.ps1` / `install.sh`（部署脚本，无模块红线）、仓库根 `README.md`。`docs/` 是文档层而非模块：`docs/evidence.md`（实测证据台账 / 未观测清单）、`docs/docs-guide.md`（写作规范与文档分层契约）、`docs/registry.md`（索引与冷启动三问的答题路径）。
 
 **新模块登记义务**：新建模块时在本表与 `docs/registry.md` 各加一行，缺登记即文档体系不完整。
+
+## 版本区（文档目录入口）
+
+版本区 = **一批最终文档**，每个治理域各一份当前真相；`docs/` 是文档层而非模块，只有三篇。**过程件一律住在被 `.gitignore` 排除的临时工作目录 `docs-work/`**（指针见下表），版本区里检索不到任何中间文件。
+
+| 文档 | 是什么 |
+|---|---|
+| `AGENTS.md`（本文件） | 根入口：只做路由（命令 / 关键红线 / 模块地图 / 按改动选读 / Quality Gates） |
+| `README.md` | 人向手册 + 全部实测依据 |
+| `preset/README.md` | 无需——preset 的路由入口是 `preset/AGENTS.md` |
+| `preset/AGENTS.md` → `preset/design.md` → `preset/testing-guide.md` | 模块三件套（`tools/`、`browser/` 同构） |
+| `docs/evidence.md` | 实测证据台账 / 未观测清单 / 状态分层 |
+| `docs/docs-guide.md` | 写作规范与文档分层契约（本体系自己的裁判） |
+| `docs/registry.md` | 文档索引、什么场景读哪篇、冷启动三问的答题路径 |
+| `docs-work/`（**临时工作目录，不在版本区**） | 过程件：`changelog.md`（一行一条、时间倒序、只记"变了什么"）、`handoff.md`、`pending.md`、工作稿与证据快照。滚动更新、可被清理；长期价值先合并进上表某份最终文档再删原件 |
+
+`docs/` 下文档 ≤ 5 篇时不建 `docs/_index.md`（`docs/registry.md` 本身就是这个目录的索引页）；模块 `AGENTS.md` 里的「版本区」一节指回本表，只登记本模块那三份 + 指向 `docs-work/`，不另抄一份清单。
+
+## 外部依赖与 ref 解析
+
+外部依赖的**能力与接口**一律按契约制品引用（包名 + 配置键名 / 导出符号名 / 契约文件名，可 grep），不引对方文档、不引实现行；**版本字面量只在本节的表里出现**，其余文档写"以本节的解析结果为准"，这样本机一直升到最新版时只改这一处。确需指向对方仓库的某个文件时，形式是 `<org>/<repo>@<ref>:<path>`，**禁止裸 `main` / `HEAD`**（对方一改就静默指向别处、检查器抓不到），`<ref>` 用下表那条解析命令取当前值，不要手抄。
+
+| 依赖包名 | 解析命令（运行时取值） | 当前解析结果（2026-10-02 读数） | 引用形式示例 |
+|---|---|---|---|
+| `@deepseek-ai/dsh` | 版本：`dsh --version`；仓库句柄的 `<ref>`：`git ls-remote --tags https://github.com/deepseek-ai/deepseek-harness "dsh-v*"`（取输出**最后一条**的 tag 名） | 版本 `0.2.0-rc.2`；tag `dsh-v0.2.0-rc.2`（同次读数：sha `639ed015397290b3745d163aafe02ffee4aa3f84`） | 版本：`@deepseek-ai/dsh@0.2.0-rc.2`；上游仓库句柄：`deepseek-ai/deepseek-harness@dsh-v0.2.0-rc.2:<path>` |
+| `@deepseek-ai/dsh-*`（`dsh-subagent` / `dsh-tool-subagent` / `dsh-compaction-basic` …） | `node -p "require('<该 profile 的 node_modules>/@deepseek-ai/dsh-*/package.json').version"` | 与上面同一个值 | 正文只写契约名（如 `toolFilter.allow`、`restrict()`、`auto`），要写版本时写"同 `@deepseek-ai/dsh` 的解析结果" |
+
+- **ref 的派生规则**：上游 tag 名 = `dsh-v` + `dsh --version` 的值（**不是** `v<版本>` —— 2026-10-02 实跑 `git ls-remote --tags https://github.com/deepseek-ai/deepseek-harness "dsh-v*"` 命中 8 条 tag，形状全是 `dsh-v*`，末条 `dsh-v0.2.0-rc.2`）。上表两个当前值都是那次实跑的读数，**升级后按解析命令重取，不要手抄**。
+- **无仓库可引的本机插件**（`dsh-plugin-save-token`、`billion-context`）：只引**契约制品或版本号**，例如 `dsh-plugin-save-token` 的 `package.json` 里 `dsh.bundle.patch = ./cordis.patch.yml`（已实测为真）、`billion-context` 注册的全局工具名 `compress` / `acp_status` 等。
+- **历史读数 / 审计快照**（`docs/evidence.md` 里"当时测得"类证据）：用 **sha 钉住并冻结**，写明"某次读数，不是当前基线"，**不随升级维护**。
+- 包名会随 dsh 升级**改名**（2026-09-28 实录：`@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`），所以每次升级后按本表重核一遍 composition 里的包名。
 
 ## Context Loading（按你手上的改动读）
 
@@ -110,6 +141,6 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BillionContext on -Profi
 2. 改了 preset → 按 `README.md`「给 AI 的安装指令」第 6 步做**真实挂载**（静态自检证明不了挂载）。
 3. 交付前逐条对照 `docs/docs-guide.md` 的写作规范与附件规范的「质量红线清单」。
 4. 引用任何实测数字前先读 `docs/evidence.md` 的**未观测清单**与各节的**状态分层**：人向手册里若干"未观测"条目的**依据**可能已被本机日志更新，处置权在人类 —— 但**未观测的结论不许写成实测**，也不许把"日志证明的机制"读成"那一件事本身已被观测"（例：`subagent/end` 对"结束"与"被恢复"发同一事件，所以"某个子代理是被恢复的"无从判定）。
-5. `cd browser && node --test test` → 全绿（本仓库实测 **37 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md` 第 5 节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留且正文非空** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
+5. `cd browser && node --test test` → 全绿（本仓库实测 **37 个用例全通过**，不需要浏览器）。改了 `browser/` 之后还要跑一次真机闭环（`browser/testing-guide.md`「交付前的最小闭环」一节：`profile` → `launch` → 再 `launch` 须 `STATE=REUSED` → 一次性读页须**零残留且正文非空** → `close-tab` 须拒绝关到 0 个页面 → `close`）。
 
 **能力的边界（不许越界宣称）**：`tools/check-preset.mjs` 是**逐行文本扫描器，不是 YAML 解析器**；它证明不了文件能被 YAML 解析，也证明不了 preset 真的挂载。`README.md` 与 `docs/evidence.md` 里的实测都带状态分层（源码级事实 / 检验 / 真机实测 / 未观测）——引用时必须保留该分层，**未观测的结论不许写成实测**。
